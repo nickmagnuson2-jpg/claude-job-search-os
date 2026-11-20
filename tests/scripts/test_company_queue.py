@@ -351,3 +351,193 @@ def test_a_plain_404_dict_is_still_an_answer():
     assert cq._is_not_found({"reason": "HTTP 404"}) is True
     assert cq._is_not_found({"reason": "HTTP 404", "live_board": False}) is True
     assert cq._is_not_found({"reason": "HTTP 404", "live_board": True}) is False
+
+
+# --- Nick 2026-11-19: "empty boards can stay scan targets, but I want them to bring it up"
+# (funnel-intake.md, session 30 ruling). A board that answers 200 with no postings is a
+# board: accept keeps it as a scan target, and /standup names it until Nick clears it.
+
+def _answers_empty(slug, errors=None):
+    return []  # 200 with [] and nothing in errors: the board exists, it has no postings
+
+
+def _gone(slug, errors=None):
+    errors.append({"reason": "HTTP 404"})
+    return []
+
+
+def test_a_board_answering_200_with_no_postings_is_an_empty_board_not_no_board():
+    board = cq.detect_board("Acme", {"ashby": _gone, "greenhouse": _answers_empty})
+    assert board == {"ats": "greenhouse", "slug": "acme", "n_roles": 0, "empty": True}
+
+
+def test_a_board_with_postings_wins_over_an_earlier_empty_one():
+    def found(slug, errors=None):
+        return [{"title": "x"}] if slug == "acme" else []
+    board = cq.detect_board("Acme", {"ashby": _answers_empty, "greenhouse": found})
+    assert board == {"ats": "greenhouse", "slug": "acme", "n_roles": 1}
+
+
+def test_an_empty_board_with_a_failed_probe_elsewhere_is_still_indeterminate():
+    def flaky(slug, errors=None):
+        errors.append({"reason": "HTTP 503"})
+        return []
+    with pytest.raises(cq.BoardCheckIndeterminate):
+        cq.detect_board("Acme", {"ashby": _answers_empty, "lever": flaky})
+
+
+def test_a_fetcher_without_an_error_channel_cannot_claim_an_empty_board():
+    assert cq.detect_board("Acme", {"ashby": lambda slug: []}) is None
+
+
+def test_a_live_hosted_ashby_board_with_zero_postings_is_an_empty_board():
+    def live_zero(slug, errors=None):
+        if slug == "acme":
+            errors.append({"reason": "posting API HTTP 404, but the hosted board is live "
+                                     "(0 postings): https://jobs.ashbyhq.com/acme",
+                           "live_board": True, "not_found": True, "postings": 0})
+        else:
+            errors.append({"reason": "HTTP 404"})
+        return []
+    board = cq.detect_board("Acme", {"ashby": live_zero, "greenhouse": _gone})
+    assert board == {"ats": "ashby", "slug": "acme", "n_roles": 0, "empty": True}
+
+
+EMPTY = {"ats": "greenhouse", "slug": "acme", "n_roles": 0, "empty": True}
+
+
+def test_accepting_an_empty_board_keeps_it_a_scan_target_and_records_the_flag(tmp_path):
+    out, seen = _decide(tmp_path, "accept", board=dict(EMPTY))
+    assert out["status"] == "ok"
+    args = seen[0]
+    assert args[args.index("--ats") + 1] == "greenhouse" and "--outreach" not in args
+    assert "empty board" in args[args.index("--notes") + 1]
+    row = cq.load(tmp_path)["decided"][0]
+    assert row["empty_board"]["detected_on"] and row["empty_board"]["acked_on"] is None
+
+
+def test_a_board_with_postings_records_no_empty_flag(tmp_path):
+    _, seen = _decide(tmp_path, "accept", board={"ats": "ashby", "slug": "acme", "n_roles": 3})
+    assert "empty board" not in seen[0][seen[0].index("--notes") + 1]
+    assert "empty_board" not in cq.load(tmp_path)["decided"][0]
+    assert cq.read(tmp_path)["empty_boards"] == []
+
+
+def test_read_names_an_empty_board_every_time_until_acked(tmp_path):
+    _decide(tmp_path, "accept", board=dict(EMPTY))
+    for _ in range(2):  # reading never consumes
+        flags = cq.read(tmp_path)["empty_boards"]
+        assert [(f["name"], f["ats"], f["slug"]) for f in flags] == [("Acme", "greenhouse", "acme")]
+        assert flags[0]["detected_on"]
+    out = cq.ack_empty(tmp_path, "acme")
+    assert out["status"] == "ok" and out["name"] == "Acme"
+    assert cq.read(tmp_path)["empty_boards"] == []
+    assert cq.load(tmp_path)["decided"][0]["empty_board"]["acked_on"]
+
+
+def test_acking_an_unknown_or_unflagged_company_is_an_error(tmp_path):
+    _decide(tmp_path, "accept", board={"ats": "ashby", "slug": "acme", "n_roles": 3})
+    assert cq.ack_empty(tmp_path, "Acme")["code"] == "not_flagged"
+    assert cq.ack_empty(tmp_path, "Nope")["code"] == "not_flagged"
+
+
+def test_read_on_a_missing_queue_has_no_empty_boards(tmp_path):
+    assert cq.read(tmp_path)["empty_boards"] == []
+
+
+def test_done_test_a_real_greenhouse_board_answering_200_empty_end_to_end(tmp_path, monkeypatch):
+    # The ruling's done-test: a fixture board answering 200 with [] stays a target and
+    # the surfacing output names it. Real parsers, real act_apply; only the network is faked.
+    import io
+    import urllib.error
+    from tools.career_scanner import ashby, greenhouse, lever
+
+    class Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def urlopen(req, timeout=None):
+        url = req.full_url if hasattr(req, "full_url") else req
+        if url.startswith("https://boards-api.greenhouse.io/v1/boards/acme/"):
+            return Resp(b'{"jobs": []}')
+        raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+    for mod in (ashby, greenhouse, lever):
+        monkeypatch.setattr(mod.urllib.request, "urlopen", urlopen)
+    (tmp_path / "data").mkdir()
+    targets = tmp_path / "data" / "scan-targets.yaml"
+    targets.write_text("companies:\n  - name: Existing Co\n    active: true\n", encoding="utf-8")
+    cq.add(tmp_path, "lane-a", CO, _cands("Acme"), "2026-11-19")
+    out = cq.decide(tmp_path, "Acme", "accept")
+    assert out["status"] == "ok", out
+    doc = yaml.safe_load(targets.read_text(encoding="utf-8"))
+    added = [c for c in doc["companies"] if c["name"] == "Acme"][0]
+    assert (added["ats"], added["slug"]) == ("greenhouse", "acme")
+    code, shown = _cli(tmp_path, "read")
+    assert code == 0 and [f["name"] for f in shown["empty_boards"]] == ["Acme"]
+    code, acked = _cli(tmp_path, "ack-empty", "--name", "Acme")
+    assert code == 0 and acked["status"] == "ok"
+    assert _cli(tmp_path, "read")[1]["empty_boards"] == []
+
+
+def test_an_unreadable_queue_reports_empty_boards_as_unknown_not_zero(tmp_path):
+    cq.queue_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    cq.queue_path(tmp_path).write_text("[1]", encoding="utf-8")
+    assert cq.read(tmp_path)["empty_boards"] is None
+
+
+def _two_empty(tmp_path):
+    cq.add(tmp_path, "lane-a", CO, _cands("Acme", "Beacon"), "2026-11-19")
+    for n in ("Acme", "Beacon"):
+        cq.decide(tmp_path, n, "accept", detector=lambda _n: dict(EMPTY),
+                  runner=lambda root, args: {"status": "ok"})
+
+
+def test_ack_clears_only_the_named_company(tmp_path):
+    _two_empty(tmp_path)
+    before = cq.queue_path(tmp_path).read_text(encoding="utf-8")
+    assert cq.ack_empty(tmp_path, "Nope")["code"] == "not_flagged"
+    assert cq.queue_path(tmp_path).read_text(encoding="utf-8") == before, "a miss writes nothing"
+    assert cq.ack_empty(tmp_path, "beacon")["name"] == "Beacon"
+    assert [f["name"] for f in cq.read(tmp_path)["empty_boards"]] == ["Acme"]
+
+
+def test_ack_on_a_missing_queue_is_an_error_and_creates_nothing(tmp_path):
+    assert cq.ack_empty(tmp_path, "Acme")["code"] == "not_flagged"
+    assert not cq.queue_path(tmp_path).exists()
+
+
+def test_ack_reports_a_miss_when_a_retried_transform_finds_it_already_cleared(tmp_path, monkeypatch):
+    # atomic_update may call transform more than once (inbox_lock.py docstring). If the
+    # retry sees the flag already cleared by another writer, the ack must not claim it.
+    _two_empty(tmp_path)
+    real = cq.inbox_lock.atomic_update
+    cleared = cq.queue_path(tmp_path).read_text(encoding="utf-8").replace(
+        '"acked_on": null', '"acked_on": "2026-11-19"')
+
+    def twice(path, transform):
+        transform(Path(path).read_text(encoding="utf-8"))  # first attempt sees the flag
+        return real(path, lambda _t: transform(cleared))   # the retry does not
+    monkeypatch.setattr(cq.inbox_lock, "atomic_update", twice)
+    assert cq.ack_empty(tmp_path, "Acme")["code"] == "not_flagged"
+
+
+@pytest.mark.parametrize("text", ['{"pending": null, "decided": []}',
+                                  '{"pending": [], "decided": null}'])
+def test_a_queue_with_wrong_shaped_lists_reads_as_unreadable(tmp_path, text):
+    # Review 2026-11-19 (Codex F3): read never raises.
+    cq.queue_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    cq.queue_path(tmp_path).write_text(text, encoding="utf-8")
+    out = cq.read(tmp_path)
+    assert out["exists"] is False and out["empty_boards"] is None
+
+
+def test_an_empty_board_flag_with_a_corrupt_board_field_still_reads(tmp_path):
+    cq.queue_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    cq.queue_path(tmp_path).write_text(
+        '{"pending": [], "decided": [{"name": "Acme", "empty_board": {}, "board": "bad"}]}',
+        encoding="utf-8")
+    assert cq.read(tmp_path)["empty_boards"] == [
+        {"name": "Acme", "ats": None, "slug": None, "detected_on": None}]

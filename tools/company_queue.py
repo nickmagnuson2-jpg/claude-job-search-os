@@ -9,7 +9,10 @@ data/workstreams/funnel-intake.md, which sat unbuilt for 11 days:
      result to the inbox, where nothing read it (36 blocks on 10/19, 44 on 11/17).
   2. "Accept" checks for a public Ashby / Greenhouse / Lever board at accept time:
      board found -> a scan target with `ats` and `slug`; none -> an outreach-only
-     target (no `ats`). Both go through tools/act_apply.py target-add, the one writer
+     target (no `ats`). A board that answers with zero postings is still a board: it
+     becomes a scan target too, and `read` names it under `empty_boards` until Nick
+     clears it with `ack-empty` (Nick 2026-11-19: "empty boards can stay scan targets,
+     but I want them to bring it up"). Both go through tools/act_apply.py target-add, the one writer
      for data/scan-targets.yaml. "Reject" goes through target-reject, which records the
      company under `rejected:` so the weekly collector never proposes it again.
 
@@ -21,6 +24,7 @@ CLI (top-level options before the subcommand):
   company_queue.py [--repo-root R] decide --name "Acme" --accept [--lane a|b] [--dry-run]
   company_queue.py [--repo-root R] decide --name "Acme" --reject [--reason "..."]
   company_queue.py [--repo-root R] import-inbox [--inbox data/inbox.md] [--remove]
+  company_queue.py [--repo-root R] ack-empty --name "Acme"
 """
 from __future__ import annotations
 
@@ -68,6 +72,9 @@ def _load_text(text: str) -> dict:
         raise ValueError("company queue top level is not an object")
     data.setdefault("pending", [])
     data.setdefault("decided", [])
+    for k in ("pending", "decided"):
+        if not isinstance(data[k], list):
+            raise ValueError(f"company queue {k!r} is not a list")
     return data
 
 
@@ -119,12 +126,13 @@ def read(repo_root: Path, top: int = 4) -> dict:
     p = queue_path(repo_root)
     if not p.is_file():
         return {"exists": False, "reason": f"no queue at {p}; the discovery job has not "
-                "written one yet", "pending_companies": None, "companies": []}
+                "written one yet", "pending_companies": None, "companies": [],
+                "empty_boards": []}
     try:
         data = _load_text(p.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         return {"exists": False, "reason": f"unreadable queue: {exc}",
-                "pending_companies": None, "companies": []}
+                "pending_companies": None, "companies": [], "empty_boards": None}
     pend = [e for e in data["pending"] if isinstance(e, dict)]
     comps = [e for e in pend if e.get("entity") != "person"]
     people = [e for e in pend if e.get("entity") == "person"]
@@ -140,7 +148,45 @@ def read(repo_root: Path, top: int = 4) -> dict:
             "oldest_first_seen": oldest, "decided_count": len(data["decided"]),
             "companies": [{k: e.get(k) for k in ("name", "description", "score",
                                                   "geo_band", "possible_match", "preset",
-                                                  "first_seen")} for e in comps[:top]]}
+                                                  "first_seen")} for e in comps[:top]],
+            "empty_boards": _empty_boards(data)}
+
+
+def _empty_boards(data: dict) -> list[dict]:
+    """Accepted companies whose board had 0 postings and that Nick has not cleared."""
+    out = []
+    for e in data["decided"]:
+        flag = e.get("empty_board") if isinstance(e, dict) else None
+        if isinstance(flag, dict) and not flag.get("acked_on"):
+            board = e.get("board") if isinstance(e.get("board"), dict) else {}
+            out.append({"name": e.get("name"), "ats": board.get("ats"),
+                        "slug": board.get("slug"), "detected_on": flag.get("detected_on")})
+    return out
+
+
+def ack_empty(repo_root: Path, name: str) -> dict:
+    """Nick has seen an empty-board flag: stop naming it in read. Writes nothing else."""
+    want = norm(name)
+    found: dict = {}
+
+    def transform(text: str) -> str:
+        d = _load_text(text)
+        found.clear()
+        for e in d["decided"]:
+            flag = e.get("empty_board") if isinstance(e, dict) else None
+            if (isinstance(flag, dict) and not flag.get("acked_on")
+                    and norm(e.get("name", "")) == want):
+                flag["acked_on"] = str(datetime.now().date())
+                found["name"] = e.get("name")
+        return _dump(d) if found else text  # nothing to clear: leave the file as it was
+
+    if not queue_path(repo_root).is_file():
+        return {"status": "error", "code": "not_flagged", "message": "no queue file"}
+    inbox_lock.atomic_update(queue_path(repo_root), transform)
+    if not found:
+        return {"status": "error", "code": "not_flagged",
+                "message": f"no unacknowledged empty-board flag for {name!r}"}
+    return {"status": "ok", "name": found["name"]}
 
 
 # --- accept-time board check (decision 1, 2026-11-06) ---------------------------------
@@ -172,31 +218,50 @@ class BoardCheckIndeterminate(Exception):
 
 
 def detect_board(name: str, fetchers: dict | None = None) -> dict | None:
-    """First public board with at least one posting, else None.
+    """First public board with at least one posting; else the first empty board; else None.
 
-    None means every probe ANSWERED and none had postings. A probe that errored (an
-    exception, or an entry the fetcher appended to its `errors` list) makes the result
-    indeterminate: raise BoardCheckIndeterminate so the caller leaves the company
-    queued instead of recording it outreach-only (review 2026-11-17, Codex/Grok F1).
-    A wrong slug and a real board with zero postings both return [] without an error,
-    so None is "no board found", never proof there is no board."""
+    An empty board is `{"ats", "slug", "n_roles": 0, "empty": True}`: a fetcher with an
+    `errors` channel answered with no postings and recorded nothing (all three public
+    APIs answer a wrong slug with HTTP 404, checked live 2026-11-19), or Ashby's hosted
+    page showed a live board with 0 postings. Nick 2026-11-19: "empty boards can stay
+    scan targets, but I want them to bring it up." A fetcher without an `errors` channel
+    cannot tell an empty board from a wrong slug, so it never yields one.
+
+    A board with postings is conclusive and returns at once, even if an earlier probe
+    failed (that is the base contract, test_detect_board_returns_the_first_board_with_
+    postings). Otherwise a probe that errored (an exception, or an entry the fetcher
+    appended to its `errors` list) makes the result indeterminate: raise
+    BoardCheckIndeterminate so the caller leaves the company queued instead of recording
+    it outreach-only (review 2026-11-17, Codex/Grok F1). That holds when an empty board
+    was found too: the failed probe may have been a board with postings. None means
+    every probe answered and none found a board."""
     fetchers = fetchers if fetchers is not None else _default_fetchers()
     failed = []
+    empty = None
     for slug in slug_candidates(name):
         for ats, fetch in fetchers.items():
             errors: list = []
+            channel = _takes_errors(fetch)
             try:
-                roles = fetch(slug, errors) if _takes_errors(fetch) else fetch(slug)
+                roles = fetch(slug, errors) if channel else fetch(slug)
             except Exception as exc:  # noqa: BLE001 -- recorded, decides the verdict below
                 failed.append(f"{ats}/{slug}: {exc}")
                 continue
             if roles:
                 return {"ats": ats, "slug": slug, "n_roles": len(roles)}
+            if empty is None and channel and (
+                    not errors or any(_is_empty_live_board(e) for e in errors)):
+                empty = {"ats": ats, "slug": slug, "n_roles": 0, "empty": True}
             failed += [f"{ats}/{slug}: {e.get('reason', e) if isinstance(e, dict) else e}"
                        for e in errors if not _is_not_found(e)]
     if failed:
         raise BoardCheckIndeterminate("; ".join(failed[:5]))
-    return None
+    return empty
+
+
+def _is_empty_live_board(err) -> bool:
+    """ashby.py found a live hosted board with 0 postings behind a posting-API 404."""
+    return isinstance(err, dict) and bool(err.get("live_board")) and err.get("postings") == 0
 
 
 def _takes_errors(fetch) -> bool:
@@ -252,8 +317,11 @@ def decide(repo_root: Path, name: str, decision: str, reason: str | None = None,
             args += ["--outreach"]
         if lane:
             args += ["--lane", lane]
-        args += ["--notes", f"Accepted from the discovery queue {datetime.now().date()} "
-                 f"({entry.get('preset')}, first seen {entry.get('first_seen')})"]
+        note = (f"Accepted from the discovery queue {datetime.now().date()} "
+                f"({entry.get('preset')}, first seen {entry.get('first_seen')})")
+        if board and board.get("empty"):
+            note += "; empty board (0 postings) at accept"
+        args += ["--notes", note]
     elif decision == "reject":
         board = None
         args = ["target-reject", entry["name"]]
@@ -285,8 +353,12 @@ def decide(repo_root: Path, name: str, decision: str, reason: str | None = None,
         moved = [e for e in d["pending"] if e.get("key") == key]
         d["pending"] = [e for e in d["pending"] if e.get("key") != key]
         for e in moved:
-            d["decided"].append({**e, "decision": decision, "decided_on": str(datetime.now().date()),
-                                 "board": board, "reason": reason})
+            row = {**e, "decision": decision, "decided_on": str(datetime.now().date()),
+                   "board": board, "reason": reason}
+            if board and board.get("empty"):
+                # Recorded once, at first detection; read names it until ack_empty.
+                row["empty_board"] = {"detected_on": str(datetime.now().date()), "acked_on": None}
+            d["decided"].append(row)
         return _dump(d)
 
     inbox_lock.atomic_update(queue_path(repo_root), transform)
@@ -395,12 +467,16 @@ def main(argv=None) -> int:
     m.add_argument("--inbox", default=None)
     m.add_argument("--remove", action="store_true",
                    help="also delete the imported Agent-drip blocks from the inbox")
+    k = sub.add_parser("ack-empty", help="clear one empty-board flag after Nick has seen it")
+    k.add_argument("--name", required=True)
     a = ap.parse_args(argv)
     root = Path(a.repo_root)
     if a.cmd == "read":
         out = read(root, a.top)
     elif a.cmd == "decide":
         out = decide(root, a.name, "accept" if a.accept else "reject", a.reason, a.lane, a.dry_run)
+    elif a.cmd == "ack-empty":
+        out = ack_empty(root, a.name)
     else:
         out = import_inbox(root, Path(a.inbox) if a.inbox else root / "data" / "inbox.md", a.remove)
     print(json.dumps(out, indent=1, ensure_ascii=False, default=str))

@@ -130,12 +130,13 @@ def _fetch_board(slug: str, errors: list | None, include_compensation: bool) -> 
         if errors is None:
             return []
         if state == "live":
-            # A live board with postings is not "no board". With 0 postings the verdict
-            # matches an empty API board (detect_board: no board WITH postings), but the
-            # reason still says what was seen.
+            # A live board with postings is not "no board". With 0 postings it is an
+            # empty board: detect_board reads `postings` and keeps it a scan target that
+            # /standup names (Nick 2026-11-19, "empty boards can stay scan targets, but I
+            # want them to bring it up").
             errors.append({"reason": f"posting API HTTP 404, but the hosted board is live "
                                      f"({detail} postings): {HOSTED}{quote_segment(slug)}",
-                           "live_board": True, "not_found": detail == 0})
+                           "live_board": True, "not_found": detail == 0, "postings": detail})
         elif state == "unverified":
             errors.append({"reason": f"posting API HTTP 404; live-board check failed "
                                      f"({detail})", "not_found": False})

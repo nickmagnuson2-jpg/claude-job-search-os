@@ -166,6 +166,17 @@ The weekly discovery job writes here, not to the inbox (funnel-intake decision 3
 - Reading never consumes; nothing is acknowledged. A company leaves the queue only when decided.
 - Zero pending renders nothing.
 
+**Empty ATS boards (from `results.company_queue.data.empty_boards`) — EVERY day, whenever non-empty.**
+
+Nick, 2026-11-19: "empty boards can stay scan targets, but I want them to bring it up." An accepted company whose public board answered with zero postings is still a scan target; this line says so until he has seen it. One line per company:
+
+```
+📭 **Empty board:** [name]: [ats]/[slug] had 0 postings when accepted [detected_on]; still a scan target
+```
+
+- `empty_boards: null` is NOT zero: the queue was unreadable (the `⚠️ discovery queue unreadable` line already covers it).
+- After Nick has seen the line, clear it: `PYTHONIOENCODING=utf-8 python3 tools/company_queue.py --repo-root . ack-empty --name "<Name>"`. Reading never clears it.
+
 **Cross-model findings (from `cross_model_gate.py`) — surface whenever non-empty.**
 
 ```bash

@@ -281,15 +281,24 @@ def test_a_failed_live_board_check_is_not_proof_of_absence(monkeypatch, hosted, 
     assert cq._is_not_found(errors[0]) is False
 
 
-def test_a_live_board_with_zero_postings_is_named_but_still_an_answer(monkeypatch):
-    # Review 2026-11-18 (Codex F1): say what was seen; the verdict matches an empty API
-    # board, which detect_board already treats as "no board with postings".
+def test_a_live_board_with_zero_postings_is_named_and_counted(monkeypatch):
+    # Review 2026-11-18 (Codex F1), reversed by Nick 2026-11-19 ("empty boards can stay
+    # scan targets, but I want them to bring it up"): the fetcher reports the count, and
+    # detect_board turns a live board with 0 postings into an empty board.
     from tools import company_queue as cq
     _ashby_404_then(monkeypatch, _hosted_html("acme", 0))
     errors = []
     ashby.fetch_ashby("acme", errors=errors)
     assert errors[0]["live_board"] is True and "(0 postings)" in errors[0]["reason"]
+    assert errors[0]["postings"] == 0
     assert cq._is_not_found(errors[0]) is True
+
+
+def test_a_live_board_with_postings_reports_its_count(monkeypatch):
+    _ashby_404_then(monkeypatch, _hosted_html("acme", 3))
+    errors = []
+    ashby.fetch_ashby("acme", errors=errors)
+    assert errors[0]["postings"] == 3
 
 
 @pytest.mark.parametrize("marker", ["window.__appData=", "window.__appData =\n  "])
