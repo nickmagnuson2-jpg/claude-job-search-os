@@ -281,3 +281,34 @@ def test_timeout_strtod_durations_block(duration):
     # r6 (Codex): every GNU timeout duration form is skipped as a duration
     r = _run(f'timeout {duration} curl -s "{LEVER}"')
     assert r.returncode == 2, r.stderr
+
+
+# 1086.F1 (Codex, P0): an ordinary aliased or from-import of requests followed by a
+# call was allowed, because the HTTP-call pattern knew only `requests.get(...)`.
+# Bar (a): non-evasive shapes a session writes by habit, not constructions built to
+# defeat the hook.
+REQUESTS_IMPORT_SHAPES = [
+    f"python3 -c \"import requests as r; print(r.get('{ASHBY}').json())\"",
+    f"python3 - <<'PY'\nfrom requests import get\nprint(get('{GREENHOUSE}').json())\nPY",
+    f"python3 - <<'PY'\nimport json, requests as rq\ns = rq.Session()\nprint(s.get('{LEVER}').text)\nPY",
+    f"python3 - <<'PY'\nfrom requests import Session\nSession().get('{ASHBY}')\nPY",
+]
+
+
+@pytest.mark.parametrize("command", REQUESTS_IMPORT_SHAPES)
+def test_aliased_or_from_imported_requests_blocks(command):
+    r = _run(command)
+    assert r.returncode == 2, r.stderr
+    assert "tools/ats_board.py" in r.stderr
+
+
+@pytest.mark.parametrize("command", [
+    # requests imported, no ATS host anywhere
+    "python3 -c \"import requests as r; r.get('https://example.com')\"",
+    # an ATS host in a program that imports a module merely named like requests
+    f"python3 -c \"import requests_cache; print('{ASHBY}')\"",
+    # an ATS host as a string, no HTTP library at all
+    f"python3 -c \"from tools import notes; notes.add('{ASHBY}')\"",
+])
+def test_requests_import_needs_the_host_and_the_real_module(command):
+    assert hook.is_raw_ats_fetch(command) is False

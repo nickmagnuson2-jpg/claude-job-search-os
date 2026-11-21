@@ -26,7 +26,8 @@ string is part of its python command, since it IS the program):
   1. a `curl`/`wget` command whose own words carry a posting-API host, or
   2. a python command whose own words, -c string or heredoc body carry both a
      posting-API host and an HTTP call (urlopen, urllib.request,
-     requests.get/post/request/Session, httpx, http.client), or
+     requests.get/post/request/Session, an aliased or from-import of requests,
+     httpx, http.client), or
   3. a `curl`/`wget` whose argument references a variable that holds the host
      (VAR=<host...> or `for VAR in <host...>` in the same line).
 A host in one command and a fetch of another URL in a different command do not
@@ -59,7 +60,11 @@ API_HOST = re.compile(
     re.IGNORECASE,
 )
 PY_HTTP = re.compile(
-    r"urlopen|urllib\.request|\brequests\.(?:get|post|request|Session)\b|\bhttpx\b|http\.client",
+    r"urlopen|urllib\.request|\brequests\.(?:get|post|request|Session)\b|\bhttpx\b|http\.client"
+    # An import of requests itself, aliased or from-import (`import requests as r`,
+    # `from requests import get`): with an ATS host in the same program, it fetches
+    # the board under another name (Codex 1086.F1, 2026-11-19; Nick: "Fix first").
+    r"|\b(?:import|from)\s+[^\n;]*?\brequests\b",
 )
 ASSIGN = re.compile(r"^([A-Za-z_]\w*)=(.*)$", re.DOTALL)
 LEADERS = {"do", "then", "else", "time", "exec", "command", "xargs", "!", "nohup", "env", "timeout"}
