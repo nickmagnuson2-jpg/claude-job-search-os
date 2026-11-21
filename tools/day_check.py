@@ -22,9 +22,10 @@ Six counts, each for the target date and for the week so far (Monday to the targ
   applications    pipeline rows whose text says "Applied <date>" (or "applied on <date>").
                   Stage alone is not counted: a follow-up also moves Date Updated on an
                   Applied row, which would count an old application again. Rows moved to
-                  Stage "Applied" that day with no applied date anywhere (what
-                  `pipe_write.py update <co> Applied` writes) are reported apart as
-                  applications_unconfirmed, for Nick to confirm.
+                  Stage "Applied" that day with no applied date anywhere (written by
+                  hand, or by `pipe_write.py` before it began stamping the date on
+                  2026-11-18) are reported apart as applications_unconfirmed, for Nick
+                  to confirm. The rule lives in stage_vocab.py, shared with the writer.
   pipeline_moves  pipeline rows whose Date Updated is the date.
   todos_closed    job-todos.md Completed rows for the date (todo_read.completed_on, withdrawn
                   rows excluded).
@@ -61,6 +62,7 @@ from reply_classify import REPLY_VERDICTS, SEND_VERDICTS, base_type, classify  #
 from schema_guard import SchemaDriftError, assert_schema, find_header_line  # noqa: E402
 from outreach_read import parse_rows as parse_outreach_rows  # noqa: E402
 import todo_read  # noqa: E402
+from stage_vocab import applied_dates, is_applied_stage  # noqa: E402
 
 COUNTS = ("sends", "replies", "calls", "applications", "pipeline_moves", "todos_closed")
 # Shown beside applications, never added to it (see unconfirmed_applied).
@@ -124,20 +126,18 @@ def pipeline_rows(content: str) -> list[list[str]]:
 def applied_on(cols: list[str], d: date) -> bool:
     """Cell by cell: joining the cells would read the Stage cell "Applied" followed by the
     Date Updated cell as "Applied <date>", which is the false positive this rule avoids."""
-    pat = re.compile(rf"\bapplied (on )?{d.isoformat()}\b", re.I)
-    return any(pat.search(c) for c in cols)
+    return d.isoformat() in applied_dates(cols)
 
 
 def unconfirmed_applied(cols: list[str], d: date) -> bool:
     """A row moved to Stage "Applied" on this date with no "Applied <date>" cell anywhere.
 
-    `pipe_write.py update <co> Applied` sets the Stage and Date Updated and writes no
-    date text, so it is invisible to applied_on. But a follow-up on an older Applied row
-    also moves Date Updated, so this cannot be counted as an application: it is shown
-    apart, as rows to confirm."""
-    return (cols[2].strip().casefold() == "applied" and _date(cols[3]) == d
-            and not any(re.search(r"\bapplied (on )?\d{4}-\d{2}-\d{2}\b", c, re.I)
-                        for c in cols))
+    Since 2026-11-18 `pipe_write.py` stamps "Applied <date>" on a move to Applied, so
+    rows land here only when written another way (by hand, or before that date). A
+    follow-up on an older Applied row also moves Date Updated, so this cannot be counted
+    as an application: it is shown apart, as rows to confirm."""
+    return (is_applied_stage(cols[2]) and _date(cols[3]) == d
+            and not applied_dates(cols))
 
 
 def same_person(a: str, b: str) -> bool:

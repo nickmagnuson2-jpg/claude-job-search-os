@@ -600,7 +600,7 @@ def _acme_notes(tmp_path):
 def test_update_notes_append_and_prepend_keep_existing_notes(tmp_path):
     write_fixture(tmp_path, "data/job-pipeline.md",
                   PIPELINE_WITH_ROW.replace("| — | — | — |\n\n## Archived", "| — | orig | — |\n\n## Archived"))
-    result, code = run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Applied",
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Interested",
                                   "--notes-prepend", "PRE", "--notes-append", "POST")
     assert code == 0, result
     assert _acme_notes(tmp_path) == "PRE orig POST"
@@ -612,7 +612,7 @@ def test_update_notes_replace_keeps_fit_reason_tags_and_echoes_previous(tmp_path
     old = f"orig {tag} {kept}"
     write_fixture(tmp_path, "data/job-pipeline.md",
                   PIPELINE_WITH_ROW.replace("| — | — | — |\n\n## Archived", f"| — | {old} | — |\n\n## Archived"))
-    result, code = run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Applied",
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Interested",
                                   "--notes", f"new prose {kept}")
     assert code == 0, result
     assert _acme_notes(tmp_path) == f"new prose {kept} {tag}", "dropped tag re-appended once, kept tag not duplicated"
@@ -621,14 +621,14 @@ def test_update_notes_replace_keeps_fit_reason_tags_and_echoes_previous(tmp_path
 
 def test_update_without_notes_flags_leaves_an_empty_notes_cell_as_dash(tmp_path):
     write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
-    result, code = run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Applied")
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Interested")
     assert code == 0, result
     assert _acme_notes(tmp_path) == "—"
 
 
 def test_update_notes_append_onto_an_empty_cell_drops_the_dash(tmp_path):
     write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
-    run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Applied",
+    run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Interested",
                    "--notes-append", "a | b")
     assert _acme_notes(tmp_path) == "a / b", "a '|' in added text must not split the row"
 
@@ -884,3 +884,151 @@ def test_restage_refuses_a_row_with_a_stray_pipe(tmp_path):
                                   "--stage", "Rejected")
     assert code != 0 and result["code"] == "malformed_row" and result["column_count"] == 9
     assert (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8") == before
+
+
+# ---------------------------------------------------------------------------
+# Applications are counted (2026-11-18): a move into Applied stamps "Applied <today>",
+# which is the text tools/day_check.py counts. Before this, the documented
+# `update <co> Applied` wrote no date and the application was never counted.
+# ---------------------------------------------------------------------------
+
+def _row(tmp_path, company, role=None):
+    content = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    rows = [[c.strip() for c in l.strip("|").split("|")] for l in content.splitlines()
+            if l.startswith(f"| {company} |")]
+    if role:
+        rows = [r for r in rows if r[1] == role]
+    assert len(rows) == 1
+    return rows[0]
+
+
+def _counted_today(cols):
+    """The reader's own rule, so writer and reader are tested against each other."""
+    sys.path.insert(0, str(TOOLS_DIR))
+    import day_check
+    from datetime import date as _d
+    return day_check.applied_on(cols, _d.today())
+
+
+def test_update_into_applied_stamps_the_date_and_day_check_counts_it(tmp_path):
+    from datetime import date as _d
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Applied")
+    assert code == 0 and result["applied_stamped"] is True
+    cols = _row(tmp_path, "Acme Corp")
+    assert cols[6] == f"Applied {_d.today().isoformat()}"
+    assert _counted_today(cols)
+
+
+def test_update_of_a_row_already_applied_stamps_nothing(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_TWO_ROLES)
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "update", "MultiCo", "Applied",
+                                  "--role", "Director", "--next-action", "Follow up again")
+    assert code == 0 and result["applied_stamped"] is False
+    cols = _row(tmp_path, "MultiCo", "Director")
+    assert cols[6] == "—"
+    assert not _counted_today(cols)
+
+
+def test_update_into_applied_keeps_an_existing_applied_date(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW.replace(
+        "| Research role | — | — | — |", "| Research role | — | applied on 2026-01-03 | — |"))
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Applied")
+    assert code == 0 and result["applied_stamped"] is False
+    assert _row(tmp_path, "Acme Corp")[6] == "applied on 2026-01-03"
+
+
+def test_update_into_applied_with_replaced_notes_still_stamps(tmp_path):
+    from datetime import date as _d
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Applied",
+                                  "--notes", "via Ashby")
+    assert code == 0
+    assert _row(tmp_path, "Acme Corp")[6] == f"via Ashby Applied {_d.today().isoformat()}"
+
+
+def test_update_to_another_stage_stamps_nothing(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Interested")
+    assert code == 0 and result["applied_stamped"] is False
+    assert _row(tmp_path, "Acme Corp")[6] == "—"
+
+
+def test_add_with_stage_applied_stamps_and_default_add_does_not(tmp_path):
+    from datetime import date as _d
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_MD)
+    r1, _ = run_pipe_write("--repo-root", str(tmp_path), "add", "Zed Co", "Ops", "--stage", "Applied")
+    r2, _ = run_pipe_write("--repo-root", str(tmp_path), "add", "Yel Co", "Ops")
+    assert r1["applied_stamped"] is True and r2["applied_stamped"] is False
+    zed = _row(tmp_path, "Zed Co")
+    assert zed[6] == f"Applied {_d.today().isoformat()}" and _counted_today(zed)
+    assert _row(tmp_path, "Yel Co")[6] == "—"
+
+
+def test_add_with_stage_applied_keeps_a_date_already_in_notes(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_MD)
+    r, _ = run_pipe_write("--repo-root", str(tmp_path), "add", "Zed Co", "Ops", "--stage", "Applied",
+                          "--notes", "Applied 2026-01-02 via referral")
+    assert r["applied_stamped"] is False
+    assert _row(tmp_path, "Zed Co")[6] == "Applied 2026-01-02 via referral"
+
+
+def test_update_into_applied_with_an_earlier_date_appended_counts_that_day_not_today(tmp_path):
+    """/apply Step 10: a submission made on an earlier day is logged with --notes-append."""
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Applied",
+                                  "--notes-append", "Applied 2026-01-03")
+    assert code == 0 and result["applied_stamped"] is False
+    cols = _row(tmp_path, "Acme Corp")
+    assert cols[6] == "Applied 2026-01-03"
+    assert not _counted_today(cols)
+
+
+def test_notes_replace_on_an_applied_row_keeps_its_applied_date(tmp_path):
+    """Codex r1 F1: --notes on a row already Applied must not delete the date day_check counts."""
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_TWO_ROLES.replace(
+        "| Follow up | — | — | — |", "| Follow up | — | Applied 2026-01-05 via form | — |"))
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "update", "MultiCo", "Applied",
+                                  "--role", "Director", "--notes", "recruiter replied")
+    assert code == 0 and result["applied_stamped"] is False
+    assert _row(tmp_path, "MultiCo", "Director")[6] == "recruiter replied Applied 2026-01-05"
+
+
+def test_notes_replace_on_a_move_into_applied_keeps_the_old_date_and_does_not_restamp(tmp_path):
+    """Codex r1 F2: an older applied date survives --notes, so the move is not counted today."""
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW.replace(
+        "| Research role | — | — | — |", "| Research role | — | applied on 2026-01-03 | — |"))
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Applied",
+                                  "--notes", "new prose")
+    assert code == 0 and result["applied_stamped"] is False
+    cols = _row(tmp_path, "Acme Corp")
+    assert cols[6] == "new prose Applied 2026-01-03"
+    assert not _counted_today(cols)
+
+
+def test_notes_replace_that_restates_the_date_does_not_duplicate_it(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW.replace(
+        "| Research role | — | — | — |", "| Research role | — | Applied 2026-01-03 | — |"))
+    run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Interested",
+                   "--notes", "applied on 2026-01-03, then paused")
+    assert _row(tmp_path, "Acme Corp")[6] == "applied on 2026-01-03, then paused"
+
+
+def test_a_dated_applied_stage_set_to_bare_applied_keeps_its_date_and_is_not_restamped(tmp_path):
+    """Grok r1 F1: Stage 'Applied <date> via ...' -> 'Applied' must not move the count to today."""
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW.replace(
+        "| Acme Corp | Director | Researching |", "| Acme Corp | Director | Applied 2026-01-03 via form |"))
+    result, code = run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Applied")
+    assert code == 0 and result["applied_stamped"] is False
+    cols = _row(tmp_path, "Acme Corp")
+    assert cols[2] == "Applied" and cols[6] == "Applied 2026-01-03"
+    assert not _counted_today(cols)
+
+
+def test_a_date_in_a_replaced_next_action_moves_to_notes(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW.replace(
+        "| Research role |", "| Applied 2026-01-03, chase in a week |"))
+    run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Interviewing",
+                   "--next-action", "Prep the screen")
+    cols = _row(tmp_path, "Acme Corp")
+    assert cols[4] == "Prep the screen" and cols[6] == "Applied 2026-01-03"
