@@ -10,6 +10,7 @@
         <string>/opt/homebrew/bin/python3</string>
         <string>-m</string>
         <string>tools.career_scanner.cli</string>
+        <string>--once-a-day</string>
         <string>--repo-root</string>
         <string>/Users/mag/Documents/Obsidian/30-projects/job-search</string>
     </array>
@@ -25,13 +26,44 @@
     <key>WorkingDirectory</key>
     <string>/Users/mag/Documents/Obsidian/30-projects/job-search</string>
 
+    <!-- 06:30 so the queue is fresh for the 07:00 morning page (Nick, R0c, 2026-11-18).
+         A scan takes about 25 s (two measured runs, 2026-11-17 and 11-18). 09:00-12:00
+         are catch-up slots (Nick, R11): launchd skips a slot that falls while the Mac is
+         off, and runs one missed during sleep at wake. Each run passes the once-a-day flag, so
+         a slot after a clean scan that day only prints "skipped". -->
     <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>8</integer>
-        <key>Minute</key>
-        <integer>30</integer>
-    </dict>
+    <array>
+        <dict>
+            <key>Hour</key>
+            <integer>6</integer>
+            <key>Minute</key>
+            <integer>30</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>10</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>11</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>12</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+    </array>
 
     <key>RunAtLoad</key>
     <false/>
