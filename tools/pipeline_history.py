@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
 """pipeline_history.py - one pipeline-history check for both role scanners.
 
-Nick, 2026-11-06: a role at a company he has history with ALWAYS shows, labelled
-("they declined you 10/03 (Ops Lead)", "you passed 09/12 (Strategy)").
-The only role held back is an exact repeat of a posting he passed on, and it goes to a
-visible skipped list, never silently. Spec: output/infra-backlog/110626-pipeline-history-
-check-spec.md (reviewed by Codex + Grok, ledger runs 940 and 941).
+Nick, 2026-11-06: a role at a company he has history with shows, labelled
+("they declined you 10/03 (Ops Lead)", "you passed 09/12 (Strategy)"). Spec:
+output/infra-backlog/110626-pipeline-history-check-spec.md (reviewed by Codex + Grok, ledger
+runs 940 and 941).
+
+Two roles are held back (`held_back`), and both go to the same visible skipped list with their
+label, never silently:
+- declined_repeat: an exact repeat of a posting he passed on (11-06).
+- declined_company (R9, Nick 2026-11-18: "Move any company that's rejected me to a skipped
+  list."): any role at a company, matched by exact name only, that has a declined_you row and
+  no active row. This supersedes the 11-06 "always shows" rule for declining companies. A
+  fuzzy possible_match is labelled, never held back. Design:
+  output/funnel-intake/111826-r9-design.md (option B).
 
 Before this module the two scanners defined the rule two ways and neither matched it:
 /scan-jobs left every role at ANY company ever in the pipeline out of its proposals with
@@ -128,24 +136,37 @@ def _phrase(row: dict) -> str:
 
 
 def history(role: dict, rows: list[dict]) -> dict:
-    """{label, declined_repeat, already_in_pipeline, possible_match}.
+    """{label, declined_repeat, declined_company, held_back, already_in_pipeline, possible_match}.
 
     declined_repeat: an exact repeat of a posting he passed on (same company, same URL).
+    declined_company: the same company (exact name) has a declined_you row and no active row.
+    held_back: either of the two; both scanners route on this one key, onto the visible
+    skipped list with the label.
     already_in_pipeline: the same role at the same company is an active pipeline row.
-    Every other role shows, with the label; neither flag ever hides a role silently.
+    Every other role shows, with the label; no flag ever hides a role silently.
     """
     exact, possible = match_company(role.get("company", ""), rows)
     newest = sorted(exact, key=lambda r: r.get("date") or "", reverse=True)
+    declined_company = (any(r["outcome"] == DECLINED_YOU for r in exact)
+                        and not any(r["outcome"] in ACTIVE for r in exact))
+    if declined_company:
+        # The label says why the role is held back even when the decline is not among the
+        # newest rows: the newest decline leads, the rest follow newest first.
+        first = next(r for r in newest if r["outcome"] == DECLINED_YOU)
+        newest = [first] + [r for r in newest if r is not first]
     parts = [_phrase(r) for r in newest[:SHOWN_ROWS]]
     if len(newest) > SHOWN_ROWS:
         parts.append(f"+{len(newest) - SHOWN_ROWS} more")
     declined_repeat = any(r["outcome"] == YOU_PASSED and same_posting(role, r) for r in exact)
     if not declined_repeat and any(r["outcome"] == YOU_PASSED and same_role(role, r) for r in exact):
-        parts.insert(0, "likely the role you passed on")
+        # A held-back declined-company label keeps the decline first (Grok r1 F1).
+        parts.insert(1 if declined_company else 0, "likely the role you passed on")
     names = sorted({r["company"] for r in possible})
     if names:
         parts.append("possible match: " + ", ".join(names))
     return {"label": "; ".join(parts),
             "declined_repeat": declined_repeat,
+            "declined_company": declined_company,
+            "held_back": declined_repeat or declined_company,
             "already_in_pipeline": any(r["outcome"] in ACTIVE and same_role(role, r) for r in exact),
             "possible_match": names[0] if names else ""}
