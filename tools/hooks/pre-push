@@ -42,47 +42,75 @@ case "$remote_url" in
     ;;
 esac
 
-# The range actually being pushed, read from stdin per githooks(5):
-#   <local ref> <local sha1> <remote ref> <remote sha1>
-# A remote sha of all-zeros means a new branch; fall back to the upstream default so a
-# first push of a branch is not treated as pushing the entire history.
-base=""
-head=""
+# The probe runs once: which arguments this checkout's gate accepts. This hook file is
+# installed ONCE and shared by every worktree, while each checkout runs its OWN gate. A
+# gate older than an argument rejects it as unknown, so each is passed only when this
+# checkout's gate lists it in --help. An older gate then runs exactly as before; a failed
+# probe passes neither, and tree rows then cover nothing (the gate blocks, it does not
+# pass).
+#   --tip  (Nick, 2026-11-16): a review row carrying `tree` covers the push only when it
+#          equals the pushed tip's tree, whatever its time.
+#   --base (Nick, 2026-11-18, "No PRs"): when base..tip is a verified chain of merge
+#          commits (tools/merge_chain.py), each merge is checked against reviews of its
+#          branch tip's tree. Anything else gets the --tip rule.
+gate_help=""
+gate_help="$(PYTHONIOENCODING=utf-8 python3 "$root/tools/cross_model_gate.py" --help 2>/dev/null)" || gate_help=""
+
+# EVERY pushed ref is judged (F9, 2026-11-18). Until then the loop kept only the LAST
+# ref's range, so `git push origin a b` checked b alone and a went out unreviewed.
+# githooks(5) gives one line per ref:  <local ref> <local sha1> <remote ref> <remote sha1>
+# A remote sha of all-zeros means a new branch; its base is the merge-base with
+# origin/main, so a first push of a branch is not treated as pushing all of history.
+#
+# FAILS CLOSED (2026-11-18). A git command that errors BLOCKS. Until then an errored
+# `git diff` printed nothing, the empty numstat read as "nothing changed", and the hook
+# exited 0 without running the gate.
 while read -r _lref lsha _rref rsha; do
   [ -z "$lsha" ] && continue
   case "$lsha" in *[!0]*) ;; *) continue ;; esac   # deleting a ref: nothing to verify
   head="$lsha"
+  # A new ref whose base cannot be found BLOCKS (Codex 2026-11-19 F1). It used to fall back
+  # to `git diff --numstat <head>`, a diff of the commit against the WORKING TREE, which is
+  # empty in a clean checkout, so the push exited 0 without running the gate.
   case "$rsha" in
     *[!0]*) base="$rsha" ;;
-    *)      base="$(git merge-base "$lsha" origin/main 2>/dev/null || echo '')" ;;
+    *)      if ! base="$(git merge-base "$head" origin/main 2>&1)" || [ -z "$base" ]; then
+              printf '\nBLOCKED: pre-push could not find where new ref %s leaves origin/main: %s\n' \
+                "$head" "${base:-no merge base}" >&2
+              exit 1
+            fi ;;
   esac
+  range="$base..$head"
+
+  # FRESHNESS BOUND = the NEWEST commit being pushed, not the base it diverged from.
+  # Using the base let a verification recorded BEFORE the work still license it: on
+  # 2026-09-03 the base was the previous evening at 19:09 while the pushed work was
+  # committed at 09:55 the next morning, so anything recorded overnight would have
+  # cleared code that did not exist yet. "Verify, then change it, then push" is not
+  # verification. Found by cross-model review of this very gate.
+  if ! since="$(git log -1 --format=%ct "$head" 2>&1)"; then
+    printf '\nBLOCKED: pre-push could not read the pushed commit %s: %s\n' "$head" "$since" >&2
+    exit 1
+  fi
+  if ! numstat="$(git diff --numstat "$range" 2>&1)"; then
+    printf '\nBLOCKED: pre-push could not diff %s: %s\n' "$range" "$numstat" >&2
+    exit 1
+  fi
+  # An empty net diff skips the gate ONLY when the gate cannot judge a merge chain. A chain
+  # whose merges add a file and later remove it has an empty base..tip diff, and every one
+  # of its commits is still sent (Codex 2026-11-19 F2). check_chain reads each merge's own
+  # diff, and on a non-chain push an empty numstat clears, as the skip did.
+  case "$gate_help" in
+    *--base*) ;;
+    *) [ -z "$numstat" ] && continue ;;
+  esac
+
+  gate_args=()
+  case "$gate_help" in *--tip*) gate_args+=(--tip "$head") ;; esac
+  case "$gate_help" in *--base*) gate_args+=(--base "$base") ;; esac
+  printf '%s\n' "$numstat" | PYTHONIOENCODING=utf-8 python3 \
+    "$root/tools/cross_model_gate.py" --repo-root "$root" --since "$since" "${gate_args[@]}" || exit 1
 done <<REFS
 $refs
 REFS
-
-[ -z "$head" ] && exit 0
-if [ -n "$base" ]; then range="$base..$head"; else range="$head"; fi
-
-# FRESHNESS BOUND = the NEWEST commit being pushed, not the base it diverged from.
-# Using the base let a verification recorded BEFORE the work still license it: on
-# 2026-09-03 the base was the previous evening at 19:09 while the pushed work was
-# committed at 09:55 the next morning, so anything recorded overnight would have
-# cleared code that did not exist yet. "Verify, then change it, then push" is not
-# verification. Found by cross-model review of this very gate.
-since="$(git log -1 --format=%ct "$head" 2>/dev/null || echo 0)"
-numstat="$(git diff --numstat "$range" 2>/dev/null || echo '')"
-[ -z "$numstat" ] && exit 0
-
-# TREE KEY (Nick, 2026-11-16): a review row carrying `tree` covers this push only when
-# it equals "$head"'s tree, whatever its time. Rows without `tree` keep the time bound.
-# This hook file is installed ONCE and shared by every worktree, while each checkout runs
-# its OWN gate. A gate older than the tree key rejects --tip as an unknown argument, so
-# pass it only when this checkout's gate lists it in --help. An older gate then runs
-# exactly as before; a failed probe passes no tip, and tree rows then cover nothing.
-tip_arg=()
-if gate_help="$(PYTHONIOENCODING=utf-8 python3 "$root/tools/cross_model_gate.py" --help 2>/dev/null)"; then
-  case "$gate_help" in *--tip*) tip_arg=(--tip "$head") ;; esac
-fi
-printf '%s\n' "$numstat" | PYTHONIOENCODING=utf-8 python3 \
-  "$root/tools/cross_model_gate.py" --repo-root "$root" --since "$since" "${tip_arg[@]}" || exit 1
 exit 0

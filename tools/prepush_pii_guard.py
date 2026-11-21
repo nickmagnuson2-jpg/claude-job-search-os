@@ -41,6 +41,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import check_public_pii as cp  # noqa: E402
 import audit_pii_record as rec  # noqa: E402
+import merge_chain  # noqa: E402
 
 
 ZERO = "0" * 40
@@ -148,16 +149,33 @@ def _tree_or_blank(root: Path, sha: str) -> str:
         return ""
 
 
+def audited_tips(root: Path, local: str, remote: str) -> list[str]:
+    """The commits whose trees need a record for one pushed ref.
+
+    Normally the pushed tip. For a push of merge commits built by land_branch.py
+    --merge-push (Nick, 2026-11-18: "No PRs"), each merge is git's own merge of its two
+    parents (tools/merge_chain.py verifies it), so the trees that need a record are the
+    SECOND parents', the branch tips /audit-pii ran on. Nobody audits a merge tree.
+    Anything that is not a verified chain from the remote's own tip keeps the tip rule,
+    including a new branch: its all-zero remote id is not a commit, so walk() raises."""
+    try:
+        return [m.p2 for m in merge_chain.walk(root, remote, local)]
+    except merge_chain.ChainError:
+        return [local]
+
+
 def record_gate(root: Path, pairs) -> int:
-    """Check 2: every pushed tip's tree needs a clean /audit-pii record, or a waiver."""
+    """Check 2: every pushed tree needs a clean /audit-pii record, or a waiver. For a
+    verified merge chain those trees are its branch tips' (audited_tips)."""
     missing, problem = [], None
     try:
-        for local, _remote in pairs:
-            tree = rec.tree_of(root, local)
-            if tree is None:
-                raise GitReadError(f"pushed sha {local} is not a commit here")
-            if not rec.has_clean_record(root, tree):
-                missing.append((local, tree))
+        for local, remote in pairs:
+            for sha in audited_tips(root, local, remote):
+                tree = rec.tree_of(root, sha)
+                if tree is None:
+                    raise GitReadError(f"pushed sha {sha} is not a commit here")
+                if not rec.has_clean_record(root, tree):
+                    missing.append((sha, tree))
     except Exception as e:
         # ANY failure here blocks, and is caught HERE rather than by the top-level handler,
         # because that handler lets PUSH_PII_OVERRIDE turn an exception into "allow"

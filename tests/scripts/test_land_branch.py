@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import tempfile
 import sys
 from pathlib import Path
 
@@ -985,3 +986,745 @@ def test_module_loads_by_path_without_tools_on_sys_path(tmp_path):
                        capture_output=True, text=True)
     assert p.returncode == 0, p.stderr
     assert p.stdout.strip() == "scope: x | population 1 | included 1 | excluded: none"
+
+
+# ================================================================ --merge-push (2026-11-18)
+# Nick's rulings: no PRs; allowlist conflicts resolved by allowlist_merge, any other conflict
+# holds that branch; SSH fetch only (stale main prints the fetch command); full suite on the
+# final merged tree, 0 failures. Brief: output/overnight-merge-back/111826-merge-push-build-brief.md
+import merge_chain as mc  # noqa: E402
+
+MP_HOOK = """#!/bin/bash
+in="$(cat)"
+printf '%s\\n' "$in" >> "$LB_HOOK_LOG"
+case "$in" in
+  *refs/heads/main*)
+    root="$(git rev-parse --show-toplevel)"
+    { echo "PUSHGATE root=$root url=$2 stdin=$in"
+      cat "$root/tools/.cross-model-ledger.jsonl" 2>/dev/null
+      cat "$root/tools/.audit-pii-ledger.jsonl" 2>/dev/null; } >> "$LB_PUSH_LOG"
+    if [ "${LB_PUSH_GATE_RC:-0}" != 0 ]; then echo "BLOCKED: stub push gate says no" >&2; fi
+    exit "${LB_PUSH_GATE_RC:-0}";;
+esac
+exit "${LB_GATE_RC:-0}"
+"""
+GOOD_BODY = "## Summary\n- does the thing\n\n" + lb.PR_FOOTER + "\n"
+
+
+@pytest.fixture
+def mp(repo, monkeypatch):
+    """repo plus a tracked hook identical to the installed one, gitignored ledgers, a
+    denylist, and a suite stub: a main checkout whose checkers are current."""
+    root = repo["root"]
+    (root / ".gitignore").write_text("tools/.*\noutput/\n")
+    (root / "tools" / "hooks").mkdir()
+    (root / "tools" / "hooks" / "pre-push").write_text(MP_HOOK)
+    (root / "tools" / "hooks" / "pre-push").chmod(0o755)
+    (root / "tools" / "suite_record.py").write_text(SUITE_STUB)
+    sh(root, "add", "-A")
+    sh(root, "commit", "-qm", "checkers")
+    base = sh(root, "rev-parse", "HEAD")
+    sh(root, "update-ref", "refs/remotes/origin/main", base)
+    repo["base"] = base
+    installed = Path(sh(root, "rev-parse", "--path-format=absolute", "--git-path", "hooks")) / "pre-push"
+    installed.write_text(MP_HOOK)
+    (root / "tools" / ".pii-denylist.txt").write_text("Realname\n")
+    monkeypatch.setenv("LB_PUSH_LOG", str(repo["tmp"] / "push.log"))
+    monkeypatch.delenv("LB_PUSH_GATE_RC", raising=False)
+    return repo
+
+
+def describe(repo, name, title=None, body=GOOD_BODY):
+    d = repo["root"] / "output" / "landing-descriptions"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{name}.md").write_text(f"{title or 'Add ' + name}\n\n{body}")
+
+
+def ready_branch(repo, name, files):
+    wt, tip = branch(repo, name, files)
+    describe(repo, name)
+    return wt, tip
+
+
+def run_mp(repo, names, dry_run=True, **kw):
+    kw.setdefault("busy", lambda: [])
+    if dry_run:     # a dry run judges with the tools next to land_branch.py; use the stubs
+        kw.setdefault("checkers", repo["root"] / "tools")
+    kw.setdefault("gh", gh_local_main(repo))
+    return lb.merge_push(repo["root"], names, dry_run=dry_run, **kw)
+
+
+def held(rep):
+    return {h["branch"]: h["reasons"] for h in rep["held"]}
+
+
+def test_mp_dry_run_builds_a_verified_chain_and_one_push_command(mp):
+    _, t1 = ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    _, t2 = ready_branch(mp, "two", {"two.py": "y = 2\n"})
+    rep = run_mp(mp, ["one", "two"])
+    assert rep["ok"], rep
+    assert [b["branch"] for b in rep["built"]] == ["one", "two"]
+    chain = mc.walk(mp["root"], mp["base"], rep["chain_tip"])
+    assert [m.p2 for m in chain] == [t1, t2]
+    root = mp["root"]
+    assert rep["commands"] == [
+        f"! git -C {root} push origin {rep['chain_tip']}:refs/heads/main",
+        f"! git -C {root} merge --ff-only {rep['chain_tip']}",
+        f"! PYTHONIOENCODING=utf-8 python3 {root}/tools/land_branch.py --verify-landed "
+        f"{mp['base']}..{rep['chain_tip']}",
+    ]
+    assert sum("push origin" in c for c in rep["commands"]) == 1
+
+
+def test_mp_merge_message_is_the_reviewed_description(mp):
+    _, t1 = ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    describe(mp, "one", title="Add the one feature")
+    rep = run_mp(mp, ["one"])
+    msg = sh(mp["root"], "log", "-1", "--format=%B", rep["chain_tip"])
+    assert msg.splitlines()[0] == "Add the one feature"
+    assert "- does the thing" in msg
+    assert f"Merge-push: one {t1}" in msg
+    assert msg.rstrip().endswith(lb.PR_FOOTER)
+
+
+def test_mp_push_gate_gets_main_refspec_line_and_push_url(mp):
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    rep = run_mp(mp, ["one"])
+    log = Path(os.environ["LB_PUSH_LOG"]).read_text()
+    tip = rep["chain_tip"]
+    assert f"stdin={tip} {tip} refs/heads/main {mp['base']}" in log
+    assert "url=git@github.com:owner/repo.git" in log
+    assert rep["gate"]["ok"] is True
+
+
+def test_mp_gate_block_refuses_with_reason(mp, monkeypatch):
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    monkeypatch.setenv("LB_PUSH_GATE_RC", "1")
+    rep = run_mp(mp, ["one"])
+    assert not rep["ok"]
+    assert rep["commands"] == []
+    assert any("BLOCKED: stub push gate says no" in r for r in rep["refusals"])
+
+
+def test_mp_holds_branch_without_description_and_lands_rest(mp):
+    branch(mp, "nodesc", {"n.py": "n = 1\n"})
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    rep = run_mp(mp, ["nodesc", "one"])
+    assert rep["ok"]
+    assert [b["branch"] for b in rep["built"]] == ["one"]
+    assert any("no reviewed description" in r for r in held(rep)["nodesc"])
+
+
+@pytest.mark.parametrize("title,body,why", [
+    ("x" * 73, GOOD_BODY, "longer than 72"),
+    (" Leading space", GOOD_BODY, "whitespace"),
+    ("Has an em dash — here", GOOD_BODY, "em dash"),
+    ("Fine title", "## Summary\n- no footer\n", "footer"),
+    ("Fine title", lb.PR_FOOTER + "\n", "body"),
+    ("Mentions Realname", GOOD_BODY, "denylist"),
+])
+def test_mp_description_checks_hold_the_branch(mp, title, body, why):
+    branch(mp, "one", {"one.py": "x = 1\n"})
+    describe(mp, "one", title=title, body=body)
+    rep = run_mp(mp, ["one"])
+    assert rep["built"] == []
+    assert any(why in r for r in held(rep)["one"]), held(rep)
+
+
+def test_mp_description_check_holds_when_no_denylist(mp):
+    (mp["root"] / "tools" / ".pii-denylist.txt").unlink()
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    rep = run_mp(mp, ["one"])
+    assert any("denylist" in r for r in held(rep)["one"])
+
+
+def test_mp_not_ready_branch_is_held_with_its_refusals(mp):
+    wt, _ = ready_branch(mp, "dirty", {"d.py": "d = 1\n"})
+    (wt / "d.py").write_text("changed\n")
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    rep = run_mp(mp, ["dirty", "one"])
+    assert [b["branch"] for b in rep["built"]] == ["one"]
+    assert any("uncommitted changes" in r for r in held(rep)["dirty"])
+
+
+def test_mp_real_conflict_holds_the_later_branch_only(mp):
+    ready_branch(mp, "first", {"shared.json": '{\n  "a": 2\n}\n'})
+    ready_branch(mp, "second", {"shared.json": '{\n  "a": 3\n}\n'})
+    rep = run_mp(mp, ["first", "second"])
+    assert rep["ok"]
+    assert [b["branch"] for b in rep["built"]] == ["first"]
+    assert any("shared.json" in r for r in held(rep)["second"])
+
+
+def test_mp_allowlist_conflict_is_resolved_not_held(mp):
+    a = mc.ALLOWLIST
+    ready_branch(mp, "one", {a: '{\n  "k::one": "r1"\n}\n'})
+    ready_branch(mp, "two", {a: '{\n  "k::two": "r2"\n}\n'})
+    rep = run_mp(mp, ["one", "two"])
+    assert rep["ok"], rep
+    assert [b["resolved_allowlist"] for b in rep["built"]] == [False, True]
+    text = sh(mp["root"], "show", f"{rep['chain_tip']}:{a}")
+    assert json.loads(text) == {"k::one": "r1", "k::two": "r2"}
+    assert rep["verify_resolved"] == [a]
+
+
+def test_mp_allowlist_conflict_with_main_is_not_a_refusal(mp):
+    a = mc.ALLOWLIST
+    root = mp["root"]
+    (root / a).write_text('{\n  "k::main": "rm"\n}\n')
+    sh(root, "add", a)
+    sh(root, "commit", "-qm", "main allowlist")
+    old_base = mp["base"]
+    # the branch forks BEFORE main added its key, so its own key conflicts with main's lines
+    mp["base"] = old_base
+    _, tip = ready_branch(mp, "one", {a: '{\n  "k::one": "r1"\n}\n'})
+    new_main = sh(root, "rev-parse", "HEAD")
+    sh(root, "update-ref", "refs/remotes/origin/main", new_main)
+    mp["base"] = new_main
+    rep = run_mp(mp, ["one"], gh=gh_main_at(new_main, [old_base], sh(root, "rev-parse", f"{new_main}^{{tree}}")))
+    assert rep["ok"], rep
+    assert json.loads(sh(root, "show", f"{rep['chain_tip']}:{a}")) == {"k::main": "rm", "k::one": "r1"}
+
+
+def test_mp_refuses_when_github_main_is_not_local_and_prints_fetch(mp):
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    rep = run_mp(mp, ["one"], gh=gh_main_at(FAKE_SHA, [mp["base"], FAKE_SHA]))
+    assert not rep["ok"]
+    assert rep["commands"] == []
+    assert rep["fetch_command"] == f"! git -C {mp['root']} fetch origin main"
+    assert any("not in the local object store" in r for r in rep["refusals"])
+
+
+def test_mp_refuses_when_another_push_is_running(mp):
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    rep = run_mp(mp, ["one"], busy=lambda: ["4242 00:03 ssh git@github.com git-receive-pack"])
+    assert not rep["ok"]
+    assert any("another push" in r and "4242" in r for r in rep["refusals"])
+
+
+def test_busy_processes_matches_pushes_and_github_ssh_only():
+    ps = ("  PID ELAPSED COMMAND\n"
+          "  101 00:05 ssh git@github.com git-receive-pack 'o/r.git'\n"
+          "  102 00:01 git push origin main\n"
+          "  103 00:01 git -C /x fetch origin main\n"
+          "  104 00:09 /Applications/Secretive.app/.../SecretAgent\n"
+          "  105 00:01 vim notes-about-git-push.md\n"
+          "  106 00:01 python3 land_branch.py --merge-push\n")
+    got = lb.busy_processes(ps_output=ps)
+    assert [ln.split()[0] for ln in got] == ["101", "102", "103"]
+
+
+def test_mp_real_refuses_when_checkers_are_not_current(mp):
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    (mp["root"] / "tools" / "suite_record.py").write_text("# edited\n")
+    rep = run_mp(mp, ["one"], dry_run=False)
+    assert not rep["ok"]
+    assert any("checkers" in r for r in rep["refusals"])
+
+
+def test_mp_dry_run_does_not_need_current_checkers(mp):
+    """A dry run judges with the tools next to land_branch.py, so a new gate can be tried
+    before it lands; the main checkout's tools being behind is not a reason to refuse."""
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    (mp["root"] / "tools" / "suite_record.py").write_text("# edited\n")
+    rep = run_mp(mp, ["one"], dry_run=True)
+    assert not any("checkers" in r for r in rep["refusals"]), rep["refusals"]
+    assert [b["branch"] for b in rep["built"]] == ["one"]
+
+
+def test_mp_real_refuses_when_installed_hook_differs_from_tracked(mp):
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    installed = Path(sh(mp["root"], "rev-parse", "--path-format=absolute", "--git-path",
+                        "hooks")) / "pre-push"
+    installed.write_text(MP_HOOK + "# older copy\n")
+    rep = run_mp(mp, ["one"], dry_run=False)
+    assert not rep["ok"]
+    assert any("install.sh" in r for r in rep["refusals"])
+
+
+def _rows(path):
+    return [json.loads(x) for x in Path(path).read_text().splitlines() if x.strip()]
+
+
+def seed_branch_ledgers(wt, tip):
+    tree_ = sh(wt, "rev-parse", f"{tip}^{{tree}}")
+    review = {"report": "r.md", "model": "codex", "recorded": "2026-11-18T10:00:00+00:00",
+              "tree": tree_, "paths": ["one.py"], "findings": []}
+    audit = {"kind": "audit", "verdict": "clean", "tree": tree_, "tip": tip,
+             "recorded": "2026-11-18T10:00:00+00:00"}
+    (wt / "tools" / ".cross-model-ledger.jsonl").write_text(json.dumps(review) + "\n")
+    (wt / "tools" / ".audit-pii-ledger.jsonl").write_text(json.dumps(audit) + "\n")
+    return review, audit
+
+
+def test_mp_dry_run_previews_with_backfill_but_writes_nothing(mp):
+    wt, tip = ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    review, audit = seed_branch_ledgers(wt, tip)
+    main_ledger = mp["root"] / "tools" / ".cross-model-ledger.jsonl"
+    rep = run_mp(mp, ["one"])
+    assert rep["ok"]
+    assert not main_ledger.exists()
+    assert not (mp["root"] / "tools" / ".audit-pii-ledger.jsonl").exists()
+    log = Path(os.environ["LB_PUSH_LOG"]).read_text()
+    assert review["tree"] in log and '"copied_from"' in log
+    assert rep["backfill"] == {"cross": 1, "audit": 1, "written": False}
+
+
+def test_mp_real_run_backfills_once_and_runs_suite_on_chain_tip(mp):
+    wt, tip = ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    review, audit = seed_branch_ledgers(wt, tip)
+    rep = run_mp(mp, ["one"], dry_run=False)
+    assert rep["ok"], rep
+    main_tools = mp["root"] / "tools"
+    rows = _rows(main_tools / ".cross-model-ledger.jsonl")
+    assert len(rows) == 1 and rows[0]["tree"] == review["tree"]
+    assert rows[0]["copied_from"] == str(wt)
+    arows = _rows(main_tools / ".audit-pii-ledger.jsonl")
+    assert len(arows) == 1 and arows[0]["tree"] == audit["tree"]
+    run_mp(mp, ["one"], dry_run=False)                       # idempotent
+    assert len(_rows(main_tools / ".cross-model-ledger.jsonl")) == 1
+    assert len(_rows(main_tools / ".audit-pii-ledger.jsonl")) == 1
+    argv = [json.loads(x) for x in Path(os.environ["LB_ARGV_LOG"]).read_text().splitlines()]
+    assert ["suite", "run", "--branch", rep["chain_tip"], "--base", mp["base"],
+            "--repo-root", str(mp["root"])] in argv
+
+
+def test_mp_suite_failure_refuses_and_shows_output(mp, monkeypatch):
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    monkeypatch.setenv("LB_SUITE_RC", "1")
+    rep = run_mp(mp, ["one"], dry_run=False)
+    assert not rep["ok"]
+    assert rep["commands"] == []
+    assert rep["suite"]["ok"] is False and "rc" in rep["suite"]
+    assert any("suite" in r for r in rep["refusals"])
+
+
+def test_mp_nothing_built_is_not_ok(mp):
+    branch(mp, "nodesc", {"n.py": "n = 1\n"})
+    rep = run_mp(mp, ["nodesc"])
+    assert not rep["ok"] and rep["chain_tip"] is None and rep["commands"] == []
+
+
+def test_render_merge_push_lists_built_held_and_commands(mp):
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    branch(mp, "nodesc", {"n.py": "n = 1\n"})
+    rep = run_mp(mp, ["one", "nodesc"])
+    text = lb.render_merge_push(rep)
+    assert "BUILT  one" in text and "HELD   nodesc" in text
+    assert text.count("push origin") == 1
+    assert "DRY RUN" in text
+
+
+def test_cli_merge_push_and_verify_landed_flags(mp, monkeypatch, capsys):
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    monkeypatch.setattr(lb, "gh_json", gh_local_main(mp))
+    monkeypatch.setattr(lb, "busy_processes", lambda: [])
+    real = lb.merge_push
+    monkeypatch.setattr(lb, "merge_push", lambda *a, **k: real(
+        *a, **{**k, "checkers": mp["root"] / "tools"}))
+    rc = lb.main(["--repo-root", str(mp["root"]), "--merge-push", "--dry-run", "one"])
+    assert rc == 0
+    assert "push origin" in capsys.readouterr().out
+    assert lb.main(["--repo-root", str(mp["root"]), "--dry-run", "one"]) == 2
+
+
+# ---------------------------------------------------------------- --verify-landed
+def gh_landed(heads_main, behind: dict, allow_text=None):
+    def gh(path, root, paginate=False):
+        if "/compare/" in path:
+            tip = path.split("/compare/")[1].split("...")[0]
+            return {"behind_by": behind.get(tip, 0)}
+        if "/contents/" in path and allow_text is not None:
+            import base64
+            return {"encoding": "base64",
+                    "content": base64.b64encode(allow_text.encode()).decode()}
+        raise RuntimeError("404 " + path)
+    return gh
+
+
+def built_chain(mp, allow=False):
+    a = mc.ALLOWLIST
+    files1 = {a: '{\n  "k::one": "r1"\n}\n'} if allow else {"one.py": "x = 1\n"}
+    files2 = {a: '{\n  "k::two": "r2"\n}\n'} if allow else {"two.py": "y = 2\n"}
+    ready_branch(mp, "one", files1)
+    ready_branch(mp, "two", files2)
+    return run_mp(mp, ["one", "two"])
+
+
+def test_verify_landed_ok_appends_landing_record(mp):
+    rep = built_chain(mp)
+    wsdir = mp["root"] / "data" / "workstreams"
+    wsdir.mkdir(parents=True)
+    (wsdir / "orchestration.md").write_text("# Orchestration\n")
+    res = lb.verify_landed(mp["root"], f"{mp['base']}..{rep['chain_tip']}",
+                           gh=gh_landed(rep["chain_tip"], {}))
+    assert res["ok"], res
+    text = (wsdir / "orchestration.md").read_text()
+    assert text.startswith("# Orchestration\n")
+    assert "merge-push landed 2 branch(es)" in text
+    assert "one" in text and "two" in text and rep["chain_tip"] in text
+
+
+def test_verify_landed_not_landed_writes_nothing(mp):
+    rep = built_chain(mp)
+    wsdir = mp["root"] / "data" / "workstreams"
+    wsdir.mkdir(parents=True)
+    (wsdir / "orchestration.md").write_text("# Orchestration\n")
+    tip2 = rep["built"][1]["tip"]
+    res = lb.verify_landed(mp["root"], f"{mp['base']}..{rep['chain_tip']}",
+                           gh=gh_landed(rep["chain_tip"], {tip2: 1}))
+    assert not res["ok"]
+    assert any(tip2[:8] in p for p in res["problems"])
+    assert (wsdir / "orchestration.md").read_text() == "# Orchestration\n"
+
+
+def test_verify_landed_checks_resolved_allowlist_on_github(mp):
+    rep = built_chain(mp, allow=True)
+    (mp["root"] / "data" / "workstreams").mkdir(parents=True)
+    (mp["root"] / "data" / "workstreams" / "orchestration.md").write_text("")
+    good = sh(mp["root"], "show", f"{rep['chain_tip']}:{mc.ALLOWLIST}") + "\n"
+    rng = f"{mp['base']}..{rep['chain_tip']}"
+    assert lb.verify_landed(mp["root"], rng, gh=gh_landed(None, {}, good))["ok"]
+    bad = lb.verify_landed(mp["root"], rng, gh=gh_landed(None, {}, '{"k::one": "r1"}'))
+    assert not bad["ok"] and any(mc.ALLOWLIST in p for p in bad["problems"])
+    broken = lb.verify_landed(mp["root"], rng, gh=gh_landed(None, {}, '{"k::one": '))
+    assert not broken["ok"]
+
+
+def test_verify_landed_rejects_a_range_that_is_not_a_chain(mp):
+    _, tip = branch(mp, "plain", {"p.py": "p = 1\n"})
+    res = lb.verify_landed(mp["root"], f"{mp['base']}..{tip}", gh=gh_landed(None, {}))
+    assert not res["ok"]
+
+
+# ---------------------------------------------------------------- merge-push edge cases
+def test_check_notes_an_allowlist_only_main_conflict(mp):
+    a = mc.ALLOWLIST
+    root = mp["root"]
+    (root / a).write_text('{\n  "k::main": "rm"\n}\n')
+    sh(root, "add", a)
+    sh(root, "commit", "-qm", "main allowlist")
+    _, tip = ready_branch(mp, "one", {a: '{\n  "k::one": "r1"\n}\n'})
+    new_main = sh(root, "rev-parse", "HEAD")
+    sh(root, "update-ref", "refs/remotes/origin/main", new_main)
+    gh = gh_main_at(new_main, [mp["base"]], sh(root, "rev-parse", f"{new_main}^{{tree}}"))
+    r = by_name(lb.check(root, ["one"], gh=gh, allowlist_ok=True))["one"]
+    assert r["notes"] == [f"conflicts with main only in {a}; --merge-push resolves it by key"]
+    plain = by_name(lb.check(root, ["one"], gh=gh))["one"]
+    assert any("conflicts with main" in x for x in plain["refusals"])
+
+
+def test_busy_processes_reads_ps_and_reports_a_ps_failure(monkeypatch):
+    ps = "  PID ELAPSED COMMAND\n  101 00:05 git push origin main\n  102 00:01 vim x\n"
+    monkeypatch.setattr(lb, "run", lambda cmd, **kw: (0, ps, ""))
+    assert lb.busy_processes() == ["101 00:05 git push origin main"]
+    monkeypatch.setattr(lb, "run", lambda cmd, **kw: (1, "", "boom"))
+    assert lb.busy_processes() == ["? ps failed rc 1: cannot tell whether a push is running"]
+
+
+@pytest.mark.parametrize("text,why", [
+    ("", "description has no title line"),
+    ("\n\n## Summary\n- x\n\n" + lb.PR_FOOTER + "\n", "description has no title line"),
+    ("Title\nnot blank\n## Summary\n" + lb.PR_FOOTER + "\n", "line 2 of the description must be blank"),
+    ("Title only", "line 2 of the description must be blank"),
+])
+def test_check_description_title_and_blank_line(mp, text, why):
+    d = mp["root"] / lb.DESC_DIR
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "one.md").write_text(text)
+    desc, probs = lb.check_description(mp["root"], "one")
+    assert desc is None and why in probs
+
+
+def test_check_description_good_text_has_no_problems(mp):
+    describe(mp, "one")
+    desc, probs = lb.check_description(mp["root"], "one")
+    assert probs == [] and desc == "Add one\n\n" + GOOD_BODY
+
+
+def test_jsonl_skips_bad_lines_and_non_objects(tmp_path):
+    p = tmp_path / "l.jsonl"
+    p.write_text('{"a": 1}\nnot json\n[1, 2]\n"s"\n{"b": 2}\n')
+    assert lb._jsonl(p) == [{"a": 1}, {"b": 2}]
+    assert lb._jsonl(tmp_path / "missing.jsonl") == []
+
+
+def test_backfill_dedups_across_worktrees_and_keeps_distinct_audit_rows(mp):
+    wt1, tip1 = ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    wt2, _ = ready_branch(mp, "two", {"two.py": "y = 2\n"})
+    review, audit = seed_branch_ledgers(wt1, tip1)
+    audit2 = {**audit, "recorded": "2026-11-18T11:00:00+00:00"}
+    for wt in (wt1, wt2):
+        (wt / "tools" / ".cross-model-ledger.jsonl").write_text(json.dumps(review) + "\n")
+        (wt / "tools" / ".audit-pii-ledger.jsonl").write_text(
+            json.dumps(audit) + "\n" + json.dumps(audit2) + "\n"
+            + json.dumps({**audit, "verdict": "findings", "recorded": "x"}) + "\n")
+    cross, aud = lb.collect_backfill(mp["root"], [{"worktree": str(wt1)}, {"worktree": str(wt2)}])
+    assert len(cross) == 1 and cross[0]["copied_from"] == str(wt1)
+    assert [r["recorded"] for r in aud] == [audit["recorded"], audit2["recorded"]]
+
+
+def test_write_backfill_with_no_audit_rows_creates_no_audit_ledger(mp):
+    lb.write_backfill(mp["root"], [], [])
+    assert not (mp["root"] / "tools" / ".audit-pii-ledger.jsonl").exists()
+
+
+def test_preview_gate_sees_main_gate_data_and_cleans_up(mp, monkeypatch, tmp_path):
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    main_row = {"report": "main.md", "model": "codex", "tree": "f" * 40, "findings": []}
+    (mp["root"] / "tools" / ".cross-model-ledger.jsonl").write_text(json.dumps(main_row) + "\n")
+    scratch = tmp_path / "tmpdirs"
+    scratch.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(scratch))
+    rep = run_mp(mp, ["one"])
+    assert rep["ok"], rep
+    assert '"report": "main.md"' in Path(os.environ["LB_PUSH_LOG"]).read_text()
+    assert list(scratch.iterdir()) == []
+    assert "merge-push-preview" not in sh(mp["root"], "worktree", "list")
+
+
+def test_preview_gate_reports_a_bad_base_and_a_missing_hook(mp, tmp_path):
+    root = mp["root"]
+    bad = lb.preview_gate(root, root, root / "tools", FAKE_SHA, mp["base"], "u", [], [])
+    assert bad["ok"] is False and bad["rc"] is None
+    assert bad["reason"].startswith("preview worktree:")
+    nohook = tmp_path / "checkers"
+    nohook.mkdir()
+    got = lb.preview_gate(root, root, nohook, mp["base"], mp["base"], "u", [], [])
+    assert got == {"rc": None, "ok": False, "reason": f"no hook at {nohook}/hooks/pre-push"}
+
+
+def test_mp_refuses_without_trusted_tools(mp, monkeypatch):
+    monkeypatch.setattr(lb, "trusted_tools", lambda root: None)
+    rep = run_mp(mp, ["one"])
+    assert rep["refusals"] == [lb.NO_TRUSTED] and not rep["ok"]
+
+
+def test_mp_refuses_when_github_main_is_unreadable(mp):
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    rep = run_mp(mp, ["one"], gh=gh_down)
+    assert not rep["ok"] and rep["base"] is None and rep["built"] == []
+    assert any(r.startswith("GitHub main unreadable: ") for r in rep["refusals"]), rep["refusals"]
+
+
+def test_mp_dry_run_refuses_a_stale_installed_hook_before_running_it(mp):
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    installed = Path(sh(mp["root"], "rev-parse", "--path-format=absolute", "--git-path",
+                        "hooks")) / "pre-push"
+    installed.write_text(MP_HOOK + "# older copy\n")
+    hook_log = Path(os.environ["LB_HOOK_LOG"])
+    hook_log.unlink(missing_ok=True)
+    rep = run_mp(mp, ["one"])
+    assert not rep["ok"] and rep["built"] == [] and "check" not in rep
+    assert len(rep["refusals"]) == 1 and "install.sh" in rep["refusals"][0]
+    assert not hook_log.exists()            # the stale hook never ran
+
+
+def test_mp_dry_run_runs_no_suite_and_resolves_nothing_without_allowlist(mp):
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    rep = run_mp(mp, ["one"])
+    assert rep["ok"], rep
+    assert rep["suite"] is None and rep["verify_resolved"] == []
+
+
+def test_mp_holds_a_ready_branch_stacked_on_a_held_one(mp):
+    root = mp["root"]
+    _, held_tip = branch(mp, "held", {"secret.py": "s = 1\n"})     # no description
+    wt = mp["tmp"] / "wt" / "stacked"
+    sh(root, "worktree", "add", "-q", "-b", "stacked", str(wt), held_tip)
+    (wt / "ready.py").write_text("r = 1\n")
+    sh(wt, "add", "-A")
+    sh(wt, "commit", "-qm", "stacked")
+    describe(mp, "stacked")
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    rep = run_mp(mp, ["held", "stacked", "one"])
+    assert [b["branch"] for b in rep["built"]] == ["one"]
+    assert any("contains held branch(es) held" in r for r in held(rep)["stacked"]), held(rep)
+    rc = subprocess.run(["git", "merge-base", "--is-ancestor", held_tip, rep["chain_tip"]],
+                        cwd=root).returncode
+    assert rc == 1                              # the held commit is not in the push
+
+
+def test_mp_holds_a_branch_stacked_on_a_held_ref_with_no_worktree(mp):
+    """grok F1, 2026-11-19: a branch held for "no worktree" has no tip in its check row.
+    It is named by its ref, so a ready branch stacked on it is still held."""
+    root = mp["root"]
+    held_wt, held_tip = branch(mp, "held", {"secret.py": "s = 1\n"})
+    wt = mp["tmp"] / "wt" / "stacked"
+    sh(root, "worktree", "add", "-q", "-b", "stacked", str(wt), held_tip)
+    (wt / "ready.py").write_text("r = 1\n")
+    sh(wt, "add", "-A")
+    sh(wt, "commit", "-qm", "stacked")
+    describe(mp, "stacked")
+    sh(root, "worktree", "remove", "--force", str(held_wt))     # the ref stays
+    rep = run_mp(mp, ["held", "stacked"])
+    assert "no worktree for this branch" in held(rep)["held"]
+    assert held(rep)["stacked"] == ["contains held branch(es) held: landing it would land them"]
+    assert rep["built"] == []
+
+
+def _held_repo(mp):
+    root = mp["root"]
+    _, h = branch(mp, "held", {"secret.py": "s = 1\n"})
+    _, other = branch(mp, "other", {"o.py": "o = 1\n"})
+    stacked = sh(root, "commit-tree", sh(root, "rev-parse", f"{h}^{{tree}}"), "-p", h,
+                 "-m", "on held")
+    return root, h, other, stacked
+
+
+def test_held_inside_names_a_held_branch_by_its_ref(mp):
+    root, h, other, stacked = _held_repo(mp)
+    assert lb.held_inside(root, [{"branch": "held", "tip": None}], mp["base"],
+                          stacked) == ["held"]
+    assert lb.held_inside(root, [{"branch": "held"}], mp["base"], other) == []
+    # A recorded tip is used as given: no ref by that name is needed to find it.
+    assert lb.held_inside(root, [{"branch": "gone", "tip": h}], mp["base"],
+                          stacked) == ["gone"]
+
+
+def test_held_inside_ignores_a_held_tip_already_in_base_and_an_unknown_ref(mp):
+    root, h, other, stacked = _held_repo(mp)
+    on_main = [{"branch": "landed", "tip": mp["base"]}]
+    assert lb.held_inside(root, on_main, mp["base"], stacked) == []
+    assert lb.held_inside(root, [{"branch": "no-such-branch"}], mp["base"], stacked) == []
+
+
+def test_held_inside_reports_a_git_error_as_inside(mp, monkeypatch):
+    root, h, other, stacked = _held_repo(mp)
+    real = lb.git
+
+    def fake(args, cwd):
+        if args[:2] == ["merge-base", "--is-ancestor"] and args[3] == other:
+            return 128, "", "fatal: bad object"
+        return real(args, cwd)
+    monkeypatch.setattr(lb, "git", fake)
+    assert lb.held_inside(root, [{"branch": "held", "tip": h}], mp["base"], other) == [
+        "held (ancestry unreadable, git rc 128)"]
+
+
+def test_mp_nothing_built_says_so(mp):
+    branch(mp, "nodesc", {"n.py": "n = 1\n"})
+    rep = run_mp(mp, ["nodesc"])
+    assert rep["refusals"] == ["nothing to land: every branch is held"]
+
+
+def test_mp_refuses_a_built_chain_that_does_not_verify(mp, monkeypatch):
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+
+    def broken(*a, **k):
+        raise mc.ChainError("forced")
+    monkeypatch.setattr(lb.mc, "walk", broken)
+    rep = run_mp(mp, ["one"])
+    assert rep["refusals"] == ["the built chain does not verify: forced"]
+    assert rep["chain_tip"] is None and rep["gate"] is None
+
+
+def _rep(**kw):
+    rep = {"dry_run": False, "ok": False, "refusals": [], "held": [], "built": [],
+           "base": None, "chain_tip": None, "gate": None, "suite": None,
+           "backfill": {"cross": 0, "audit": 0, "written": False}, "commands": [],
+           "fetch_command": None}
+    rep.update(kw)
+    return rep
+
+
+def test_render_merge_push_ok_real_run_exact():
+    rep = _rep(ok=True, base="b" * 40, chain_tip="c" * 40,
+               built=[{"branch": "one", "tip": "1" * 40, "merge": "c" * 40,
+                       "resolved_allowlist": True}],
+               held=[{"branch": "two", "reasons": ["r1", "r2"]}],
+               backfill={"cross": 2, "audit": 1, "written": True},
+               gate={"ok": True, "rc": 0, "tail": "ignored"},
+               suite={"ok": True, "rc": 0, "tail": "ignored"},
+               commands=["! push", "! ff"])
+    assert lb.render_merge_push(rep) == "\n".join([
+        "MERGE-PUSH",
+        f"base: GitHub main {'b' * 40}",
+        f"BUILT  one  {'1' * 8} -> merge {'c' * 8}  (allowlist resolved by key)",
+        "HELD   two",
+        "         - r1",
+        "         - r2",
+        "evidence copied to the main checkout: 2 review row(s), 1 audit row(s) (written)",
+        "push gate preview: ok (rc 0)",
+        f"full suite on {'c' * 8}: pass (rc 0)",
+        "",
+        "One push lands every BUILT branch. Run from the main checkout, in order:",
+        "  ! push",
+        "  ! ff",
+    ])
+
+
+def test_render_merge_push_failures_exact():
+    blocked = _rep(dry_run=True, gate_tools="/t", chain_tip="c" * 40,
+                   gate={"ok": False, "rc": 1, "tail": "line a\nline b"},
+                   refusals=["push gate rc 1: no"])
+    assert lb.render_merge_push(blocked) == "\n".join([
+        "DRY RUN (judged with /t; nothing written)",
+        "evidence copied to the main checkout: 0 review row(s), 0 audit row(s) (not written)",
+        "push gate preview: BLOCKED (rc 1)",
+        "  line a",
+        "  line b",
+        "full suite: not run (dry run; pass --suite to run it)",
+        "!!! push gate rc 1: no",
+    ])
+    suite_fail = _rep(chain_tip="c" * 40, gate={"ok": True, "rc": 0, "tail": "x"},
+                      suite={"ok": False, "rc": 1, "tail": "FAILED t1"})
+    assert lb.render_merge_push(suite_fail).splitlines()[-3:] == [
+        "push gate preview: ok (rc 0)", f"full suite on {'c' * 8}: FAIL (rc 1)", "  FAILED t1"]
+    stale = _rep(fetch_command="! git fetch", refusals=["stale"])
+    assert lb.render_merge_push(stale).splitlines()[-4:] == [
+        "!!! stale", "", "Run this first, then re-run:", "  ! git fetch"]
+    assert "full suite" not in lb.render_merge_push(stale)
+
+
+@pytest.mark.parametrize("rng", ["abc", "..abc", "abc.."])
+def test_verify_landed_rejects_a_malformed_range(mp, rng):
+    res = lb.verify_landed(mp["root"], rng, gh=gh_landed(None, {}))
+    assert res["problems"] == [f"expected BASE..TIP, got {rng!r}"] and not res["ok"]
+
+
+def test_verify_landed_names_a_non_chain(mp):
+    _, tip = branch(mp, "plain", {"p.py": "p = 1\n"})
+    res = lb.verify_landed(mp["root"], f"{mp['base']}..{tip}", gh=gh_landed(None, {}))
+    assert len(res["problems"]) == 1 and res["problems"][0].startswith("not a merge-push chain:")
+
+
+def test_verify_landed_needs_a_github_origin(mp):
+    rep = built_chain(mp)
+    sh(mp["root"], "remote", "set-url", "--push", "origin", "/srv/git/repo.git")
+    res = lb.verify_landed(mp["root"], f"{mp['base']}..{rep['chain_tip']}", gh=gh_landed(None, {}))
+    assert res["problems"] == ["origin is not a GitHub URL"]
+
+
+def test_verify_landed_reports_each_failed_compare(mp):
+    rep = built_chain(mp)
+    res = lb.verify_landed(mp["root"], f"{mp['base']}..{rep['chain_tip']}", gh=gh_down)
+    assert not res["ok"]
+    assert len(res["problems"]) == 3
+    assert all("compare failed: gh: not authenticated" in p for p in res["problems"])
+
+
+def test_verify_landed_without_orchestration_file_is_not_ok(mp):
+    rep = built_chain(mp)
+    res = lb.verify_landed(mp["root"], f"{mp['base']}..{rep['chain_tip']}", gh=gh_landed(None, {}))
+    assert not res["ok"]
+    assert len(res["problems"]) == 1 and res["problems"][0].startswith("landing record not written")
+
+
+def test_cli_dry_run_without_merge_push_says_why(mp, capsys):
+    assert lb.main(["--repo-root", str(mp["root"]), "--dry-run", "one"]) == 2
+    assert "--dry-run needs --merge-push" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("ok,rc,want", [(True, 0, "LANDED; record appended to /r"),
+                                        (False, 1, "NOT LANDED:\n  - p1")])
+def test_cli_verify_landed(mp, monkeypatch, capsys, ok, rc, want):
+    seen = []
+
+    def fake(root, rng, gh=None):
+        seen.append(rng)
+        return {"ok": ok, "problems": [] if ok else ["p1"], "record": "/r"}
+    monkeypatch.setattr(lb, "verify_landed", fake)
+    assert lb.main(["--repo-root", str(mp["root"]), "--verify-landed", "a..b"]) == rc
+    assert seen == ["a..b"]
+    assert capsys.readouterr().out.strip() == want

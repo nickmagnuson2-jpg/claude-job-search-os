@@ -1734,6 +1734,8 @@ def test_a_matched_tree_row_is_not_also_judged_by_time(tmp_path):
 
 _OLD = "f58251d6"
 _GATE_FILES = ("tools/cross_model_gate.py", "tools/inbox_lock.py", "tools/finding_write.py")
+# What the gate imports since --base (2026-11-18). The old gate predates them.
+_NEW_GATE_DEPS = ("tools/merge_chain.py", "tools/allowlist_merge.py", "tools/allowlist_write.py")
 
 
 def _old_source(path):
@@ -1757,6 +1759,9 @@ def _hook_push(tmp_path, *, old_hook, old_gate, rows):
     for f in _GATE_FILES:
         (repo / f).parent.mkdir(parents=True, exist_ok=True)
         (repo / f).write_text(_source(f, old_gate), encoding="utf-8")
+    if not old_gate:
+        for f in _NEW_GATE_DEPS:
+            (repo / f).write_text(_source(f, False), encoding="utf-8")
     hook = tmp_path / "pre-push"
     hook.write_text(_source("tools/hooks/pre-push", old_hook), encoding="utf-8")
     git = _tree_repo(repo)                    # commits tools/career_scanner/scanner.py
@@ -1843,3 +1848,288 @@ def test_a_failed_gate_probe_passes_no_tip(tmp_path, monkeypatch):
                          rows=[_tree_row_older_than_the_work])
     assert rc != 0
     assert "not given or did not resolve" in out
+
+
+# --- MERGE CHAIN (Nick, 2026-11-18: "No PRs") -------------------------------------
+# A push of merge commits to main, built by land_branch.py --merge-push. With --base the
+# gate checks each merge Mi on its own: the paths p1..Mi change must be covered by rows
+# whose tree is p2's tree (the branch tip that was reviewed), at the full family rule.
+# Only TREE rows count there. Anything that is not a verified chain (tools/merge_chain.py)
+# gets today's rule over the whole push, which blocks a merge no row reviewed.
+import subprocess as _sp  # noqa: E402
+
+sys.path.insert(0, str(REPO_ROOT / "tools"))
+import merge_chain as _mc  # noqa: E402
+
+
+def _chain_repo(tmp_path):
+    def git(*a):
+        return _sp.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.com",
+                        "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", *a],
+                       cwd=tmp_path, capture_output=True, text=True, check=True).stdout.strip()
+    git("init", "-q", "-b", "main")
+    (tmp_path / "README.md").write_text("base\n")
+    git("add", "-A")
+    git("commit", "-qm", "base")
+    return git
+
+
+def _branch(git, root, start, name, files):
+    git("checkout", "-q", "-b", name, start)
+    for rel, text in files.items():
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text)
+    git("add", "-A")
+    git("commit", "-qm", name)
+    tip = git("rev-parse", "HEAD")
+    git("checkout", "-q", "main")
+    return tip
+
+
+_BIG = "".join(f"x{i} = {i}\n" for i in range(200))
+
+
+def _two_branch_chain(tmp_path):
+    git = _chain_repo(tmp_path)
+    base = git("rev-parse", "HEAD")
+    t1 = _branch(git, tmp_path, base, "one", {"tools/career_scanner/scanner.py": _BIG})
+    t2 = _branch(git, tmp_path, base, "two", {"tools/report_extra.py": _BIG})
+    m1 = _mc.build(tmp_path, base, t1, "one")
+    m2 = _mc.build(tmp_path, m1, t2, "two")
+    trees = {t: git("rev-parse", f"{t}^{{tree}}") for t in (t1, t2, m1, m2)}
+    return git, base, t1, t2, m1, m2, trees
+
+
+def test_merge_chain_covered_by_each_branch_tree_clears(tmp_path):
+    git, base, t1, t2, m1, m2, tr = _two_branch_chain(tmp_path)
+    _row(tmp_path, tree=tr[t1], paths=["tools/career_scanner/scanner.py"])
+    _row(tmp_path, tree=tr[t2], paths=["tools/report_extra.py"])
+    v = g.check_chain(tmp_path, base, m2)
+    assert v is not None and v.blocked is False, v and v.message
+    assert "Fable" not in v.message
+
+
+def test_merge_chain_second_branch_uncovered_blocks_naming_it(tmp_path):
+    git, base, t1, t2, m1, m2, tr = _two_branch_chain(tmp_path)
+    _row(tmp_path, tree=tr[t1], paths=["tools/career_scanner/scanner.py"])
+    v = g.check_chain(tmp_path, base, m2)
+    assert v.blocked is True
+    assert "tools/report_extra.py" in v.message and t2[:8] in v.message
+    assert "P0" not in v.message and "more)" not in v.message
+
+
+def test_merge_chain_row_for_the_wrong_branch_tree_does_not_cover(tmp_path):
+    """A row about branch one's tree covers nothing in merge two, even for a path both
+    touched: coverage is per merge, against that merge's own second parent."""
+    git, base, t1, t2, m1, m2, tr = _two_branch_chain(tmp_path)
+    _row(tmp_path, tree=tr[t1], paths=["tools/career_scanner/scanner.py",
+                                       "tools/report_extra.py"])
+    assert g.check_chain(tmp_path, base, m2).blocked is True
+
+
+def test_merge_chain_row_for_the_merge_tree_does_not_cover(tmp_path):
+    """Nobody reviews a merge tree; a row claiming one is not branch evidence."""
+    git, base, t1, t2, m1, m2, tr = _two_branch_chain(tmp_path)
+    _row(tmp_path, tree=tr[m1], paths=["tools/career_scanner/scanner.py"])
+    _row(tmp_path, tree=tr[m2], paths=["tools/report_extra.py"])
+    assert g.check_chain(tmp_path, base, m2).blocked is True
+
+
+def test_merge_chain_ignores_legacy_time_rows(tmp_path):
+    git, base, t1, t2, m1, m2, tr = _two_branch_chain(tmp_path)
+    _row(tmp_path, paths=["tools/career_scanner/scanner.py", "tools/report_extra.py"],
+         recorded="2099-01-01T00:00:00+00:00")
+    assert g.check_chain(tmp_path, base, m2).blocked is True
+
+
+def test_merge_chain_needs_the_full_family_rule(tmp_path):
+    """CLAUDE.md is tier 2: two outside families on the branch's tree, per merge."""
+    git = _chain_repo(tmp_path)
+    base = git("rev-parse", "HEAD")
+    t1 = _branch(git, tmp_path, base, "one", {"CLAUDE.md": "rule\n"})
+    m1 = _mc.build(tmp_path, base, t1, "one")
+    tree1 = git("rev-parse", f"{t1}^{{tree}}")
+    _row(tmp_path, tree=tree1, paths=["CLAUDE.md"], model="codex")
+    assert g.check_chain(tmp_path, base, m1).blocked is True
+    _row(tmp_path, tree=tree1, paths=["CLAUDE.md"], model="grok")
+    assert g.check_chain(tmp_path, base, m1).blocked is False
+
+
+def test_merge_chain_open_p0_on_a_changed_path_blocks(tmp_path):
+    git, base, t1, t2, m1, m2, tr = _two_branch_chain(tmp_path)
+    _row(tmp_path, tree=tr[t1], paths=["tools/career_scanner/scanner.py"])
+    _row(tmp_path, tree=tr[t2], paths=["tools/report_extra.py"])
+    _row(tmp_path, paths=["tools/report_extra.py"],
+         findings=[{"id": "F1", "severity": "P0", "summary": "x", "location": "a:1"}])
+    v = g.check_chain(tmp_path, base, m2)
+    assert v.blocked is True and "P0" in v.message
+    assert "Not covered" not in v.message
+
+
+def test_merge_chain_open_p0_on_a_small_change_blocks(tmp_path):
+    """A merge too small to need review still cannot carry a path with an open P0."""
+    git = _chain_repo(tmp_path)
+    base = git("rev-parse", "HEAD")
+    t1 = _branch(git, tmp_path, base, "one", {"notes.txt": "tiny\n"})
+    m1 = _mc.build(tmp_path, base, t1, "one")
+    assert g.check_chain(tmp_path, base, m1).blocked is False
+    _row(tmp_path, paths=["notes.txt"],
+         findings=[{"id": "F1", "severity": "P0", "summary": "x", "location": "a:1"}])
+    assert g.check_chain(tmp_path, base, m1).blocked is True
+
+
+def _small(k):
+    return "".join(f"y{i} = {i}\n" for i in range(k))
+
+
+def _small_chain(tmp_path, files):
+    """One branch per file, each too small to need review on its own."""
+    git = _chain_repo(tmp_path)
+    base = git("rev-parse", "HEAD")
+    cur, tips = base, {}
+    for path, text in files.items():
+        tip = _branch(git, tmp_path, base, path.replace("/", "-"), {path: text})
+        cur = _mc.build(tmp_path, cur, tip, path)
+        tips[path] = tip
+    return git, base, tips, cur
+
+
+def test_merge_chain_small_merges_that_add_up_to_a_large_change_block(tmp_path):
+    """Grok 2026-11-19 F1: two 80-line branches each pass alone, but the push is a
+    160-line code change, which check() blocks. Each merge's share must be reviewed."""
+    git, base, tips, tip = _small_chain(tmp_path, {"tools/a.py": _small(80),
+                                                   "tools/b.py": _small(80)})
+    assert not g.qualifies([("tools/a.py", 80, 0)]).qualified
+    v = g.check_chain(tmp_path, base, tip)
+    assert v.blocked is True
+    assert "tools/a.py" in v.message and "tools/b.py" in v.message
+    for path, t in tips.items():
+        _row(tmp_path, tree=git("rev-parse", f"{t}^{{tree}}"), paths=[path])
+    assert g.check_chain(tmp_path, base, tip).blocked is False
+
+
+def test_merge_chain_small_merges_that_add_up_to_a_broad_change_block(tmp_path):
+    files = {f"tools/t{i}.py": _small(11) for i in range(6)}
+    git, base, tips, tip = _small_chain(tmp_path, files)
+    v = g.check_chain(tmp_path, base, tip)
+    assert v.blocked is True and "tools/t5.py" in v.message
+
+
+def test_merge_chain_open_p0_on_a_path_only_an_earlier_merge_changes_blocks(tmp_path):
+    """Grok 2026-11-19 F2: merge one adds a file, merge two removes it, so base..tip is
+    empty; the P0 path is still changed by a commit this push sends."""
+    git = _chain_repo(tmp_path)
+    base = git("rev-parse", "HEAD")
+    add = _branch(git, tmp_path, base, "add", {"notes.txt": "tiny\n"})
+    git("checkout", "-q", "-b", "drop", add)
+    git("rm", "-q", "notes.txt")
+    git("commit", "-qm", "drop")
+    drop = git("rev-parse", "HEAD")
+    git("checkout", "-q", "main")
+    m1 = _mc.build(tmp_path, base, add, "add")
+    m2 = _mc.build(tmp_path, m1, drop, "drop")
+    assert git("diff", "--numstat", base, m2) == ""
+    assert g.check_chain(tmp_path, base, m2).blocked is False
+    _row(tmp_path, paths=["notes.txt"],
+         findings=[{"id": "F1", "severity": "P0", "summary": "x", "location": "a:1"}])
+    v = g.check_chain(tmp_path, base, m2)
+    assert v.blocked is True and "P0" in v.message
+
+
+def test_not_a_chain_returns_none_so_the_caller_falls_back(tmp_path):
+    git = _chain_repo(tmp_path)
+    base = git("rev-parse", "HEAD")
+    t1 = _branch(git, tmp_path, base, "one", {"a.txt": "a\n"})
+    assert g.check_chain(tmp_path, base, t1) is None          # not a merge
+    sneak = _branch(git, tmp_path, t1, "sneak", {"evil.txt": "x\n"})
+    bad = git("commit-tree", git("rev-parse", f"{sneak}^{{tree}}"), "-p", base, "-p", t1,
+              "-m", "m")
+    assert g.check_chain(tmp_path, base, bad) is None         # merge adds content
+
+
+def test_corrupt_ledger_blocks_a_chain(tmp_path):
+    git, base, t1, t2, m1, m2, tr = _two_branch_chain(tmp_path)
+    _row(tmp_path, tree=tr[t1], paths=["tools/career_scanner/scanner.py"])
+    _row(tmp_path, tree=tr[t2], paths=["tools/report_extra.py"])
+    with g.ledger_path(tmp_path).open("a") as fh:
+        fh.write("{not json\n")
+    assert g.check_chain(tmp_path, base, m2).blocked is True
+
+
+def _chain_cli(tmp_path, *args, numstat=""):
+    return _sp.run([sys.executable, str(REPO_ROOT / "tools" / "cross_model_gate.py"),
+                    "--repo-root", str(tmp_path), *args], input=numstat,
+                   capture_output=True, text=True,
+                   env={"PYTHONIOENCODING": "utf-8", "PATH": "/usr/bin:/bin"})
+
+
+def test_cli_base_clears_a_covered_chain_and_blocks_without_base(tmp_path):
+    git, base, t1, t2, m1, m2, tr = _two_branch_chain(tmp_path)
+    _row(tmp_path, tree=tr[t1], paths=["tools/career_scanner/scanner.py"])
+    _row(tmp_path, tree=tr[t2], paths=["tools/report_extra.py"])
+    numstat = git("diff", "--numstat", base, m2) + "\n"
+    ok = _chain_cli(tmp_path, "--since", str(_FAR_FUTURE), "--tip", m2, "--base", base,
+              numstat=numstat)
+    assert ok.returncode == 0, ok.stderr
+    no_base = _chain_cli(tmp_path, "--since", str(_FAR_FUTURE), "--tip", m2, numstat=numstat)
+    assert no_base.returncode == 2
+
+
+def test_cli_base_on_a_non_chain_keeps_todays_rule(tmp_path):
+    """A plain branch push with --base: today's verdict, unchanged."""
+    git = _tree_repo(tmp_path)
+    base = git("rev-parse", "HEAD")
+    (tmp_path / "tools" / "career_scanner" / "scanner.py").write_text(_BIG)
+    git("commit", "-qam", "work")
+    head = git("rev-parse", "HEAD")
+    _row(tmp_path, tree=git("rev-parse", "HEAD^{tree}"))
+    numstat = git("diff", "--numstat", base, head) + "\n"
+    r = _chain_cli(tmp_path, "--since", str(_FAR_FUTURE), "--tip", head, "--base", base,
+             numstat=numstat)
+    assert r.returncode == 0, r.stderr
+
+
+def test_cli_help_advertises_base():
+    r = _sp.run([sys.executable, str(REPO_ROOT / "tools" / "cross_model_gate.py"), "--help"],
+                capture_output=True, text=True)
+    assert "--base" in r.stdout
+
+
+def test_the_hook_passes_base_behind_a_help_probe():
+    hook = (REPO_ROOT / "tools" / "hooks" / "pre-push").read_text(encoding="utf-8")
+    assert "*--base*" in hook and '--base "$base"' in hook
+
+
+def test_merge_chain_lists_six_uncovered_paths_and_counts_the_rest(tmp_path):
+    git = _chain_repo(tmp_path)
+    base = git("rev-parse", "HEAD")
+    t1 = _branch(git, tmp_path, base, "one", {f"tools/extra_{i}.py": _BIG for i in range(8)})
+    m1 = _mc.build(tmp_path, base, t1, "one")
+    msg = g.check_chain(tmp_path, base, m1).message
+    assert "(+2 more)" in msg and msg.count("tools/extra_") == 6
+
+
+def test_merge_chain_whose_diff_git_cannot_read_blocks(tmp_path, monkeypatch):
+    """A verified chain whose diff fails is blocked here, not handed back to check()."""
+    git, base, t1, t2, m1, m2, tr = _two_branch_chain(tmp_path)
+
+    def boom(*a, **k):
+        raise _mc.ChainError("git diff failed")
+    monkeypatch.setattr(_mc, "numstat", boom)
+    v = g.check_chain(tmp_path, base, m2)
+    assert v is not None and v.blocked is True and "could not be read" in v.message
+
+
+def test_merge_chain_reports_the_fable_standin(tmp_path, monkeypatch):
+    """Same family rule as check(), including the (expired) Grok-outage exception."""
+    monkeypatch.setattr(g, "fable_standin_active", lambda today=None: True)
+    git = _chain_repo(tmp_path)
+    base = git("rev-parse", "HEAD")
+    t1 = _branch(git, tmp_path, base, "one", {"CLAUDE.md": "rule\n"})
+    m1 = _mc.build(tmp_path, base, t1, "one")
+    tree1 = git("rev-parse", f"{t1}^{{tree}}")
+    _row(tmp_path, tree=tree1, paths=["CLAUDE.md"], model="codex")
+    _row(tmp_path, tree=tree1, paths=["CLAUDE.md"], model="fable")
+    v = g.check_chain(tmp_path, base, m1)
+    assert v.blocked is False and "Fable standing in for Grok" in v.message
