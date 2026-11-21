@@ -76,24 +76,136 @@ def scannable(c) -> bool:
 _ENGINEER_HEAD = re.compile(r"\bengineer(s|ing)?\b", re.IGNORECASE)
 
 
+# Title normalization (title-gate-1118). The include list matched raw substrings, so every
+# spelling variant of an in-lane title was cut: "Strategy and Ops", "Strategy & Ops",
+# "Business Operations" all missed "strategy and operations lead" / "business operations lead".
+# Both the title and each filter phrase go through the same normalization before comparing.
+_DASHES = re.compile(r"[‐-―−]")
+_ABBREVIATIONS = (
+    (re.compile(r"\bbiz\s*ops\b"), "business operations"),
+    (re.compile(r"\bops\b"), "operations"),
+    (re.compile(r"\bsr\b"), "senior"),
+    (re.compile(r"\bmgr\b"), "manager"),
+)
+
+
+def normalize_title(text: str) -> str:
+    """Lowercase; '&' and '+' read as 'and'; punctuation and hyphens become spaces;
+    common abbreviations expanded; whitespace collapsed. Idempotent."""
+    t = _DASHES.sub("-", text or "").lower()
+    t = t.replace("&", " and ").replace("+", " and ")
+    t = re.sub(r"[^a-z0-9]+", " ", t)
+    for pattern, full in _ABBREVIATIONS:
+        t = pattern.sub(full, t)
+    return " ".join(t.split())
+
+
+def title_head(title: str) -> str:
+    """The role proper: the text before the first comma, ' - ', '(' or ':'. The suffix is
+    usually a team, region or product ("Sales Director - Seoul", "Strategy and Operations
+    Lead, Sales"), so an out-of-lane word there must not cut the title."""
+    t = _DASHES.sub("-", title or "")
+    parts = re.split(r",| - |\(|:", t)
+    # A head that is only a level ("Manager, Business Development", "Senior Director,
+    # Corporate Marketing") names no function; the function is the next segment.
+    if len(parts) > 1 and _LEVEL_ONLY.fullmatch(normalize_title(parts[0])) and parts[1].strip():
+        return parts[1]
+    # A delimiter-leading title (", Sales", "(Sales)") has no head before the delimiter;
+    # classify the whole title rather than an empty string.
+    return parts[0] if parts[0].strip() else t
+
+
+_LEVEL_ONLY = re.compile(r"(senior |associate |assistant )?(manager|director|head|lead|vp|"
+                         r"vice president|principal|staff)")
+
+
+# Out-of-lane families (title-gate-1118). The gate now cuts ONLY a title whose head matches
+# one of these; everything else goes on to the scorer, which ranks and never hides. Each
+# family is a category from the 2026-11-17 hand review of the 454 titles the old include
+# list cut (the gitignored calibration file title-cut-review-2026-11-17.json, field `why`).
+# Patterns run on normalize_title(title_head(title)). Kept in code because scan-targets.yaml
+# changes need Nick's ruling; moving the list into the yaml is a decision for him. Second
+# pass (2026-11-18, after a live dry run): patterns for labelled not-fit titles that reached
+# the scorer at score 4-5 (tech lead, revenue ops / deal desk, paid / SEO / events / comms,
+# compliance / security); none cuts a labelled in-lane or old-gate-passed title.
+OUT_OF_LANE_FAMILIES = {
+    "sales": r"\bsales\b|\bsdr\b|\bbdr\b|\bbusiness development\b|\baccount (executive|director|manager)\b"
+             r"|\brvp\b|\bregional (vice president|vp)\b|\benablement\b|\bae\b"
+             r"|\brevenue operations\b|\brevops\b|\bdeal desk\b",
+    "marketing": r"\bmarketing\b|\bmarketer\b|\bbrand\b|\bcampaign\b|\bpmm\b|\babm\b"
+                 r"|\bpaid\b|\bseo\b|\bsem\b|\bevents?\b|\banalyst relations\b|\bcommunications\b"
+                 r"|\bpr\b|\bdeveloper (community|relations|advocates?)\b",
+    "recruiting": r"\brecruit\w*|\btalent\b|\bsourcer\b",
+    "people": r"\bhr\b|\bpeople (business partner|programs|partner)\b|\bhead of people\b",
+    "legal/finance/admin": r"\bcounsel\b|\blegal\b|\baccountant\b|\baccounting\b|\bpayroll\b"
+                           r"|\bfp and a\b|\bfinancial analyst\b|\bfinance\b|\boffice manager\b"
+                           r"|\bexecutive assistant\b|\bfront desk\b|\badministrative\b"
+                           r"|\bworkplace\b|\bfacilities\b|\bit (administrator|manager)\b"
+                           r"|\bcompliance\b|\bsecurity\b",
+    "customer support": r"\bcustomer success\b|\bsupport\b",
+    "research/technical": r"\bresearch\w*|\bscientist\b|\btechnical staff\b|\bmachine learning\b"
+                          r"|\bml\b|\bdata scien\w*"
+                          # Engineering heads without the word "engineer" (1f's check on b8a3ae4a).
+                          r"|\btech lead\b|\bsre\b|\btechnical program manager\b",
+    "solutions/presales": r"\bsolutions? (architect|consultant|consulting)\b|\bhead of solutions\b",
+    "design": r"\bdesigner\b|\bdesign\b",
+    "product": r"\bproduct (manager|lead|designer|owner)\b|\bhead of product\b",
+}
+_FAMILY_RES = {name: re.compile(p) for name, p in OUT_OF_LANE_FAMILIES.items()}
+
+
+# In-lane functions that outrank a family word in the same head (Codex r1 F1): "Business
+# Operations and Sales Lead" names an in-lane function, and the include override misses it
+# because the include phrase is no longer contiguous. On the 2026-11-17 labelled set this
+# moves 2 of 439 not-fit titles on to the scorer and no in-lane title the other way.
+PROTECTED_FUNCTIONS = re.compile(
+    r"\bbusiness operations\b|\bstrategy\b|\bgeneral manager\b|\bchief of staff\b"
+    r"|\b(special|strategic) projects?\b")
+
+
+def out_of_lane_family(title: str):
+    """The out-of-lane family the title's head belongs to, or None. A head that names a
+    PROTECTED_FUNCTIONS function is never in an out-of-lane family."""
+    head = normalize_title(title_head(title))
+    if PROTECTED_FUNCTIONS.search(head):
+        return None
+    for name, rx in _FAMILY_RES.items():
+        if rx.search(head):
+            return name
+    return None
+
+
 def title_cut_reason(title: str, includes: list, excludes: list | None = None,
                      allow_engineer: bool = False):
-    """Why the title filters cut this title, or None when it survives.
+    """Why the title gate cuts this title, or None when it survives.
 
-    Empty `includes` means "no title filter" and everything passes, matching the
-    prior contract. Order matters: the engineer head-noun test and the explicit
-    excludes both run BEFORE the include test, so an exclusion cannot be
-    overridden by an unrelated include token appearing later in the title.
+    Inverted 2026-11-18 (title-gate-1118; funnel-intake step 2): exclude only clearly
+    out-of-lane titles. Order:
+      1. engineer head noun (unchanged: raw head before the first comma);
+      2. an `excludes` phrase, normalized, anywhere in the title -> cut;
+      3. an `includes` phrase, normalized, anywhere in the title -> passes (an in-lane
+         phrase outranks a family word: "Sales Strategist" passes, as it did before);
+      4. a head in an OUT_OF_LANE_FAMILIES family, unless it names a PROTECTED_FUNCTIONS
+         function -> cut;
+      5. everything else passes to the scorer.
+    Empty `includes` still means "no title filter": steps 3-4 are skipped, so a target
+    that never opted into the lane vocabulary keeps the prior contract.
     """
     t = title or ""
     head = t.split(",")[0]
     if not allow_engineer and _ENGINEER_HEAD.search(head):
         return "engineer title"
+    norm = normalize_title(t)
     for bad in (excludes or []):
-        if bad.lower() in t.lower():
+        if normalize_title(bad) in norm:
             return f"title matches role_excludes '{bad}'"
-    if includes and not any(f.lower() in t.lower() for f in includes):
-        return "title not in the target's role_filters"
+    if not includes:
+        return None
+    if any(normalize_title(f) in norm for f in includes):
+        return None
+    family = out_of_lane_family(t)
+    if family:
+        return f"title in out-of-lane family '{family}'"
     return None
 
 
@@ -318,6 +430,12 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False, today=None) -> dict
     # path read active rows through a pipe_read subprocess, a second definition).
     from tools.pipeline_history import history, load_history
     past = load_history(repo_root)
+    # Every role the fetch gates cut gets the same label (title-gate-1118). The check used
+    # to run only on roles that passed the gate, so a cut role was never matched to a past
+    # decision: a 2026-11-17 hand review labelled a cut role a fit that the pipeline
+    # already recorded as withdrawn.
+    for cut in cuts:
+        cut["history"] = history(cut, past)["label"]
     new_roles, repeats, skipped = [], [], 0
     for role in all_roles:
         h = history(role, past)

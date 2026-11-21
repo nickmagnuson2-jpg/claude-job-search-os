@@ -344,3 +344,23 @@ def test_a_cached_exact_declined_repeat_goes_to_skipped_repeats(tmp_path, monkey
     out = sj.assess([ad], root)
     assert out["cached"] == []
     assert [r["company"] for r in out["skipped_repeats"]] == ["Lantern Works"]
+
+
+def test_the_nightly_scan_labels_roles_the_fetch_gates_cut(tmp_path, monkeypatch):
+    """title-gate-1118: the history check runs on cut roles too. Before, it ran only on roles
+    that passed the title gate, so a cut role was never matched to a past decision."""
+    from tools.career_scanner import scanner
+    root = tmp_path
+    (root / "data").mkdir()
+    (root / "data" / "job-pipeline.md").write_text(PIPE, encoding="utf-8")
+    monkeypatch.setattr(scanner, "load_targets", lambda r: [{"name": "x", "ats": "ashby", "slug": "x"}])
+
+    def fake_fetch(t, errors=None, cuts=None):
+        cuts.append({"company": "Beacon AI", "title": "Strategy Lead", "location": "San Francisco",
+                     "url": "https://b.example/9", "rule": "title_filter", "reason": "r"})
+        return []
+    monkeypatch.setattr(scanner, "fetch_company_roles", fake_fetch)
+    monkeypatch.setattr(scanner.time, "sleep", lambda *_: None)
+    scanner.scan_all_targets(root)
+    [cut] = scanner.read_queue_payload(root)["cut_at_fetch"]
+    assert cut["history"] == "they declined you 10/03 (Ops Lead)"
