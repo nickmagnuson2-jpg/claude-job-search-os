@@ -3,7 +3,7 @@ name: scan-jobs
 description: Scan a job portal for matching roles. The model fetches and copies listings; tools/scan_jobs.py dedupes, gates, scores and records them deterministically
 argument-hint: <portal-url-or-name> [search query]
 user-invocable: true
-allowed-tools: WebFetch(*), mcp__exa__web_fetch_exa, mcp__exa__web_search_exa, Read(*), Edit(.claude/skills/scan-jobs/cache.md), Write(.claude/skills/scan-jobs/cache.md), Read(data/job-pipeline.md), Write(output/scan-jobs/**), Bash(PYTHONIOENCODING=utf-8 python3 tools/scan_jobs.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py:*)
+allowed-tools: WebFetch(*), mcp__exa__web_fetch_exa, mcp__exa__web_search_exa, Read(*), Edit(.claude/skills/scan-jobs/cache.md), Write(.claude/skills/scan-jobs/cache.md), Read(data/job-pipeline.md), Write(output/scan-jobs/**), Bash(PYTHONIOENCODING=utf-8 python3 tools/scan_jobs.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py:*), Bash(PYTHONIOENCODING=utf-8 python3 tools/ats_board.py:*)
 ---
 
 # Scan Job Portal
@@ -59,8 +59,11 @@ These return full JSON: title, department, location, complete description, and c
 band where posted. That is strictly more than a page fetch can give you, and it
 removes the separate detail-fetch in Step 4b for these listings.
 
-Add `?includeCompensation=true` to the Ashby endpoint when calling it directly by
-curl — the comp band is otherwise omitted.
+For the comp band on an Ashby board, use
+`PYTHONIOENCODING=utf-8 python3 tools/ats_board.py ashby <slug> --comp` (or
+`fetch_ashby_with_compensation(slug, errors)`). Do not curl the endpoint directly:
+`tools/check_ats_raw_fetch.py` blocks hand-rolled fetches of the posting APIs, because
+they lose the parsers' error channel and a dead slug reads as an empty board.
 
 **The slug is not always the company name.** When a direct slug guess 404s or returns
 `[]`, the board is often embedded as an iframe on the company's own careers page.

@@ -108,6 +108,10 @@
           },
           {
             "type": "command",
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_ats_raw_fetch.py"
+          },
+          {
+            "type": "command",
             "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_poller_self_match.py"
           },
           {

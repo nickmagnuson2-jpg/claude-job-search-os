@@ -428,7 +428,7 @@ After the manifest, synthesize the agent findings:
    not on it as unverified and drop it from the dossier:
 
    ```bash
-   PYTHONIOENCODING=utf-8 python3 -c "import sys; sys.path.insert(0,'tools'); from career_scanner.ashby import fetch_ashby; [print(r) for r in fetch_ashby('<slug>')]"
+   PYTHONIOENCODING=utf-8 python3 tools/ats_board.py ashby <slug> --comp --json
    ```
 
    (`career_scanner.greenhouse.fetch_greenhouse` / `career_scanner.lever.fetch_lever` for those boards; the slug is the path segment of the

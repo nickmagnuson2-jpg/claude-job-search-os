@@ -13,6 +13,7 @@ The wrapper tests in test_career_scanner_filters.py monkeypatch the parsers, so 
 cannot see a regression INSIDE one. These call the real parser with only the network
 stubbed, which is the only level at which the swallow is visible.
 """
+import http.client
 import io
 import json
 import sys
@@ -93,6 +94,7 @@ def test_wrong_shaped_payload_is_recorded(monkeypatch, mod, func, bad, expect):
 @pytest.mark.parametrize("raiser,marker", [
     (urllib.error.HTTPError("u", 404, "Not Found", {}, None), "404"),
     (urllib.error.URLError("dns is down"), "dns is down"),
+    (http.client.InvalidURL("bad url text"), "bad url text"),
 ])
 def test_a_failure_is_also_announced_on_stderr(monkeypatch, mod, func, capsys,
                                                raiser, marker):
@@ -153,3 +155,186 @@ def test_omitting_the_error_list_still_works(monkeypatch, mod, func):
     _stub(monkeypatch, mod,
           raiser=urllib.error.HTTPError("u", 500, "boom", {}, None))
     assert getattr(mod, func)("slug") == []
+
+
+# --- 2026-11-18: a slug the URL cannot carry, and a live Ashby board whose API 404s ---
+# Origin: output/funnel-intake/111826-noboard-pilot/report.md (a Lever slug with a space
+# raised http.client.InvalidURL past the parser) and a second no-board scan report that day
+# (Ashby's posting API returned 404 for a board whose hosted page listed 11 roles).
+
+import http.client  # noqa: E402
+
+API_PREFIX = {
+    "fetch_ashby": "https://api.ashbyhq.com/posting-api/job-board/",
+    "fetch_greenhouse": "https://boards-api.greenhouse.io/v1/boards/",
+    "fetch_lever": "https://api.lever.co/v0/postings/",
+}
+EMPTY_OK = {"fetch_ashby": {"jobs": []}, "fetch_greenhouse": {"jobs": []}, "fetch_lever": []}
+
+
+def _capture(monkeypatch, mod, payload):
+    seen = []
+
+    def urlopen(req, timeout=None):
+        seen.append(req.full_url)
+        return _Resp(json.dumps(payload).encode("utf-8"))
+    monkeypatch.setattr(mod.urllib.request, "urlopen", urlopen)
+    return seen
+
+
+@pytest.mark.parametrize("mod,func", PARSERS)
+@pytest.mark.parametrize("slug,in_url", [
+    ("Acme AI", "Acme%20AI"),        # a space: unquoted, http.client raises InvalidURL
+    ("Acme%20AI", "Acme%20AI"),      # copied from a board URL: must not become %2520
+    ("acme/../x", "acme%2F..%2Fx"),  # a slash cannot change the path
+])
+def test_the_slug_is_quoted_once_in_the_request_url(monkeypatch, mod, func, slug, in_url):
+    seen = _capture(monkeypatch, mod, EMPTY_OK[func])
+    getattr(mod, func)(slug, errors=[])
+    assert seen and seen[0].startswith(API_PREFIX[func] + in_url), seen
+
+
+@pytest.mark.parametrize("mod,func", PARSERS)
+def test_an_invalid_url_is_recorded_not_raised(monkeypatch, mod, func):
+    _stub(monkeypatch, mod, raiser=http.client.InvalidURL("URL can't contain control characters"))
+    errors = []
+    assert getattr(mod, func)("slug", errors=errors) == []
+    assert errors and "InvalidURL" in errors[0]["reason"]
+
+
+def test_lever_keeps_the_raw_slug_as_the_company(monkeypatch):
+    _capture(monkeypatch, lever, [{"text": "Deployment Strategist", "categories": {}}])
+    roles = lever.fetch_lever("Acme AI", errors=[])
+    assert [r["company"] for r in roles] == ["Acme AI"]
+
+
+def _hosted_html(page_slug, n_postings, marker="window.__appData = "):
+    app = {"organization": {"name": "Acme", "hostedJobsPageSlug": page_slug},
+           "jobBoard": {"jobPostings": [{"id": str(i), "title": f"Role {i}"}
+                                        for i in range(n_postings)]}}
+    return (f"<html><script>{marker}{json.dumps(app)};\n</script></html>").encode("utf-8")
+
+
+def _ashby_404_then(monkeypatch, hosted):
+    """The posting API 404s; the hosted page answers with `hosted` (bytes or exception)."""
+    calls = []
+
+    def urlopen(req, timeout=None):
+        calls.append(req.full_url)
+        if req.full_url.startswith(ashby.HOSTED):
+            # The hosted page is a browser page; the scanner names itself on every request.
+            assert "career-scanner" in (req.get_header("User-agent") or "")
+        if req.full_url.startswith("https://api.ashbyhq.com/"):
+            raise urllib.error.HTTPError(req.full_url, 404, "Not Found", {}, None)
+        if isinstance(hosted, Exception):
+            raise hosted
+        return _Resp(hosted)
+    monkeypatch.setattr(ashby.urllib.request, "urlopen", urlopen)
+    return calls
+
+
+def test_ashby_404_with_a_live_hosted_board_is_marked_live(monkeypatch):
+    calls = _ashby_404_then(monkeypatch, _hosted_html("acme", 3))
+    errors = []
+    assert ashby.fetch_ashby("acme", errors=errors) == []
+    assert calls == ["https://api.ashbyhq.com/posting-api/job-board/acme",
+                     "https://jobs.ashbyhq.com/acme"]
+    assert len(errors) == 1 and errors[0].get("live_board") is True
+    assert "3 postings" in errors[0]["reason"]
+    assert "https://jobs.ashbyhq.com/acme" in errors[0]["reason"]
+
+
+@pytest.mark.parametrize("hosted", [
+    _hosted_html("someone-else", 3),          # page belongs to another slug
+    urllib.error.HTTPError("u", 404, "Not Found", {}, None),   # no hosted board either
+], ids=["other-slug", "page-404"])
+def test_ashby_404_with_a_conclusively_absent_hosted_board_stays_a_plain_404(monkeypatch, hosted):
+    _ashby_404_then(monkeypatch, hosted)
+    errors = []
+    assert ashby.fetch_ashby("acme", errors=errors) == []
+    assert errors == [{"reason": "HTTP 404"}]
+
+
+@pytest.mark.parametrize("hosted,why", [
+    (b"<html>no app data here</html>", "no __appData"),
+    (_hosted_html("acme", 3, marker="window.__other = "), "no __appData"),
+    (b"<script>window.__appData = {not json</script>", "not JSON"),
+    (urllib.error.URLError("dns is down"), "URLError"),
+    (urllib.error.HTTPError("u", 503, "Unavailable", {}, None), "HTTP 503"),
+    (TimeoutError("timed out"), "TimeoutError"),
+    (b'<script>window.__appData = {"organization": {"name": "Acme"}, '
+     b'"jobBoard": {"jobPostings": [{"id": "1"}]}};</script>', "no organization slug"),
+    (b'<script>window.__appData = {"organization": null};</script>', "no organization slug"),
+    (b'<script>window.__appData = [1, 2];</script>', "not an object"),
+    (b'<script>window.__appData = {"organization": {"hostedJobsPageSlug": "acme"}};</script>',
+     "no jobPostings list"),
+], ids=["no-appdata", "wrong-marker", "bad-json", "page-neterr", "page-503", "page-timeout",
+        "no-page-slug", "null-org", "appdata-list", "no-postings-list"])
+def test_a_failed_live_board_check_is_not_proof_of_absence(monkeypatch, hosted, why):
+    # Review 2026-11-18 (Codex F2): a check that could not run must not read as "no board".
+    from tools import company_queue as cq
+    _ashby_404_then(monkeypatch, hosted)
+    errors = []
+    assert ashby.fetch_ashby("acme", errors=errors) == []
+    assert len(errors) == 1 and errors[0]["not_found"] is False
+    assert why in errors[0]["reason"] and "live-board check failed" in errors[0]["reason"]
+    assert cq._is_not_found(errors[0]) is False
+
+
+def test_a_live_board_with_zero_postings_is_named_and_counted(monkeypatch):
+    # Review 2026-11-18 (Codex F1), reversed by Nick 2026-11-19 ("empty boards can stay
+    # scan targets, but I want them to bring it up"): the fetcher reports the count, and
+    # detect_board turns a live board with 0 postings into an empty board.
+    from tools import company_queue as cq
+    _ashby_404_then(monkeypatch, _hosted_html("acme", 0))
+    errors = []
+    ashby.fetch_ashby("acme", errors=errors)
+    assert errors[0]["live_board"] is True and "(0 postings)" in errors[0]["reason"]
+    assert errors[0]["postings"] == 0
+    assert cq._is_not_found(errors[0]) is True
+
+
+def test_a_live_board_with_postings_reports_its_count(monkeypatch):
+    _ashby_404_then(monkeypatch, _hosted_html("acme", 3))
+    errors = []
+    ashby.fetch_ashby("acme", errors=errors)
+    assert errors[0]["postings"] == 3
+
+
+@pytest.mark.parametrize("marker", ["window.__appData=", "window.__appData =\n  "])
+def test_the_app_data_assignment_is_found_whatever_the_spacing(monkeypatch, marker):
+    # Review 2026-11-18 (Codex F3).
+    _ashby_404_then(monkeypatch, _hosted_html("acme", 2, marker=marker))
+    errors = []
+    ashby.fetch_ashby("acme", errors=errors)
+    assert errors[0].get("live_board") is True and "(2 postings)" in errors[0]["reason"]
+
+
+def test_ashby_only_checks_the_hosted_page_on_a_404(monkeypatch):
+    calls = []
+
+    def urlopen(req, timeout=None):
+        calls.append(req.full_url)
+        raise urllib.error.HTTPError(req.full_url, 503, "Unavailable", {}, None)
+    monkeypatch.setattr(ashby.urllib.request, "urlopen", urlopen)
+    errors = []
+    ashby.fetch_ashby("acme", errors=errors)
+    assert calls == ["https://api.ashbyhq.com/posting-api/job-board/acme"]
+    assert errors == [{"reason": "HTTP 503"}]
+
+
+def test_the_compensation_variant_gets_the_same_quoting_and_live_check(monkeypatch):
+    # Both public Ashby functions go through _fetch_board; this pins that they still do.
+    calls = _ashby_404_then(monkeypatch, _hosted_html("Acme AI", 2))
+    errors = []
+    assert ashby.fetch_ashby_with_compensation("Acme AI", errors=errors) == []
+    assert calls[0] == ("https://api.ashbyhq.com/posting-api/job-board/Acme%20AI"
+                        "?includeCompensation=true")
+    assert calls[1] == "https://jobs.ashbyhq.com/Acme%20AI"
+    assert errors[0].get("live_board") is True and "2 postings" in errors[0]["reason"]
+
+
+def test_a_live_board_404_without_an_error_list_returns_quietly(monkeypatch):
+    # The error channel is optional; a caller that passes none still gets [] back.
+    _ashby_404_then(monkeypatch, _hosted_html("acme", 3))
+    assert ashby.fetch_ashby("acme") == []

@@ -8,11 +8,15 @@ Endpoint: https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true
 Auth: None required (public API)
 """
 import html
+import http.client
 import json
 import re
 import sys
 import urllib.error
 import urllib.request
+
+from tools.career_scanner.url_segment import quote_segment
+
 
 
 def _fail(errors: list | None, reason: str) -> None:
@@ -35,7 +39,7 @@ def fetch_greenhouse(slug: str, errors: list | None = None) -> list[dict]:
     Returns:
         List of standardized role dicts, or [] on error.
     """
-    url = f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true"
+    url = f"https://boards-api.greenhouse.io/v1/boards/{quote_segment(slug)}/jobs?content=true"
     req = urllib.request.Request(url)
     req.add_header("Accept", "application/json")
     req.add_header("User-Agent", "Mozilla/5.0 (compatible; career-scanner/1.0)")
@@ -49,6 +53,11 @@ def fetch_greenhouse(slug: str, errors: list | None = None) -> list[dict]:
         return []
     except (urllib.error.URLError, OSError) as e:
         print(f"Greenhouse network error for {slug}: {e}", file=sys.stderr)
+        _fail(errors, f"{type(e).__name__}: {e}")
+        return []
+    except (http.client.HTTPException, ValueError) as e:
+        # InvalidURL and a malformed body land here; neither is URLError or OSError.
+        print(f"Greenhouse request error for {slug}: {e}", file=sys.stderr)
         _fail(errors, f"{type(e).__name__}: {e}")
         return []
 

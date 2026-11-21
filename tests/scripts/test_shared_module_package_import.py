@@ -29,6 +29,7 @@ TOOLS = (
     "attention",
     "backfill_transcript_failures",
     "build_check",
+    "check_ats_raw_fetch",
     "check_banned_phrase",
     "check_bare_python",
     "check_build_log_present",
