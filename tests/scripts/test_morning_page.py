@@ -57,9 +57,11 @@ def test_the_page_embeds_generated_at_and_a_30_minute_stale_check():
 
 def test_blocks_are_in_nicks_order():
     page = demo_html()
-    pos = [page.index(f'id="b{i}"') for i in range(1, 7)]
+    # Nick 2026-11-17 (funnel-intake.md step 1): the funnel first, the machine room off the page.
+    pos = [page.index(f'id="{i}"') for i in ("b3", "b1", "b2", "theirs", "b5", "b6")]
     assert pos == sorted(pos)
-    assert "Placeholder until the funnel codify run" in _section(page, "b3")
+    assert 'id="b4"' not in page and "Machine room" not in page
+    assert "Placeholder" not in page
 
 
 def test_must_dos_keep_calendar_apart_from_todos():
@@ -92,21 +94,13 @@ def test_an_unknown_count_prints_unknown_not_zero():
     assert "unknown" in _section(page, "b5") and "unknown" in _section(page, "b2")
 
 
-def test_machine_room_m4_against_the_floor():
-    v = mp.build_view(mp.gather_demo(), NOW)
-    assert v["machine"]["m4"] == {"last_7": 9, "floor": 7.0, "ok": True}
-    assert ('Outreach pace: sent in 7 days</td><td class="n ok">9 <span class="muted">(avg 7)</span>'
-            in _section(demo_html(), "b4"))
-    src = mp.gather_demo()
-    src["collector"]["results"]["conversations_metric"]["data"]["outreach_sent"]["counts"]["7d"] = 5
-    assert mp.build_view(src, NOW)["machine"]["m4"]["ok"] is False
 
 
 def test_failed_sources_are_named():
     src = mp.gather_demo()
     src["collector"]["failed"] = ["role_queue"]
     page = mp.render(mp.build_view(src, NOW), NOW, demo=True)
-    assert "Sources failed: role_queue" in _section(page, "b4")
+    assert "Sources failed: role_queue" in page and 'id="sources-failed"' in page
 
 
 def test_commonplace_shows_one_prompt():
@@ -249,10 +243,6 @@ def test_page_keeps_large_type_and_few_items():
     assert len(v["todos"]) <= mp.MAX_ITEMS and len(v["waiting_names"]) < mp.MAX_ITEMS
 
 
-def test_machine_room_shows_the_learning_ledger_due_count():
-    v = mp.build_view(mp.gather_demo(), NOW)
-    assert v["machine"]["learning_due"] == 6
-    assert "Learning lanes due" in _section(demo_html(), "b4")
 
 
 # --- the sources, each failure shape -------------------------------------------------------
@@ -297,15 +287,6 @@ def test_commonplace_skips_missing_dirs_and_unreadable_files(tmp_path):
     assert titles == {"A", "notitle"}
 
 
-def test_open_findings_counts_or_says_unknown(tmp_path, monkeypatch):
-    import finding_write
-    monkeypatch.setattr(finding_write, "collect", lambda root, only_open: [1, 2, 3])
-    assert mp.open_findings(tmp_path) == 3
-
-    def boom(*a, **k):
-        raise ValueError("bad ledger")
-    monkeypatch.setattr(finding_write, "collect", boom)
-    assert mp.open_findings(tmp_path) is None
 
 
 def test_gather_live_uses_the_read_only_collector(tmp_path, monkeypatch):
@@ -314,13 +295,13 @@ def test_gather_live_uses_the_read_only_collector(tmp_path, monkeypatch):
                         lambda root, d, read_only: seen.setdefault("ro", read_only) and {"results": {}})
     monkeypatch.setattr(mp.day_check, "collect", lambda root, d: {"day": d.isoformat()})
     monkeypatch.setattr(mp, "calendar_events", lambda root: {"events": []})
-    monkeypatch.setattr(mp, "open_findings", lambda root: 4)
     monkeypatch.setattr(mp, "waiting_on_them", lambda root: {"error": None, "rows": []})
+    monkeypatch.setattr(mp.funnel_state, "collect", lambda root, now: {"root": str(root)})
     src = mp.gather_live(tmp_path, NOW)
     assert seen["ro"] is True
-    assert src["day"] == {"day": "2026-01-07"} and src["open_findings"] == 4
-    assert set(src) == {"collector", "day", "calendar", "commonplace", "claude_read", "open_findings",
-                        "waiting_on_them"}
+    assert src["day"] == {"day": "2026-01-07"} and src["funnel"] == {"root": str(tmp_path)}
+    assert set(src) == set(mp.SOURCES) == {"collector", "day", "calendar", "commonplace",
+                                           "claude_read", "waiting_on_them", "funnel"}
 
 
 def test_event_day_parses_dates_and_datetimes():
@@ -331,13 +312,6 @@ def test_event_day_parses_dates_and_datetimes():
 
 # --- the view and the render, each branch ----------------------------------------------------
 
-def test_m4_is_unknown_without_both_windows():
-    src = mp.gather_demo()
-    src["collector"]["results"]["conversations_metric"]["data"]["outreach_sent"]["counts"] = {"7d": 3}
-    v = mp.build_view(src, NOW)
-    assert v["machine"]["m4"] is None
-    page = mp.render(v, NOW, demo=True)
-    assert "Outreach pace: sent in 7 days</td><td class=\"n\">unknown" in page
 
 
 def test_a_read_without_digits_is_shown():
@@ -409,18 +383,18 @@ def test_waiting_on_them_reads_the_next_action_first(tmp_path):
     assert mp.waiting_on_them(tmp_path / "none") == {"error": "file not found", "rows": None}
 
 
-def test_the_page_shows_waiting_on_them_in_block_3():
-    b3 = _section(demo_html(), "b3")
+def test_the_page_shows_waiting_on_them_in_its_own_section():
+    b3 = _section(demo_html(), "theirs")
     assert "Waiting on them" in b3 and "Acme Corp: Await their read" in b3
     src = mp.gather_demo()
     src["waiting_on_them"] = {"error": "file not found", "rows": None}
     page = mp.render(mp.build_view(src, NOW), NOW, demo=True)
-    assert "Pipeline unavailable: file not found" in _section(page, "b3")
+    assert "Pipeline unavailable: file not found" in _section(page, "theirs")
     src["waiting_on_them"] = {"error": None, "rows": [{"company": f"Co{i}", "next": "Await", "updated": ""} for i in range(6)]}
     page = mp.render(mp.build_view(src, NOW), NOW, demo=True)
-    assert "and 2 more" in _section(page, "b3")
+    assert "and 2 more" in _section(page, "theirs")
     src.pop("waiting_on_them")
-    assert "Pipeline unavailable: not read" in _section(mp.render(mp.build_view(src, NOW), NOW, demo=True), "b3")
+    assert "Pipeline unavailable: not read" in _section(mp.render(mp.build_view(src, NOW), NOW, demo=True), "theirs")
 
 
 @pytest.mark.parametrize("nxt,theirs", [
@@ -451,17 +425,245 @@ def test_an_unavailable_todo_list_renders_instead_of_crashing():
     assert "<h3>Top to-dos</h3>" in _section(mp.render(view, NOW, demo=True), "b1")
 
 
-def test_outreach_pace_below_the_average_renders_red():
-    src = mp.gather_demo()
-    src["collector"]["results"]["conversations_metric"]["data"]["outreach_sent"]["counts"]["7d"] = 5
-    page = mp.render(mp.build_view(src, NOW), NOW, demo=True)
-    assert 'sent in 7 days</td><td class="n warn">5 ' in _section(page, "b4")
 
 
-def test_the_shown_average_is_the_threshold_that_colours_the_row():
-    # Codex 2026-10-30 r2 F1: a rounded average could read "20 (avg 20)" in red against 20.4.
+
+# --- the funnel (funnel-intake.md step 1, Nick 2026-11-17) ----------------------------------
+
+def test_the_funnel_shows_the_week_against_the_target():
+    b3 = _section(demo_html(), "b3")
+    assert ('<tr><td>Applications this week</td><td class="n warn">1 <span class="muted">/ 5</span>'
+            in b3)
+    assert '<tr><td>Sends this week</td><td class="n">8</td></tr>' in b3
+    assert '<tr><td>Replies this week</td><td class="n">2</td></tr>' in b3
+    assert '<tr><td>Live processes</td><td class="n">2</td></tr>' in b3
+    assert '<tr><td>Watched companies</td><td class="n">4</td></tr>' in b3
+    assert 'never engaged</td><td class="n">1 / 2 / 1</td>' in b3
+    assert 'list last grew</td><td class="n">2025-12-01</td>' in b3
+
+
+def test_applications_at_or_over_target_are_not_red():
     src = mp.gather_demo()
-    sent = src["collector"]["results"]["conversations_metric"]["data"]["outreach_sent"]["counts"]
-    sent["7d"], sent["30d"] = 20, 87  # 87 / 30 * 7 = 20.3
-    b4 = _section(mp.render(mp.build_view(src, NOW), NOW, demo=True), "b4")
-    assert '<td class="n warn">20 <span class="muted">(avg 20.3)</span>' in b4
+    src["day"]["counts"]["applications"]["week"] = 5
+    b3 = _section(mp.render(mp.build_view(src, NOW), NOW, demo=True), "b3")
+    assert '<td class="n">5 <span class="muted">/ 5</span>' in b3
+    src["day"]["targets"] = {}
+    src["day"]["counts"]["applications"]["week"] = None
+    b3 = _section(mp.render(mp.build_view(src, NOW), NOW, demo=True), "b3")
+    assert '<tr><td>Applications this week</td><td class="n">unknown</td></tr>' in b3
+
+
+def test_the_funnel_lists_passed_roles_with_scores_links_and_live_processes():
+    b3 = _section(demo_html(), "b3")
+    assert "Passed the title list, unread or still open, by score: 2" in b3
+    # apply_url when the posting has one, else the posting URL.
+    assert ('<li><strong>8</strong> <a href="https://jobs.example.com/gamma/1/apply" target="_blank" '
+            'rel="noopener">Gamma LLC: Deployment Strategist</a></li>') in b3
+    assert ('<li><strong>6</strong> <a href="https://jobs.example.com/beta/2" target="_blank" '
+            'rel="noopener">Beta Inc: Chief of Staff</a> <span class="muted">'
+            '(in pipeline: Applied (Ops))</span></li>') in b3
+    assert "<li>Zeta: Recruiter screen</li>" in b3
+    assert "plus 1 open rows not yet in a process" in b3
+
+
+def test_the_roles_to_act_on_come_first_in_the_funnel():
+    b3 = _section(demo_html(), "b3")
+    order = [b3.index(x) for x in ('id="cuts-head"', "Passed the title list", "This week",
+                                   "Live processes</h3>", "Your rulings", "<details>")]
+    assert order == sorted(order)
+
+
+def test_the_short_list_holds_only_new_cuts_worth_a_look_with_links():
+    b3 = _section(demo_html(), "b3")
+    head = b3[b3.index('id="cuts-head"'):b3.index("Passed the title list")]
+    assert "new, in a location the scan accepts, cut only because the title is not on the list: 1</h3>" in head
+    assert ('<code>aaaa1111</code> <a href="https://jobs.example.com/acme/1" target="_blank" '
+            'rel="noopener">Acme Corp: Head of Operations Planning</a>') in head
+    # not worth a look (engineer, location) or not new: only in the full list
+    for key in ("aaaa2222", "bbbb1111", "aaaa3333"):
+        assert key not in head
+    assert "tools/title_cut_ruling.py mark --key KEY --reason" in head
+    src = mp.gather_demo()
+    for c in src["funnel"]["cuts"]["cuts"]:
+        c["new"] = False
+    b3 = _section(mp.render(mp.build_view(src, NOW), NOW, demo=True), "b3")
+    assert "None new in this scan." in b3
+
+
+def test_every_cut_is_in_the_full_list_with_key_reason_and_history_grouped_by_company():
+    b3 = _section(demo_html(), "b3")
+    full = b3[b3.index("<details>"):]
+    assert ("<summary>Every cut in the scan of " in full
+            and ": 4 (2 in an accepted location and cut only by the title list)</summary>" in full)
+    assert full.index("<h3>Acme Corp: 3</h3>") < full.index("<h3>Beta Inc: 1</h3>")
+    assert ('<code>aaaa2222</code> <a href="https://jobs.example.com/acme/2" target="_blank" '
+            'rel="noopener">Senior Software Engineer</a> <span class="muted">(engineer title)') in full
+    assert "Strategy Lead</a> <span class=\"muted\">(location: excluded; London)" in full
+    assert ("(title not in the target&#x27;s role_filters; you passed 01/02 (Business Operations))"
+            in full)
+
+
+def test_a_ruled_cut_is_marked_first_in_its_group_and_listed_in_the_rulings():
+    b3 = _section(demo_html(), "b3")
+    assert "Your rulings in the log: 1</h3>" in b3
+    assert "<li>Acme Corp: Head of Operations Planning. ops planning is in lane" in b3
+    full = b3[b3.index("<details>"):]
+    acme = full[full.index("<h3>Acme Corp: 3</h3>"):full.index("<h3>Beta Inc")]
+    assert acme.index("aaaa1111") < acme.index("aaaa2222") < acme.index("aaaa3333")
+    assert '<span class="ruled">RULED should have shown: ops planning is in lane</span>' in acme
+    assert acme.count("RULED") == 1
+
+
+def test_a_link_is_only_made_from_an_http_url():
+    assert mp._link("javascript:alert(1)", "x") == "x"
+    assert mp._link(None, "a<b") == "a&lt;b"
+    assert mp._link("http://e.example/x?a=1&b=2", "t") == (
+        '<a href="http://e.example/x?a=1&amp;b=2" target="_blank" rel="noopener">t</a>')
+
+
+def test_a_scan_store_error_is_shown():
+    src = mp.gather_demo()
+    src["funnel"]["scans_error"] = "cut-scan store unreadable, every cut shown as new: x"
+    assert "cut-scan store unreadable" in _section(mp.render(mp.build_view(src, NOW), NOW, demo=True), "b3")
+
+
+def test_a_late_scan_is_flagged_and_an_on_time_one_is_not():
+    assert "has not run since" not in _section(demo_html(), "b3")
+    src = mp.gather_demo()
+    src["funnel"]["scan"]["age_hours"] = 27.2
+    b3 = _section(mp.render(mp.build_view(src, NOW), NOW, demo=True), "b3")
+    assert "(27.2 hours ago); it runs daily at 8:30." in b3
+    src["funnel"]["scan"]["age_hours"] = 26
+    assert "has not run since" not in _section(mp.render(mp.build_view(src, NOW), NOW, demo=True), "b3")
+
+
+def test_the_funnel_degrades_source_by_source():
+    src = mp.gather_demo()
+    src["funnel"]["cuts"] = {"error": "no role queue at x", "scanned_at": None, "cuts": None}
+    src["funnel"]["passed"] = {"error": "unreadable role queue: y", "roles": None}
+    src["funnel"]["live"] = {"error": "file not found", "rows": None, "other_open": None}
+    src["funnel"]["watched"] = {"error": "data/scan-targets.yaml not found"}
+    src["funnel"]["rulings"] = {"error": "unreadable rulings log: z", "rulings": None, "bad_lines": 0}
+    b3 = _section(mp.render(mp.build_view(src, NOW), NOW, demo=True), "b3")
+    assert "Cuts unavailable: no role queue at x" in b3
+    assert "unreadable role queue: y" in b3 and "Pipeline unavailable: file not found" in b3
+    assert '<tr><td>Live processes</td><td class="n">unknown</td></tr>' in b3
+    assert '<tr><td>Watched companies</td><td class="n">unknown</td></tr>' in b3
+    assert "Watched list: data/scan-targets.yaml not found" in b3
+    src["funnel"]["cuts"] = mp.gather_demo()["funnel"]["cuts"]
+    b3 = _section(mp.render(mp.build_view(src, NOW), NOW, demo=True), "b3")
+    assert "Rulings log unreadable: unreadable rulings log: z" in b3
+    v = mp.build_view({k: v for k, v in mp.gather_demo().items() if k != "funnel"}, NOW)
+    assert v["funnel"]["cut_groups"] is None and v["funnel"]["cuts_error"] == "not read"
+    assert v["funnel"]["to_look"] is None and v["funnel"]["cut_count"] is None
+    assert "Cuts unavailable: not read" in mp.render(v, NOW, demo=True)
+
+
+def test_bad_rulings_lines_are_reported_and_empty_lists_say_so():
+    src = mp.gather_demo()
+    src["funnel"]["rulings"]["bad_lines"] = 2
+    src["funnel"]["passed"]["roles"] = []
+    src["funnel"]["live"]["rows"] = []
+    src["funnel"]["live"]["other_open"] = 0
+    src["funnel"]["watched"]["open"] = None
+    b3 = _section(mp.render(mp.build_view(src, NOW), NOW, demo=True), "b3")
+    assert '<p class="warn">2 unreadable lines in the log</p>' in b3
+    assert "Nothing passed." in b3 and "<h3>Live processes</h3><p class=\"muted\">None.</p>" in b3
+    assert "not yet in a process" not in b3 and "never engaged" not in b3
+
+
+def test_the_rulings_list_shows_the_newest_few():
+    src = mp.gather_demo()
+    src["funnel"]["rulings"]["rulings"] = [{"key": f"k{i}", "company": f"Co{i}", "title": "T",
+                                            "reason": "r", "ruled_at": f"2026-01-0{i}T00:00"}
+                                           for i in range(1, 7)]
+    v = mp.build_view(src, NOW)
+    assert [r["key"] for r in v["funnel"]["rulings"]] == ["k6", "k5", "k4", "k3"]
+    assert v["funnel"]["ruling_count"] == 6
+    assert "(2026-01-06)" in mp.render(v, NOW, demo=True)
+
+
+def test_when_formats_local_time_and_passes_garbage_through():
+    t = datetime.fromisoformat("2026-01-06T16:30:00+00:00").astimezone()
+    want = f"{t.strftime('%a %b')} {t.day}, {t.strftime('%I:%M %p').lstrip('0')}"
+    assert mp._when("2026-01-06T16:30:00+00:00") == want
+    assert mp._when("nope") == "nope"
+
+
+def test_the_funnel_spans_the_page_and_the_cut_list_never_clips():
+    assert ".funnel{grid-column:1/-1}" in mp.CSS and "ul.cuts{columns:2" in mp.CSS
+    assert "<details open>" not in demo_html()  # the full list is one click away, not in the way
+
+
+def test_only_nicks_rulings_count_or_mark_a_cut():
+    # Codex F2, 2026-11-18: a Claude entry was counted as "Your rulings" and marked its cut.
+    assert mp._by({"by": "nick"}) == "" and mp._by({}) == "" and mp._by({"by": None}) == ""
+    assert mp._by({"by": "claude"}) == " (by claude)"
+    src = mp.gather_demo()
+    src["funnel"]["rulings"]["rulings"][0]["by"] = "claude"
+    b3 = _section(mp.render(mp.build_view(src, NOW), NOW, demo=True), "b3")
+    assert "RULED" not in b3 and "Your rulings in the log: 0</h3>" in b3
+    assert "1 entries in the log not made by you are not counted and mark nothing." in b3
+    assert "ops planning is in lane" not in b3
+    assert "not made by you" not in _section(demo_html(), "b3")
+
+
+def test_empty_funnel_values_render_nothing_not_a_placeholder():
+    b3 = _section(demo_html(), "b3")
+    assert '<p class="warn"></p>' not in b3              # no scan-store error
+    assert "Watched list:" not in b3                       # no watched-list error
+    assert "unreadable lines" not in b3                    # no bad log lines
+    assert "None)" not in b3 and "; )" not in b3 and "(; " not in b3
+    src = mp.gather_demo()
+    src["funnel"]["rulings"]["rulings"] = []
+    b3 = _section(mp.render(mp.build_view(src, NOW), NOW, demo=True), "b3")
+    assert "<ul></ul>" not in b3 and "Your rulings in the log: 0</h3>" in b3
+
+
+def test_an_unreadable_watched_list_shows_no_watched_rows():
+    src = mp.gather_demo()
+    src["funnel"]["watched"] = {"error": "data/scan-targets.yaml not found"}
+    b3 = _section(mp.render(mp.build_view(src, NOW), NOW, demo=True), "b3")
+    assert "list last grew" not in b3 and "never engaged" not in b3
+
+
+def test_unlisted_standing_roles_are_named_not_dropped():
+    assert "more standing roles" not in _section(demo_html(), "b3")
+    src = mp.gather_demo()
+    src["funnel"]["passed"]["unlisted"] = 6
+    b3 = _section(mp.render(mp.build_view(src, NOW), NOW, demo=True), "b3")
+    assert '<p class="warn">plus 6 more standing roles the queue does not store</p>' in b3
+
+
+
+def test_fetch_failures_and_stale_goals_are_stated():
+    assert "failed to fetch" not in _section(demo_html(), "b3")
+    assert "goals.md is stale" not in _section(demo_html(), "b3")
+    src = mp.gather_demo()
+    src["funnel"]["fetch_failures"] = 3
+    src["funnel"]["passed"]["goals_stale"] = True
+    b3 = _section(mp.render(mp.build_view(src, NOW), NOW, demo=True), "b3")
+    assert "3 boards failed to fetch in this scan; their roles are missing from both lists." in b3
+    assert "goals.md is stale, so the scan scored nothing" in b3
+
+
+def test_rulings_join_on_the_full_posting_identity_not_the_short_key():
+    # Fable F4: two postings sharing an 8-hex key must not both read RULED.
+    src = mp.gather_demo()
+    for c in src["funnel"]["cuts"]["cuts"]:
+        c["key"] = "samekey1"
+    b3 = _section(mp.render(mp.build_view(src, NOW), NOW, demo=True), "b3")
+    assert b3.count("RULED should have shown") == _section(demo_html(), "b3").count("RULED should have shown") == 2
+
+
+def test_funnel_rows_are_not_clamped_to_two_lines():
+    assert ".funnel li{display:block}" in mp.CSS
+
+
+
+def test_a_ruling_with_a_non_text_role_key_is_skipped_not_a_crash():
+    src = mp.gather_demo()
+    src["funnel"]["rulings"]["rulings"].append({"key": "x", "role_key": ["a"], "by": "nick"})
+    src["funnel"]["rulings"]["rulings"].append({"key": "y", "role_key": {"a": 1}, "by": "nick"})
+    b3 = _section(mp.render(mp.build_view(src, NOW), NOW, demo=True), "b3")
+    assert "Your rulings in the log: 3</h3>" in b3
