@@ -306,7 +306,8 @@ def write(path: Path, updates: dict, *, memory_dir: Path | None = None,
     update names a key in NEVER_MACHINE_WRITTEN; the result does not re-read cleanly; any
     update reads back different from what was asked; any field not named in `updates`
     changed; or learning_state.validate_fields reports a defect in an updated key.
-    `memory_dir` / `repo_root` are passed to the validator to resolve pointers and paths.
+    `memory_dir` (default: the file's own folder) and `repo_root` are passed to the
+    validator to resolve pointers and paths.
     """
     reasons = [f"{k}: never machine-written (use record_fire for a witnessed fire)"
                for k in updates if k in NEVER_MACHINE_WRITTEN]
@@ -322,7 +323,8 @@ def write(path: Path, updates: dict, *, memory_dir: Path | None = None,
         raise WriteRefused([f"frontmatter: {defect.code}: {defect.detail}"])
     new_text = _set_keys(text, updates)
     new = _refuse_unless_consistent(fields, new_text, updates)
-    invalid = _validate(new, set(updates), memory_dir, repo_root, skills_home)
+    folder = Path(memory_dir) if memory_dir is not None else Path(path).parent
+    invalid = _validate(new, set(updates), folder, repo_root, skills_home)
     if invalid:
         raise WriteRefused(invalid)
     _atomic_write(path, new_text)

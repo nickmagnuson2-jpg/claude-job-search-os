@@ -50,9 +50,16 @@ DISPOSITIONS = ("open", "partial", "closed", "defect")
 
 EXIT_PATHS = ("exit1", "exit2", "skill", "terminal")
 SKILLS_HOME = Path.home() / ".claude" / "skills"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+# A file carrying none of these is a note outside the loop (312 live reference/project/user
+# files on 2026-11-22), not a record with missing state.
+RECORD_KEYS = ("promoted", "occurrences", "reopen_at", "exit_path", "terminal")
 
 # ---------------------------------------------------------------- due
 LADDER_THRESHOLD = 2               # lanes with no per-record gate
+# Below this many fires a memory rule is not a promotion candidate, so a missing reopen_at
+# is not yet a defect (org 68 correction, 2026-11-22: otherwise 988 rules read as defects).
+CANDIDATE_MIN = 2
 LADDER_LANES = ("friction", "lessons-2")
 GATED_LANES = ("memory",)
 DUE_STATES = ("due", "not_due", "no_number", "bad_reopen_at", "bad_occurrences")
@@ -115,10 +122,12 @@ def disposition(value, *, memory_dir: Path | None = None,
 
     Missing or empty: open. An open token: open. partial: partial. A closed token: closed.
     A pointer token: closed when its pointer is valid, else defect:
-      superseded by <ref>  ref names a dated ruling (YYYY-MM-DD) or a path that exists
-                           under repo_root or memory_dir (format only when neither given)
-      merged into <file>   a memory rule file name; it must exist in memory_dir when given
+      superseded by <ref>  a path that resolves inside repo_root (default: this repo) or
+                           memory_dir; or, when ref names no path, a dated ruling (YYYY-MM-DD)
+      merged into <file>   a memory file name that exists in memory_dir; with no memory_dir
+                           the pointer cannot be resolved and is a defect
       parked by <ref>      ref carries a dated ruling (YYYY-MM-DD)
+    A pointer is never accepted on its format alone (Grok r1 F1, P0).
     Any other token, or a value that opens with no token: defect. A defect stays in the
     backlog: an unknown token never reads as promoted.
     """
@@ -141,6 +150,7 @@ def disposition(value, *, memory_dir: Path | None = None,
 
 _DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
 _PATH = re.compile(r"[\w.~-]*(?:/[\w.~-]+)*\.(?:md|py|sh|yaml|yml|json|jsonl|js|txt)\b")
+_MEMORY_FILE = re.compile(r"[A-Za-z0-9_-]+\.md")
 _POINTER = {"superseded": re.compile(r"\bby\s+(\S.*)$", re.I | re.S),
             "merged": re.compile(r"\binto\s+(\S+)", re.I),
             "parked": re.compile(r"\bby\s+(\S.*)$", re.I | re.S)}
@@ -157,26 +167,28 @@ def _pointer_defect(tok: str, text: str, memory_dir: Path | None,
     if tok == "merged":
         name = ref.rstrip(".,;)")
         name = name if name.endswith(".md") else name + ".md"
-        if not re.fullmatch(r"[a-z0-9_]+\.md", name):
+        if not _MEMORY_FILE.fullmatch(name):
             return f"merged pointer {ref!r} is not a memory file name"
-        if memory_dir is not None and not (Path(memory_dir) / name).is_file():
+        if memory_dir is None:
+            return f"merged pointer {name} cannot be resolved: no memory folder given"
+        if not (Path(memory_dir) / name).is_file():
             return f"merged pointer {name} does not exist in the memory folder"
         return None
     if tok == "parked":
         return None if _DATE.search(ref) else f"parked pointer {ref!r} carries no YYYY-MM-DD ruling date"
-    if _DATE.search(ref):
-        return None
     pm = _PATH.search(ref)
-    if not pm:
-        return f"superseded pointer {ref!r} names neither a dated ruling nor a path"
-    roots = [Path(r).resolve() for r in (repo_root, memory_dir) if r is not None]
-    if roots and not any(_inside(r, pm.group(0)) for r in roots):
+    if pm is None:
+        return None if _DATE.search(ref) else (
+            f"superseded pointer {ref!r} names neither a dated ruling nor a path")
+    roots = [Path(r) for r in (repo_root or REPO_ROOT, memory_dir) if r is not None]
+    if not any(_inside(r, pm.group(0)) for r in roots):
         return f"superseded pointer {pm.group(0)} does not exist under the repo or memory folder"
     return None
 
 
 def _inside(root: Path, rel: str) -> bool:
     """rel exists and, with every .. and symlink resolved, stays under root (Codex r1 F3)."""
+    root = Path(root).resolve()
     target = (root / rel).resolve()
     return target.exists() and target.is_relative_to(root)
 
@@ -203,11 +215,12 @@ def is_retired(d: Disposition) -> bool:
 def due_state(occurrences, reopen_at=None, *, lane: str = "memory") -> str:
     """One definition of due. Returns one of DUE_STATES.
 
-    occurrences must be a non-negative int (or a string of digits); anything else is
-    bad_occurrences. In a ladder lane the threshold is LADDER_THRESHOLD and reopen_at must
-    be None. In the memory lane reopen_at is the threshold: absent or "" is no_number
-    (never due); not a positive int (a bool included) is bad_reopen_at. Due iff
-    occurrences >= threshold. No prose is read.
+    occurrences must be a non-negative int (or a string of digits); anything else, None
+    included, is bad_occurrences. In a ladder lane the threshold is LADDER_THRESHOLD and
+    reopen_at must be None. In the memory lane reopen_at is the threshold: not a positive
+    int (a bool included) is bad_reopen_at; absent or "" is no_number (never due) for a
+    candidate (occurrences >= CANDIDATE_MIN) and not_due below it. Due iff occurrences >=
+    threshold. No prose is read.
     """
     if lane in LADDER_LANES:
         if reopen_at is not None:
@@ -226,7 +239,7 @@ def due_state(occurrences, reopen_at=None, *, lane: str = "memory") -> str:
     if occ is None:
         return "bad_occurrences"
     if threshold is None:
-        return "no_number"
+        return "no_number" if occ >= CANDIDATE_MIN else "not_due"
     return "due" if occ >= threshold else "not_due"
 
 
@@ -240,6 +253,11 @@ def _count(value) -> int | None:
 
 
 # ---------------------------------------------------------------- memory frontmatter
+
+def is_record(fields: dict) -> bool:
+    """True when the file carries any of RECORD_KEYS, i.e. is in the learning loop."""
+    return any(k in fields for k in RECORD_KEYS)
+
 
 def is_terminal(fields: dict) -> bool:
     """terminal reads "yes" after memory_frontmatter.normalize (or the string "true")."""
@@ -287,9 +305,9 @@ def _skill_defects(fields: dict, repo_root, skills_home) -> list[str]:
     if not rel:
         out.append("skill_file: exit_path skill needs the skill or framework file")
     else:
-        roots = [Path(repo_root) if repo_root is not None else Path(__file__).resolve().parents[1],
+        roots = [Path(repo_root) if repo_root is not None else REPO_ROOT,
                  Path(skills_home) if skills_home is not None else SKILLS_HOME]
-        if not any((r / rel).is_file() for r in roots):
+        if not any(_inside(r, rel) and (Path(r).resolve() / rel).resolve().is_file() for r in roots):
             out.append(f"skill_file: {rel} exists neither in the repo nor under the skills folder")
     if not str(fields.get("skill_step", "") or "").strip():
         out.append("skill_step: exit_path skill needs the step that carries the rule")
@@ -300,6 +318,8 @@ def memory_state(fields: dict, *, memory_dir: Path | None = None,
                  repo_root: Path | None = None) -> MemoryState:
     """Disposition, terminal, due and every defect of one rule, from read() fields.
     A rule in the backlog with no reopen_at is a no_number defect and never due."""
+    if not is_record(fields):
+        return MemoryState(disposition(None), False, "-", ())
     d = disposition(fields.get("promoted"), memory_dir=memory_dir, repo_root=repo_root)
     terminal = is_terminal(fields)
     defects = []
@@ -307,7 +327,7 @@ def memory_state(fields: dict, *, memory_dir: Path | None = None,
         defects.append(f"promoted: {d.defect}")
     due = "-"
     if in_backlog(d) and not terminal:
-        due = due_state(fields.get("occurrences", 0), fields.get("reopen_at"))
+        due = due_state(fields.get("occurrences"), fields.get("reopen_at"))
         if due == "no_number":
             defects.append("reopen_at: missing; the rule can never be due")
         elif due == "bad_reopen_at":

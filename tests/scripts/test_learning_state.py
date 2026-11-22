@@ -90,8 +90,6 @@ def test_superseded_by_a_dated_ruling_or_existing_path(tmp_path):
     assert ok.state == "closed" and ls.is_retired(ok)
     bad = ls.disposition("superseded by framework/missing.md", repo_root=tmp_path)
     assert bad.state == "defect"
-    # a path with no root to check it against is accepted on format
-    assert ls.disposition("superseded by framework/voice.md").state == "closed"
     assert ls.disposition("superseded by something vague").state == "defect"
 
 
@@ -161,7 +159,7 @@ def test_bad_occurrences(bad):
 
 def test_prose_gate_and_status_words_are_never_read():
     # Only the typed threshold counts; "TRIPPED" in any argument changes nothing.
-    assert ls.due_state(1, None) == "no_number"
+    assert ls.due_state(3, None) == "no_number"
     assert ls.due_state(2, "TRIPPED") == "bad_reopen_at"
 
 
@@ -466,3 +464,92 @@ def test_superseded_path_must_stay_inside_its_root(tmp_path):
     assert ls.disposition("superseded by framework/link.md", repo_root=root).state == "defect"
     (root / "framework" / "in.md").write_text("x", encoding="utf-8")
     assert ls.disposition("superseded by framework/in.md", repo_root=root).state == "closed"
+
+
+
+# ------------------------------------------------------------------ Grok r1 (on d13281cb)
+
+def test_a_pointer_that_cannot_be_resolved_stays_open(tmp_path):
+    # F1 (P0): with no memory_dir, merged closed on format alone.
+    d = ls.disposition("merged into definitely_absent_xyz")
+    assert d.state == "defect" and "memory folder" in d.defect
+    assert ls.in_backlog(d)
+    # superseded by a path is checked against the repo by default
+    assert ls.disposition("superseded by framework/definitely-missing-xyz.md").state == "defect"
+    assert ls.disposition("superseded by tools/learning_state.py").state == "closed"
+
+
+def test_a_date_does_not_excuse_a_missing_path(tmp_path):
+    # F2: "path (date)" skipped the existence check.
+    d = ls.disposition("superseded by framework/missing.md (2026-11-22)", repo_root=tmp_path)
+    assert d.state == "defect"
+    (tmp_path / "framework").mkdir()
+    (tmp_path / "framework" / "missing.md").write_text("x", encoding="utf-8")
+    assert ls.disposition("superseded by framework/missing.md (2026-11-22)",
+                          repo_root=tmp_path).state == "closed"
+
+
+def test_skill_file_must_stay_inside_its_root(tmp_path):
+    # F3: skill_file had no containment check.
+    root, home = tmp_path / "repo", tmp_path / "skills"
+    root.mkdir(); home.mkdir()
+    (tmp_path / "outside").mkdir()
+    (tmp_path / "outside" / "SKILL.md").write_text("x", encoding="utf-8")
+    f = {"exit_path": "skill", "skill_file": "../outside/SKILL.md", "skill_step": "Step 1"}
+    assert ls.validate_fields(f, repo_root=root, skills_home=home)
+
+
+def test_merged_into_a_hyphenated_memory_file(tmp_path):
+    # F5: live archive files are hyphenated (archive-2026-04-orphans.md).
+    (tmp_path / "archive-2026-04-orphans.md").write_text("x", encoding="utf-8")
+    assert ls.disposition("merged into archive-2026-04-orphans.md", memory_dir=tmp_path).state == "closed"
+    assert ls.disposition("merged into archive-2026-04-orphans", memory_dir=tmp_path).state == "closed"
+
+
+def test_missing_count_on_a_record_is_bad_occurrences():
+    # F6: a missing count defaulted to 0 and read not_due.
+    s = ls.memory_state({"promoted": "no", "reopen_at": 3})
+    assert s.due == "bad_occurrences"
+    assert s.defects == ("occurrences: None is not a count",)
+    assert ls.due_state(None, 3) == "bad_occurrences"
+
+
+def test_a_note_with_no_state_keys_is_not_a_learning_record():
+    # 312 live reference/project/user files carry none of the state keys.
+    s = ls.memory_state({"name": "reference_x", "description": "where a thing lives"})
+    assert s.due == "-" and s.defects == ()
+    assert not ls.is_record({"name": "x"})
+    assert ls.is_record({"promoted": "no"}) and ls.is_record({"occurrences": 1})
+
+
+# The shapes repaired by hand in lessons.md Section 2 on 2026-11-22 (memory-hygiene.md,
+# 07:19 and 07:24 entries). Each must be rejected now (Grok r1 F8).
+@pytest.mark.parametrize("shape,cells_or_line", [
+    ("Date cell missing (rows 224-228)", "| A pattern | A rule | 2 | No |"),
+    ("literal pipe in the Rule cell (229, 310)", "| A pattern | rule a | b | 2 | No | 2026-11-19 |"),
+    ("text after the closing pipe", "| p | r | 1 | No | 2026-11-19 | <!-- note -->"),
+    ("Occurrences never recorded (AR34)", ["p", "r", "TODO", "No", "2026-09-21"]),
+    ("count in the Promoted cell (209)", ["p", "r", "2", "4", "2026-11-19"]),
+    ("occurrence notes in the Occurrences cell (209)", ["p", "r", "fired twice, see notes", "No", "2026-11-19"]),
+    ("Encoded instead of a token (30 AR rows)", ["p", "r", "2", "Encoded (framework/x.md)", "2026-10-28"]),
+    ("bold markup hiding Yes (128, 129)", ["p", "r", "2", "**Yes**", "2026-03-01"]),
+    ("Superseded with no pointer", ["p", "r", "2", "Superseded", "2026-02-28"]),
+])
+def test_each_repaired_lessons_shape_is_rejected(shape, cells_or_line):
+    if isinstance(cells_or_line, str):
+        cells, defect = ls.parse_lessons_row(cells_or_line)
+        assert cells is None and defect, shape
+    else:
+        assert ls.lessons_state(cells_or_line)[2], shape
+
+
+# ------------------------------------------------------------------ org correction (68, 2026-11-22, B7 finding)
+
+def test_below_two_with_no_reopen_at_is_not_due_and_not_a_defect():
+    assert ls.due_state(1, None) == "not_due"
+    assert ls.due_state(0, None) == "not_due"
+    assert ls.due_state(2, None) == "no_number"
+    s = ls.memory_state({"promoted": "no", "occurrences": 1})
+    assert s.due == "not_due" and s.defects == ()
+    # a present but bad reopen_at stays a defect at any count
+    assert ls.due_state(1, 0) == "bad_reopen_at"

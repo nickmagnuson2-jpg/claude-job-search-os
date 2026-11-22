@@ -253,6 +253,9 @@ def test_detector_finds_todays_known_sites():
     }
     for path, sigs in expected.items():
         assert sigs <= {s for _, s in found.get(path, [])}, path
+    # Equality on the FILE set (Grok r1 F4): a 12th parser in a new file fails here, while
+    # the tree-wide test is still xfail. The cutover deletes this test with the sites.
+    assert set(found) == set(expected) | set(ALLOWLIST)
 
 
 def test_allowlist_entries_have_reasons_and_still_match():
