@@ -17,6 +17,13 @@ push it was typed for.
 
 LIMIT: Claude writes the record, so it proves the semantic pass RAN to a clean verdict on
 that tree. It does not prove the pass was any good. (Nick, 2026-11-05.)
+
+FROM A LINKED WORKTREE (2026-11-22, 3 fires in one day): the CLI uses the MAIN checkout's
+ledger, the one the push gate reads. `record` writes there; `check` passes only on main's
+rows, and a record held only by the worktree's copy fails with code
+recorded_only_in_worktree. The library functions (read_rows, has_clean_record,
+append_waiver) still use the root they are given: land_branch's merge-push preview runs the
+guard inside a throwaway worktree whose copy holds rows main does not have yet.
 """
 from __future__ import annotations
 
@@ -26,6 +33,9 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from vault_paths import main_checkout  # noqa: E402  (a file read, no git call)
 
 LEDGER = Path("tools") / ".audit-pii-ledger.jsonl"
 
@@ -103,16 +113,28 @@ def main(argv: list[str] | None = None) -> int:
     if tree is None:
         return _out({"status": "error", "code": "not_a_commit",
                      "message": f"{args.tip} is not a commit in {root}"}, 1)
+    main = main_checkout(root)        # `root` itself unless it is a linked worktree
+    ledger = str(main / LEDGER)
     if args.command == "record":
-        append_row(root, {"kind": "audit", "verdict": "clean", "tree": tree, "tip": args.tip,
+        append_row(main, {"kind": "audit", "verdict": "clean", "tree": tree, "tip": args.tip,
                           "recorded": _now(), "files_scanned": args.files,
                           "accepted": args.accept})
-        return _out({"status": "ok", "action": "record", "tree": tree, "tip": args.tip}, 0)
+        return _out({"status": "ok", "action": "record", "tree": tree, "tip": args.tip,
+                     "ledger": ledger}, 0)
     try:
-        ok = has_clean_record(root, tree)
+        ok = has_clean_record(main, tree)
+        stranded = (not ok and main.resolve() != root.resolve()
+                    and has_clean_record(root, tree))
     except LedgerError as e:
         return _out({"status": "error", "code": "ledger_unreadable", "message": str(e)}, 2)
-    return _out({"status": "ok", "action": "check", "tree": tree, "recorded": ok}, 0 if ok else 1)
+    if stranded:
+        return _out({"status": "ok", "action": "check", "tree": tree, "recorded": False,
+                     "code": "recorded_only_in_worktree", "ledger": ledger,
+                     "message": "recorded only in this worktree's copy, which the push gate "
+                                "does not read; re-record from the main checkout (or re-run "
+                                "record, which now writes main's ledger)"}, 1)
+    return _out({"status": "ok", "action": "check", "tree": tree, "recorded": ok,
+                 "ledger": ledger}, 0 if ok else 1)
 
 
 if __name__ == "__main__":
