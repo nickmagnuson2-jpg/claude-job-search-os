@@ -29,6 +29,7 @@ tests/scripts/test_learning_state_single_source.py fails on any such site.
 """
 from __future__ import annotations
 
+import contextlib
 import datetime as _dt
 import os
 import re
@@ -156,7 +157,7 @@ def _key_spans(block: str) -> tuple[dict, int | None, int]:
         indent = len(m.group(1)) if m else None
         if m and indent == 0:
             in_meta = m.group(2) == "metadata" and not line.split(":", 1)[1].strip()
-            if in_meta and i + 1 < len(lines):
+            if in_meta:  # the block ends in a newline, so a line i + 1 always exists
                 nxt = re.match(r"^( +)\S", lines[i + 1])
                 child_indent = len(nxt.group(1)) if nxt else 2
         if m and indent == 0 and in_meta:
@@ -222,7 +223,7 @@ def _atomic_write(path: Path, text: str) -> None:
             f.write(text)
         os.replace(tmp, path)
     except BaseException:
-        if os.path.exists(tmp):
+        with contextlib.suppress(FileNotFoundError):
             os.unlink(tmp)
         raise
 

@@ -306,7 +306,8 @@ def test_record_fire_adds_exactly_one_and_the_evidence(tmp_path, monkeypatch):
     assert n == 4
     text = p.read_text(encoding="utf-8")
     assert mf.read(text)[0]["occurrences"] == 4
-    assert text.endswith("- Fire 4 recorded 2026-11-22: 2026-11-22 the same miss again in a draft\n")
+    assert text == RULE.replace("  occurrences: 3", "  occurrences: 4") + (
+        "- Fire 4 recorded 2026-11-22: 2026-11-22 the same miss again in a draft\n")
     before, after = RULE.splitlines(), text.splitlines()
     assert [(a, b) for a, b in zip(before, after) if a != b] == [("  occurrences: 3", "  occurrences: 4")]
 
