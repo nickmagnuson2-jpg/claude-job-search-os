@@ -189,6 +189,57 @@ def schedule_seconds(plist: Path):
     return min(periods) if periods else None
 
 
+_CAL_KEYS = ("Minute", "Hour", "Day", "Weekday", "Month")
+
+
+def _calendar_entries(plist: Path):
+    """The plist's StartCalendarInterval as a list of dicts, or None when it has none or
+    one this file cannot read (same validity rule as `schedule_seconds`)."""
+    try:
+        data = plistlib.loads(plist.read_bytes())
+    except Exception:
+        return None
+    cal = data.get("StartCalendarInterval")
+    entries = cal if isinstance(cal, list) else [cal]
+    if not entries or not all(isinstance(e, dict) for e in entries):
+        return None
+    for e in entries:
+        if not (set(e) & set(_CAL_KEYS)) or any(
+                isinstance(v, bool) or not isinstance(v, int)
+                for k, v in e.items() if k in _CAL_KEYS):
+            return None
+    return entries
+
+
+def _slot_matches(entry: dict, at: datetime) -> bool:
+    """Does local minute `at` match one calendar entry? A missing key is a wildcard, as
+    launchd reads it. launchd's Weekday 0 and 7 are both Sunday."""
+    actual = {"Minute": at.minute, "Hour": at.hour, "Day": at.day, "Month": at.month,
+              "Weekday": (at.weekday() + 1) % 7}
+    return all(actual[k] == (v % 7 if k == "Weekday" else v)
+               for k, v in entry.items() if k in _CAL_KEYS)
+
+
+def missed_slots(plist: Path, since: float, now: float, limit: int = 2):
+    """How many calendar slots fell after `since` and at or before `now`, counted up to
+    `limit`. None for a job with no readable calendar schedule (a StartInterval job).
+
+    This, not twice the shortest gap, is what lateness means for a calendar job: a job
+    with slots only part of the day (morning-page, 07:00-19:00) has a long overnight gap,
+    and twice its 15-minute gap called it late half an hour after an evening reboot.
+    """
+    entries = _calendar_entries(plist)
+    if entries is None:
+        return None
+    count, t = 0, (int(since) // 60 + 1) * 60
+    while t <= now and count < limit:
+        at = datetime.fromtimestamp(t)
+        if any(_slot_matches(e, at) for e in entries):
+            count += 1
+        t += 60
+    return count
+
+
 def boot_time():
     """When this machine last booted, as a timestamp, or None if it cannot be read."""
     try:
@@ -202,8 +253,11 @@ def boot_time():
 
 def overdue_hours(repo_root: Path, short: str, now: float | None = None,
                   launch_agents: Path | None = None, booted=None):
-    """Hours since this job last showed any sign of running, if that is more than twice
-    its schedule. None when it is not overdue OR when nothing can date it.
+    """Hours since this job last showed any sign of running, if it is overdue. None when
+    it is not overdue OR when nothing can date it.
+
+    Overdue means two calendar slots have passed since that sign of life for a calendar
+    job (`missed_slots`), or twice the interval for a StartInterval job.
 
     The evidence is the newest of: its two log files, the installed plist (a job loaded
     an hour ago has not had its turn yet), and the last boot. The boot counts because
@@ -228,14 +282,65 @@ def overdue_hours(repo_root: Path, short: str, now: float | None = None,
     since_boot = (booted or boot_time)()
     if since_boot is not None:
         seen.append(since_boot)
-    idle = (now if now is not None else datetime.now().timestamp()) - max(seen)
-    return round(idle / 3600.0, 1) if idle > 2 * period else None
+    now = now if now is not None else datetime.now().timestamp()
+    idle = now - max(seen)
+    missed = missed_slots(repo_root / "tools" / "launchd" / f"{JOB_PREFIX}{short}.plist",
+                          max(seen), now)
+    late = missed >= 2 if missed is not None else idle > 2 * period
+    return round(idle / 3600.0, 1) if late else None
+
+
+# Top-level keys of `launchctl print gui/<uid>/<label>` sit one tab deep. Nested sections
+# repeat keys such as `state` two tabs deep, so the anchor is exactly one tab.
+_PRINT_KEY = re.compile(r"^\t(runs|last exit code|last terminating signal) = (.*)$", re.M)
+
+
+def parse_print(text: str) -> dict:
+    """Run count, last exit and terminating signal from `launchctl print` output.
+
+    Returns {"runs", "exit", "never_exited", "signal"}. A key that is absent or unreadable
+    stays None (or False), so "launchd says it never ran" is distinct from "this output
+    said nothing".
+    """
+    info = {"runs": None, "exit": None, "never_exited": False, "signal": None}
+    for key, value in _PRINT_KEY.findall(text or ""):
+        value = value.strip()
+        if key == "runs":
+            info["runs"] = int(value) if value.isdigit() else None
+        elif key == "last exit code":
+            if value == "(never exited)":
+                info["never_exited"] = True
+            else:
+                # A non-zero code carries its name after the number: "78: EX_CONFIG".
+                m = re.match(r"-?\d+", value)
+                info["exit"] = int(m.group(0)) if m else None
+        else:
+            info["signal"] = value or None
+    return info
+
+
+def launchctl_print(label: str) -> dict:
+    """`parse_print` of this job's `launchctl print`; all unknown if it cannot be read."""
+    try:
+        out = subprocess.run(["launchctl", "print", f"gui/{os.getuid()}/{label}"],
+                             capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return parse_print("")
+    return parse_print(out.stdout if out.returncode == 0 else "")
 
 
 def check_jobs(repo_root: Path, launch_agents: Path | None = None) -> tuple[list, list]:
-    """Return (job_status_entries, warnings) from `launchctl list`.
+    """Return (job_status_entries, warnings) from `launchctl list` and `launchctl print`.
 
-    Three failure modes are caught: (1) a loaded job whose last exit was non-zero,
+    `list` names the loaded jobs and the PID of a running one. The last exit comes from
+    `print`, because `list` reports one for a job that never ran: on 2026-11-18 it showed
+    `0` for career-scan while `print` said `runs = 0` and `last exit code = (never
+    exited)`. Read as exit 0, that job looked healthy and mode (3) below could never fire,
+    however long it stayed silent. `list`'s code is used only when `print` gives none,
+    and a non-zero code from either still warns.
+
+    Three failure modes are caught: (1) a loaded job whose last exit was non-zero or that
+    was killed by a signal,
     (2) a job that has a plist but is NOT loaded at all — the exact shape of
     the 2026-06 die-off, where jobs vanished from `launchctl list` and the old
     check (which only warned on ZERO loaded jobs) reported healthy for 3 weeks, and
@@ -243,8 +348,7 @@ def check_jobs(repo_root: Path, launch_agents: Path | None = None) -> tuple[list
     shows no exit for a job that has not run since it was loaded, which after a reboot
     is every job, so "no exit" alone was treated as healthy and a job that never ran
     again read as healthy indefinitely. Warning on every such job would alert on every
-    reboot; it warns only when the job's logs and installed plist are all older than
-    twice its schedule.
+    reboot; it warns only when `overdue_hours` says so.
     """
     entries, warnings = [], []
     try:
@@ -258,22 +362,33 @@ def check_jobs(repo_root: Path, launch_agents: Path | None = None) -> tuple[list
         label = cols[2].strip()
         short = label[len(JOB_PREFIX):]
         try:
-            exit_code = int(cols[1])
+            list_exit = int(cols[1])
         except ValueError:
-            exit_code = None
-        entries.append({"job": short, "last_exit": exit_code})
+            list_exit = None
+        info = launchctl_print(label)
+        if info["runs"] == 0 or info["never_exited"]:
+            exit_code = None                  # launchd: no run since it was loaded
+        elif info["exit"] is not None:
+            exit_code = info["exit"]
+        else:
+            exit_code = list_exit             # `print` gave no code
+        entries.append({"job": short, "last_exit": exit_code, "runs": info["runs"]})
         # The first column is the PID while the job is running. A job that is running
         # right now has no exit to record and is not late, however quiet its logs are.
         running_now = cols[0].strip().isdigit()
-        if exit_code not in (0, None):
-            warnings.append(f"launchd job '{short}' last exited {exit_code} (non-zero = broken).")
+        bad = next((c for c in (exit_code, list_exit) if c not in (0, None)), None)
+        if info["signal"]:
+            warnings.append(f"launchd job '{short}' was last killed by a signal "
+                            f"({info['signal']}).")
+        elif bad is not None:
+            warnings.append(f"launchd job '{short}' last exited {bad} (non-zero = broken).")
         elif exit_code is None and not running_now:
             late = overdue_hours(repo_root, short, launch_agents=launch_agents)
             if late is not None:
                 entries[-1]["overdue_hours"] = late
                 warnings.append(
                     f"launchd job '{short}' is loaded with no recorded exit and has shown "
-                    f"no sign of running for {late}h, more than twice its schedule. "
+                    f"no sign of running for {late}h, past two scheduled runs. "
                     f"Check: launchctl print gui/$(id -u)/{label}")
     if not entries:
         warnings.append("No com.nickmagnuson.jobsearch.* launchd jobs are loaded — automation is off.")

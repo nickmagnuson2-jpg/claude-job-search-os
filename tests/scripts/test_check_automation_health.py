@@ -33,7 +33,9 @@ def _mk_repo(tmp_path, job_shorts):
 def _fake_launchctl(loaded):
     """Return a fake subprocess.run producing `launchctl list` output.
 
-    loaded: list of (exit_code, short) for jobs that ARE loaded.
+    loaded: list of (exit_code, short) for jobs that ARE loaded. A `launchctl print`
+    gets the same text, which has none of its keys, so these tests exercise the
+    fallback to the list's exit column.
     """
     lines = ["PID\tStatus\tLabel"]  # header-ish noise, filtered out
     for exit_code, short in loaded:
@@ -41,6 +43,7 @@ def _fake_launchctl(loaded):
 
     class _R:
         stdout = "\n".join(lines)
+        returncode = 0
 
     def _run(*a, **k):
         return _R()
@@ -599,8 +602,12 @@ def test_a_job_with_no_recorded_exit_that_ran_recently_is_quiet(tmp_path, monkey
     assert warnings == [] and "overdue_hours" not in entries[0]
 
 
-def test_the_threshold_is_twice_the_schedule(tmp_path, monkeypatch):
-    plist = _plist(tmp_path, "daily", DAILY)
+def test_the_threshold_is_twice_the_interval(tmp_path, monkeypatch):
+    """StartInterval jobs have no slot times, so twice the interval stays the threshold.
+    Calendar jobs count missed slots instead (see test_missed_slots_*), so a daily
+    calendar job's threshold now depends on the time of day; until 2026-11-18 this test
+    used a daily calendar plist."""
+    plist = _plist(tmp_path, "daily", "<key>StartInterval</key><integer>86400</integer>")
     log = tmp_path / "tools" / "launchd" / "logs" / "daily.log"
     _aged(log, hours=47)
     assert cah.overdue_hours(tmp_path, "daily", launch_agents=tmp_path / "none") is None
@@ -901,6 +908,7 @@ def test_a_job_that_is_running_now_is_not_overdue_however_old_its_logs(tmp_path,
 
     class _R:
         stdout = f"4242\t-\t{PREFIX}gmail-fetch"
+        returncode = 0
 
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: _R())
     entries, warnings = cah.check_jobs(tmp_path, launch_agents=tmp_path / "LaunchAgents")
@@ -908,6 +916,7 @@ def test_a_job_that_is_running_now_is_not_overdue_however_old_its_logs(tmp_path,
 
     class _Idle:
         stdout = f"-\t-\t{PREFIX}gmail-fetch"
+        returncode = 0
 
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Idle())
     assert len(cah.check_jobs(tmp_path, launch_agents=tmp_path / "LaunchAgents")[1]) == 1
@@ -997,3 +1006,207 @@ def test_main_reports_the_validators_and_their_warnings(tmp_path, monkeypatch, c
     rc, out = _quiet_main(tmp_path, monkeypatch, capsys)
     assert out["local_validators"] == [{"tool": "x.py", "exit": 3, "status": "NO_CASES"}]
     assert "Self-test failed: x.py" in out["warnings"]
+
+
+# =============================================================================
+# 2026-11-18: the last exit comes from `launchctl print`, not `launchctl list`.
+# =============================================================================
+
+# Real pre-kickstart capture of career-scan, 2026-11-18 (1f's session; saved privately
+# as output/analysis/111826-career-scan-launchctl-preKickstart.json). At 19:59:01Z
+# `launchctl list` printed the LIST row below; at 19:59:04Z `launchctl print` printed
+# `runs = 0` and `last exit code = (never exited)`. The job had not run since the 08:49
+# boot; the 08:30 slot fell while the machine was off. The surrounding print lines are
+# the real layout of that job's `launchctl print` (top-level keys one tab deep).
+CAREER_SCAN_LIST = f"PID\tStatus\tLabel\n-\t0\t{PREFIX}career-scan"
+CAREER_SCAN_PRINT = (f"gui/501/{PREFIX}career-scan = {{\n"
+                     "\tactive count = 0\n"
+                     "\ttype = LaunchAgent\n"
+                     "\tstate = not running\n"
+                     "\n"
+                     "\truns = 0\n"
+                     "\tlast exit code = (never exited)\n"
+                     "}\n")
+
+
+def _fake_list_and_print(list_text, print_text, print_rc=0):
+    """A subprocess.run that answers `launchctl list` and `launchctl print` separately."""
+    class _R:
+        def __init__(self, out, rc):
+            self.stdout, self.returncode = out, rc
+
+    def _run(cmd, **k):
+        if cmd[:2] == ["launchctl", "print"]:
+            return _R(print_text, print_rc)
+        return _R(list_text, 0)
+    return _run
+
+
+def test_the_real_never_ran_capture_warns_once_the_job_is_overdue(tmp_path, monkeypatch):
+    """The 11-18 shape: `list` said 0, `print` said never ran. Before the fix the 0 was
+    read as a clean exit, mode (3) never ran, and a job that stays silent never warned."""
+    _plist(tmp_path, "career-scan", DAILY)
+    _aged(tmp_path / "tools" / "launchd" / "logs" / "career-scan.log", hours=50)
+    monkeypatch.setattr(subprocess, "run",
+                        _fake_list_and_print(CAREER_SCAN_LIST, CAREER_SCAN_PRINT))
+    entries, warnings = cah.check_jobs(tmp_path, launch_agents=tmp_path / "LaunchAgents")
+    assert entries[0]["last_exit"] is None and entries[0]["runs"] == 0
+    assert len(warnings) == 1
+    assert "career-scan" in warnings[0] and "no recorded exit" in warnings[0]
+    assert entries[0]["overdue_hours"] == 50.0
+
+
+def test_the_real_never_ran_capture_inside_the_grace_is_quiet(tmp_path, monkeypatch):
+    """Under 24h since the last sign of life, a daily job has missed at most one slot,
+    whatever the time of day. (28h failed from 08:00 to 12:00, when the window held two
+    08:00 slots: Grok health-check r1 F1.)"""
+    _plist(tmp_path, "career-scan", DAILY)
+    _aged(tmp_path / "tools" / "launchd" / "logs" / "career-scan.log", hours=20)
+    monkeypatch.setattr(subprocess, "run",
+                        _fake_list_and_print(CAREER_SCAN_LIST, CAREER_SCAN_PRINT))
+    entries, warnings = cah.check_jobs(tmp_path, launch_agents=tmp_path / "LaunchAgents")
+    assert warnings == [] and entries[0]["last_exit"] is None
+
+
+@pytest.mark.parametrize("print_text, expected", [
+    (CAREER_SCAN_PRINT, {"runs": 0, "exit": None, "never_exited": True, "signal": None}),
+    ("\truns = 22\n\tlast exit code = 0\n\t\tstate = active\n",
+     {"runs": 22, "exit": 0, "never_exited": False, "signal": None}),
+    ("\truns = 3\n\tlast exit code = 78: EX_CONFIG\n",
+     {"runs": 3, "exit": 78, "never_exited": False, "signal": None}),
+    ("\truns = 1\n\tlast terminating signal = Killed: 9\n",
+     {"runs": 1, "exit": None, "never_exited": False, "signal": "Killed: 9"}),
+    # Two tabs deep is a nested section, not the job's own key.
+    ("\t\truns = 5\n\t\tlast exit code = 1\n",
+     {"runs": None, "exit": None, "never_exited": False, "signal": None}),
+    ("", {"runs": None, "exit": None, "never_exited": False, "signal": None}),
+])
+def test_print_output_is_parsed_at_the_top_level_only(print_text, expected):
+    assert cah.parse_print(print_text) == expected
+
+
+def test_a_print_exit_overrides_the_list_column(tmp_path, monkeypatch):
+    _plist(tmp_path, "gmail-fetch", EVERY_15_MIN)
+    monkeypatch.setattr(subprocess, "run", _fake_list_and_print(
+        f"-\t0\t{PREFIX}gmail-fetch", "\truns = 4\n\tlast exit code = 78: EX_CONFIG\n"))
+    entries, warnings = cah.check_jobs(tmp_path, launch_agents=tmp_path / "LaunchAgents")
+    assert entries[0]["last_exit"] == 78
+    assert len(warnings) == 1 and "last exited 78" in warnings[0]
+
+
+def test_a_signal_kill_warns(tmp_path, monkeypatch):
+    _plist(tmp_path, "gmail-fetch", EVERY_15_MIN)
+    monkeypatch.setattr(subprocess, "run", _fake_list_and_print(
+        f"-\t0\t{PREFIX}gmail-fetch", "\truns = 4\n\tlast terminating signal = Killed: 9\n"))
+    entries, warnings = cah.check_jobs(tmp_path, launch_agents=tmp_path / "LaunchAgents")
+    assert len(warnings) == 1 and "Killed: 9" in warnings[0]
+
+
+def test_a_failed_print_falls_back_to_the_list_code(tmp_path, monkeypatch):
+    """`print` exits 113 for an unknown service; the list's non-zero still warns."""
+    _plist(tmp_path, "gmail-fetch", EVERY_15_MIN)
+    monkeypatch.setattr(subprocess, "run", _fake_list_and_print(
+        f"-\t78\t{PREFIX}gmail-fetch", "Bad request.", print_rc=113))
+    entries, warnings = cah.check_jobs(tmp_path, launch_agents=tmp_path / "LaunchAgents")
+    assert entries[0]["last_exit"] == 78 and entries[0]["runs"] is None
+    assert len(warnings) == 1 and "last exited 78" in warnings[0]
+
+
+def test_a_list_nonzero_still_warns_when_print_says_it_never_ran(tmp_path, monkeypatch):
+    _plist(tmp_path, "gmail-fetch", EVERY_15_MIN)
+    monkeypatch.setattr(subprocess, "run", _fake_list_and_print(
+        f"-\t78\t{PREFIX}gmail-fetch", CAREER_SCAN_PRINT))
+    entries, warnings = cah.check_jobs(tmp_path, launch_agents=tmp_path / "LaunchAgents")
+    assert len(warnings) == 1 and "last exited 78" in warnings[0]
+
+
+def test_the_print_command_names_the_gui_domain_and_label(monkeypatch):
+    asked = []
+
+    class _R:
+        stdout, returncode = "\truns = 2\n\tlast exit code = 0\n", 0
+    monkeypatch.setattr(cah.subprocess, "run", lambda cmd, **k: asked.append(cmd) or _R())
+    assert cah.launchctl_print(f"{PREFIX}x") == {"runs": 2, "exit": 0,
+                                                "never_exited": False, "signal": None}
+    assert asked == [["launchctl", "print", f"gui/{cah.os.getuid()}/{PREFIX}x"]]
+
+
+def test_a_print_that_cannot_run_is_all_unknown(monkeypatch):
+    def boom(*a, **k):
+        raise OSError("no launchctl")
+    monkeypatch.setattr(cah.subprocess, "run", boom)
+    assert cah.launchctl_print("x") == {"runs": None, "exit": None,
+                                        "never_exited": False, "signal": None}
+
+
+# =============================================================================
+# 2026-11-18: lateness counts the calendar slots missed, not twice the shortest gap.
+# A job with slots only part of the day (morning-page 07:00-19:00 every 15 min; the
+# proposed career-scan 06:30 + 09:00-12:00) has a long overnight gap. Twice the shortest
+# gap called it late 30 minutes after an evening reboot, before any slot had come.
+# =============================================================================
+from datetime import datetime as _dt
+
+MORNING_PAGE = ("<key>StartCalendarInterval</key><array>"
+                + "".join(f"<dict><key>Hour</key><integer>{7 + q // 4}</integer>"
+                          f"<key>Minute</key><integer>{15 * (q % 4)}</integer></dict>"
+                          for q in range(49)) + "</array>")
+SCAN_SLOTS = ("<key>StartCalendarInterval</key><array>"
+              "<dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>30</integer></dict>"
+              + "".join(f"<dict><key>Hour</key><integer>{h}</integer><key>Minute</key>"
+                        f"<integer>0</integer></dict>" for h in (9, 10, 11, 12)) + "</array>")
+
+
+def _ts(text):
+    return _dt.fromisoformat(text).timestamp()
+
+
+@pytest.mark.parametrize("body, since, now, expected", [
+    # Evening reboot, checked overnight: no slot has come yet.
+    (MORNING_PAGE, "2026-11-18T20:00", "2026-11-19T06:59", 0),
+    (MORNING_PAGE, "2026-11-18T20:00", "2026-11-19T07:00", 1),
+    (MORNING_PAGE, "2026-11-18T20:00", "2026-11-19T07:20", 2),
+    (SCAN_SLOTS, "2026-11-18T13:00", "2026-11-19T06:00", 0),
+    (SCAN_SLOTS, "2026-11-18T13:00", "2026-11-19T09:05", 2),
+    # A single daily slot: the 11-18 career-scan (log 11-17 08:30, boot 08:49).
+    (DAILY, "2026-11-18T08:49", "2026-11-18T14:30", 0),
+    (DAILY, "2026-11-18T08:49", "2026-11-20T08:00", 2),
+    # Weekly on Monday (launchd Weekday 1); 2026-11-18 is a Wednesday.
+    (WEEKLY, "2026-11-18T08:00", "2026-11-23T06:59", 0),
+    (WEEKLY, "2026-11-18T08:00", "2026-11-23T07:00", 1),
+    (WEEKLY, "2026-11-18T08:00", "2026-11-30T07:00", 2),
+])
+def test_missed_slots_counts_scheduled_times_after_the_last_sign_of_life(
+        tmp_path, body, since, now, expected):
+    plist = _plist(tmp_path, "j", body)
+    assert cah.missed_slots(plist, _ts(since), _ts(now)) == expected
+
+
+def test_missed_slots_stops_counting_at_the_limit(tmp_path):
+    plist = _plist(tmp_path, "j", MORNING_PAGE)
+    assert cah.missed_slots(plist, _ts("2026-11-01T00:00"), _ts("2026-11-18T12:00")) == 2
+
+
+@pytest.mark.parametrize("body", [EVERY_15_MIN, "", "<key>StartCalendarInterval</key>"
+                                  "<dict><key>Hour</key><string>8</string></dict>"])
+def test_missed_slots_is_none_without_a_readable_calendar(tmp_path, body):
+    plist = _plist(tmp_path, "j", body)
+    assert cah.missed_slots(plist, _ts("2026-11-18T00:00"), _ts("2026-11-19T00:00")) is None
+
+
+def test_an_evening_reboot_does_not_make_morning_page_late_overnight(tmp_path):
+    """Last sign of life 19:00:01. At 23:00 twice the 15-minute gap is long past, but no
+    slot has come since; at 07:20 next morning two (07:00, 07:15) have."""
+    _plist(tmp_path, "morning-page", MORNING_PAGE)
+    log = tmp_path / "tools" / "launchd" / "logs" / "morning-page.log"
+    _aged(log, hours=0)
+    stamp = _ts("2026-11-18T19:00:01")
+    _os.utime(log, (stamp, stamp))
+    agents = tmp_path / "none"
+    assert cah.overdue_hours(tmp_path, "morning-page", now=_ts("2026-11-18T23:00"),
+                             launch_agents=agents) is None
+    assert cah.overdue_hours(tmp_path, "morning-page", now=_ts("2026-11-19T07:00:30"),
+                             launch_agents=agents) is None
+    late = _ts("2026-11-19T07:20")
+    assert cah.overdue_hours(tmp_path, "morning-page", now=late,
+                             launch_agents=agents) == round((late - stamp) / 3600, 1)
