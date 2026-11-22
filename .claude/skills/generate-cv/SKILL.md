@@ -225,20 +225,22 @@ Before generating the cheat sheet, run all 20 checks from `framework/application
 
 After all fixes, record a QC summary using the template in `framework/application-workflow.md` § QC Summary Template.
 
-**Summary trace (required field of the QC summary).** The Professional Summary is the one slot with no source file behind it, so no source audit can reach it, `/review-cv-deep` included. Two of three summary overclaims got past the deep review and Nick caught them in the PDF (`memory/feedback_summary_is_synthesis_that_source_auditing_cannot_reach.md`). Fill this table in the QC summary before Step 7:
+**Summary trace (required field of the QC summary).** The Professional Summary is the one slot with no source file behind it, so a source-file audit passes it by default. Two of three summary overclaims got past `/review-cv-deep` and Nick caught them in the PDF (`memory/feedback_summary_is_synthesis_that_source_auditing_cannot_reach.md`). Fill this table in the QC summary before Step 7:
 
-| # | Summary clause (verbatim) | Backing CV bullet (`file:line`, quoted) | Verdict |
+| # | Summary clause (verbatim) | Backing CV bullet (role, quoted; `file:line` added in the final trace) | Verdict |
 |---|---|---|---|
 
 - **One row per clause.** Split the summary at every claim, not at every sentence. A company descriptor ("At X, a billing platform") gets a row too, marked "descriptor, sourced from `data/projects/<x>.md`".
-- **One row per number that appears only in the summary** (years of experience, headcounts, totals). Compute it from the dated records in `data/projects/*.md`, never from the calendar span. If the number is not also in a bullet, the row says so.
+- **One row per number that appears only in the summary** (years of experience, headcounts, totals). Compute it from the dated records in `data/projects/*.md`, never from the calendar span. The number must also appear in a CV bullet; if it does not, cut it from the summary. A correct calculation is not a backing bullet.
 - **A clause with no backing bullet is cut**, or rewritten so a bullet backs it. Do not soften it. Write the cut into the Verdict column.
 - **A scope qualifier in the bullet stays in the summary** or the clause is cut. "AI-in-the-development-lifecycle strategy" in the bullet does not back "the AI strategy" in the summary.
 - **Two clauses that are each backed can still overclaim together.** Check the link between them: "listening that became a business case" needs a bullet that says the listening produced the case.
 - **AI-thesis check, one line under the table:** if a sentence makes a claim about AI and the next sentence's proof is not AI work, flag it and rewrite (neutral thesis; AI goes in a later sentence that carries its own AI proof). Write "AI-thesis check: none" when there is none.
 - **A summary that reads like the JD is a warning, not a strength.** If a clause paraphrases the posting, its row must still name a bullet.
 
-Copy the table into the Step 11 display under "Summary trace". A QC summary without it is incomplete, and the CV is not presented.
+**Final trace, after the last content edit.** Step 6b runs before the CV is saved, and Step 10b can still change the summary or its bullets. So after Step 10b's fixes (or after Step 9b-verify when `--no-deep-review` is set), redo the table against the final `output/<company-slug>/MMDDYY-magnuson.md`: every clause of the summary as it now reads appears exactly once, and every backing bullet carries its `file:line` in that file with a quote that matches it. A row from the earlier pass that no longer matches the file is redone, not carried over.
+
+Copy the final table into the Step 11 display under "Summary trace". A QC summary without it is incomplete, and the CV is not presented.
 
 ### Step 7: Generate Companion Cheat Sheet
 
@@ -323,7 +325,7 @@ Pass two arguments to `/review-cv-deep`: the CV filename (just the filename — 
 
 Wait for the deep review to complete before proceeding to Step 11. Capture the key verdicts (Recruiter phone-screen decision, Hiring Manager interview decision, Competitor shortlist rank, top 3 CRITICAL/IMPORTANT findings) for the Step 11 summary display.
 
-**Apply the high-confidence quality fixes before presenting — do NOT hand the user a report of cleanup they have to ask for.** After the deep review returns, auto-apply (and re-render + re-verify per Step 9b-verify) the objective, low-risk findings the panel converges on: cut vague/source-unbacked filler bullets, fix skills format/filler, remove a location line from the summary, fix any unevidenced skill or label, resolve layout/one-page defects. Then re-run Step 9b-verify. Leave for the user ONLY the judgment/voice calls (summary phrasing they must stand behind, which optional achievements to include, claim-level decisions). **Surface those in the DECISIONS FOR YOU block, which is the REQUIRED first block of Step 11 and has a mandatory format — see Step 11.** "A short menu" was the prior wording and it produced nothing for three months, because an instruction with no shape does not convert into an artifact. Origin: a CV for a recruiter-sourced role, where the deep review flagged filler bullets, the skills grouping, and the summary location line, but they were left for the user to catch, driving ~6 extra rounds.
+**Apply the high-confidence quality fixes before presenting — do NOT hand the user a report of cleanup they have to ask for.** After the deep review returns, auto-apply (and re-render + re-verify per Step 9b-verify) the objective, low-risk findings the panel converges on: cut vague/source-unbacked filler bullets, fix skills format/filler, remove a location line from the summary, fix any unevidenced skill or label, resolve layout/one-page defects. Then re-run Step 9b-verify, then redo the final summary trace (Step 6b) against the saved Markdown. Leave for the user ONLY the judgment/voice calls (summary phrasing they must stand behind, which optional achievements to include, claim-level decisions). **Surface those in the DECISIONS FOR YOU block, which is the REQUIRED first block of Step 11 and has a mandatory format — see Step 11.** "A short menu" was the prior wording and it produced nothing for three months, because an instruction with no shape does not convert into an artifact. Origin: a CV for a recruiter-sourced role, where the deep review flagged filler bullets, the skills grouping, and the summary location line, but they were left for the user to catch, driving ~6 extra rounds.
 
 **Opt-out:** if the user explicitly passes `--no-deep-review` in `[context]`, skip this step and note "Deep review skipped per --no-deep-review flag" in the Step 11 summary. This exists for fast-iteration cases (drafting variants); the default is always-on.
 
@@ -386,7 +388,7 @@ the decisions instead of the artifact.
 - **Claims verified:** N checked, N corrected
 - **Issues fixed:** [list or "none"]
 - **Language consistency:** clean / N items fixed
-- **Summary trace:** [the Step 6b table: each summary clause and each summary-only number, its backing bullet with line, verdict; clauses cut; the AI-thesis check line]
+- **Summary trace:** [the final Step 6b table, against the saved Markdown: each summary clause and each summary-only number, its backing bullet with line, verdict; clauses cut; the AI-thesis check line]
 
 ### Deep Review Verdict (from Step 10b — always runs)
 - **Deep review file:** `output/<company-slug>/MMDDYY-magnuson-DEEP-REVIEW.md`
