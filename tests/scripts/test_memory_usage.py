@@ -487,3 +487,36 @@ def test_tool_calls_without_an_id_never_join_two_sessions(tmp_path):
             _tool_use(f"{s}-t", "Read", {"file_path": MP + f"{stem}.md"}), _tool_result(f"{s}-t", "x")])
     res = mu.collect(mem.parent, mu.memory_stems(mem))
     assert mu.session_breadth(res.events) == {"s1": 1, "s2": 1}
+
+
+# ---------------------------------------------------------------------------- Grok r1 (2026-11-22)
+
+@pytest.mark.parametrize("out", [
+    "output/foo.md:12:see feedback_alpha_rule.md:3:quoted text",       # a doc quoting grep output
+    "notes: feedback_alpha_rule.md:3:the rule text",                     # not at line start
+    "/x/output/analysis/feedback_alpha_rule.md:3:same-named file elsewhere",
+    "/tmp/feedback_alpha_rule.md-3-context line",
+])
+def test_a_grep_line_counts_only_as_the_lines_own_memory_file_path(tmp_path, out):
+    """Grok r1 F1 (P1): grep output starts with the matched file's path; that path must be
+    a memory file by the same rule as a Bash print."""
+    res = _scan(tmp_path, [_tool_use("t1", "Grep", {"pattern": "x"}), _tool_result("t1", out)])
+    assert res.events == []
+
+
+@pytest.mark.parametrize("out", [
+    "/x/proj/memory/feedback_alpha_rule.md:3:the rule text",
+    "memory/canonical-sidecar/feedback_alpha_rule.md:3:the rule text",
+    "./feedback_alpha_rule.md:3:the rule text",
+    "  feedback_alpha_rule.md-4-context",
+    "$MEM/feedback_alpha_rule.md:3:text",
+])
+def test_a_grep_line_through_memory_a_variable_or_a_bare_name_counts(tmp_path, out):
+    res = _scan(tmp_path, [_tool_use("t1", "Grep", {"pattern": "x"}), _tool_result("t1", out)])
+    assert _chans(res.events) == [("feedback_alpha_rule", "grep_line")]
+
+
+def test_a_dot_slash_print_after_cd_counts(tmp_path):
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": "cd memory && cat ./feedback_alpha_rule.md"}),
+                           _tool_result("t1", "body")])
+    assert _chans(res.events) == [("feedback_alpha_rule", "bash_print")]

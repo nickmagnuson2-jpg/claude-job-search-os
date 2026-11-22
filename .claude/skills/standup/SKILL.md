@@ -658,6 +658,7 @@ Output the brief in this exact format:
 
 📥 **Queues:** inbox [N / N] · todos [N] overdue (oldest [N]d) · promotion [N] ([N] partial) · pipeline [N] stale — **total [N]**
 Learning lanes: [due_total] due across [N] lanes
+[results.memory_freshness.text, verbatim; if it says "no run yet" or the source failed: Memory freshness unavailable]
 [If complete=false: ⚠️ [N] of 4 queues unreadable: [names]]
 [If total_open=null: **Queues: UNREADABLE** — say this, never omit the line]
 

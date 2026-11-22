@@ -205,3 +205,11 @@ def test_memory_freshness_is_a_source_reading_the_last_scan(tmp_path):
     assert argv == ["tools/memory_usage.py", "--project-dir", str(claude_project_dir(tmp_path)),
                     "--standup"]
     assert sc.commands("2026-01-02", read_only=True)["memory_freshness"][-1] == "--standup"
+
+
+def test_the_standup_skill_prints_memory_freshness_in_step_1_and_the_output_template():
+    """Grok r1 F2: a source the brief's exact-format template omits has no reader."""
+    skill = (REPO_ROOT / ".claude" / "skills" / "standup" / "SKILL.md").read_text()
+    template = skill[skill.index("Learning lanes: [due_total] due across [N] lanes"):]
+    assert "results.memory_freshness.text" in skill[:skill.index("Learning lanes: [due_total]")]
+    assert "results.memory_freshness.text" in template.splitlines()[1]

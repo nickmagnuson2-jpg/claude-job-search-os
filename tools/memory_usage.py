@@ -9,7 +9,8 @@ session, never that the rule was applied. Four channels count:
 - read: a Read tool call on the file whose result is not an error;
 - bash_print: a Bash segment whose command word prints a file (cat, head, tail, sed, less,
   more, bat, awk, nl, grep, rg) naming the file, with non-empty output;
-- grep_line: a `<stem>.md:<line>:<text>` or `<stem>.md-<line>-<text>` line in any tool output;
+- grep_line: a grep output line in a non-Read tool result, `<path>/<stem>.md:<line>:<text>`
+  (or `-` separators), whose path opens the line and leads to a memory file;
 - file_attachment: a `file` attachment carrying the file.
 Excluded, because no text entered or the reference is ambiguous: writes (Edit, Write,
 MultiEdit, redirects, sed -i, cp/mv/rm/touch/tee), names in listings, prompts, system
@@ -40,7 +41,8 @@ from zoneinfo import ZoneInfo
 LOCAL_TZ = ZoneInfo("America/Los_Angeles")
 RULE_FILE = re.compile(r"^(?:feedback|reference|project|user)_.+\.md$")
 NAME = re.compile(r"(?:feedback|reference|project|user)_[A-Za-z0-9_\-]+")
-GREP_LINE = re.compile(r"((?:feedback|reference|project|user)_[A-Za-z0-9_\-]+)\.md[:\-](\d+[:\-])?(.*)")
+# Grep output: the matched file's path opens the line (Grok r1 F1).
+GREP_LINE = re.compile(r"^\s*(\S*?)((?:feedback|reference|project|user)_[A-Za-z0-9_\-]+)\.md[:\-](\d+[:\-])?(.*)")
 HEREDOC = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?[^\n]*\n(.*?)\n\1\b", re.S)
 PRINT_VERBS = {"cat", "head", "tail", "sed", "less", "more", "bat", "awk", "nl", "grep", "rg"}
 WRITE_VERBS = {"mv", "cp", "rm", "touch", "tee"}
@@ -91,16 +93,21 @@ def _memory_stem(path: str, stems: set[str]) -> str | None:
     return stem if stem in stems else None
 
 
+def _memory_prefix(prefix: str) -> bool:
+    """A path prefix that leads to a memory file: none (a bare name, e.g. after a cd), ./,
+    a memory/ folder (its backup copies included), or a shell variable."""
+    prefix = prefix.replace('"', "").replace("'", "")
+    return (prefix in ("", "./") or "memory/" in prefix
+            or ("$" in prefix and prefix.endswith("/")))
+
+
 def _names_in_memory(segment: str, stems: set[str]) -> set[str]:
-    """Stems named in a segment as a memory file: a bare name (relative, e.g. after a cd), a
-    path through a memory/ folder (its backup copies included), or a path through a shell
-    variable. A path through any
-    other folder is a different file with the same name (Codex r1 F2)."""
+    """Stems named in a segment through a memory path (see _memory_prefix). A path through
+    any other folder is a different file with the same name (Codex r1 F2)."""
     found = set()
     for stem in _names(segment, stems):
         for m in re.finditer(rf"(\S*?){re.escape(stem)}", segment):
-            prefix = m.group(1).replace('"', "").replace("'", "")
-            if not prefix or "memory/" in prefix or ("$" in prefix and prefix.endswith("/")):
+            if _memory_prefix(m.group(1)):
                 found.add(stem)
                 break
     return found
@@ -142,12 +149,12 @@ def _grep_lines(text: str, stems: set[str]) -> set[str]:
     hits = set()
     for line in text.splitlines():
         m = GREP_LINE.search(line)
-        if m and m.group(1) in stems:
-            rest = m.group(3).strip()
+        if m and m.group(2) in stems and _memory_prefix(m.group(1)):
+            rest = m.group(4).strip()
             # Without a `<n>:` line number, text starting with a digit is a citation
             # (`x.md:89,269`), not grep output.
-            if rest and not (m.group(2) is None and rest[0].isdigit()):
-                hits.add(m.group(1))
+            if rest and not (m.group(3) is None and rest[0].isdigit()):
+                hits.add(m.group(2))
     return hits
 
 
