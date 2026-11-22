@@ -25,12 +25,13 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from tools.career_scanner import ashby, greenhouse, lever  # noqa: E402
+from tools.career_scanner import ashby, greenhouse, lever, yc  # noqa: E402
 
 PARSERS = [
     pytest.param(ashby, "fetch_ashby", id="ashby"),
     pytest.param(greenhouse, "fetch_greenhouse", id="greenhouse"),
     pytest.param(lever, "fetch_lever", id="lever"),
+    pytest.param(yc, "fetch_yc", id="yc"),
 ]
 
 
@@ -168,8 +169,10 @@ API_PREFIX = {
     "fetch_ashby": "https://api.ashbyhq.com/posting-api/job-board/",
     "fetch_greenhouse": "https://boards-api.greenhouse.io/v1/boards/",
     "fetch_lever": "https://api.lever.co/v0/postings/",
+    "fetch_yc": "https://www.ycombinator.com/companies/",
 }
-EMPTY_OK = {"fetch_ashby": {"jobs": []}, "fetch_greenhouse": {"jobs": []}, "fetch_lever": []}
+EMPTY_OK = {"fetch_ashby": {"jobs": []}, "fetch_greenhouse": {"jobs": []}, "fetch_lever": [],
+            "fetch_yc": ""}  # yc reads HTML; only the request URL is asserted here
 
 
 def _capture(monkeypatch, mod, payload):
