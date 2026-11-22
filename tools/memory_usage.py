@@ -44,7 +44,7 @@ LOCAL_TZ = ZoneInfo("America/Los_Angeles")
 RULE_FILE = re.compile(r"^(?:feedback|reference|project|user)_.+\.md$")
 NAME = re.compile(r"(?:feedback|reference|project|user)_[A-Za-z0-9_\-]+")
 # Grep output: the matched file's path opens the line (Grok r1 F1).
-GREP_LINE = re.compile(r"^\s*(\S*?)((?:feedback|reference|project|user)_[A-Za-z0-9_\-]+)\.md[:\-](\d+[:\-])?(.*)")
+GREP_LINE = re.compile(r"^\s*([^\s:]*?)((?:feedback|reference|project|user)_[A-Za-z0-9_\-]+)\.md[:\-](\d+[:\-])?(.*)")
 HEREDOC = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?[^\n]*\n(.*?)\n\1\b", re.S)
 PRINT_VERBS = {"cat", "head", "tail", "sed", "less", "more", "bat", "awk", "nl", "grep", "rg"}
 WRITE_VERBS = {"mv", "cp", "rm", "touch", "tee"}
@@ -99,8 +99,11 @@ def _memory_prefix(prefix: str) -> bool:
     """A path prefix that leads to a memory file: none (a bare name, e.g. after a cd), ./,
     a memory/ folder (its backup copies included), or a shell variable."""
     prefix = prefix.replace('"', "").replace("'", "")
-    return (prefix in ("", "./") or "memory/" in prefix
-            or ("$" in prefix and prefix.endswith("/")))
+    if prefix in ("", "./"):
+        return True
+    # A folder path ends at the rule name: anything after its last "/" would be another
+    # file's name, e.g. `memory/notes.md:12:` before a cited rule (Codex r2 F1).
+    return prefix.endswith("/") and ("memory/" in prefix or "$" in prefix)
 
 
 def _names_in_memory(segment: str, stems: set[str]) -> set[str]:

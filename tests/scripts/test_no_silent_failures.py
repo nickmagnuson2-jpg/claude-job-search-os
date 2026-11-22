@@ -508,8 +508,8 @@ def _resolve_script_ref(ref, repo, main_root):
     candidate = Path(ref)
     if not candidate.is_absolute():
         return Path(repo) / ref
-    try:
-        return Path(repo) / candidate.relative_to(main_root)
+    try:   # compare real paths, so a symlink alias of main cannot escape (Codex r2 F2)
+        return Path(repo) / candidate.resolve().relative_to(Path(main_root).resolve())
     except ValueError:
         return candidate
 
@@ -561,6 +561,20 @@ def test_a_main_checkout_path_resolves_into_the_tree_under_test(tmp_path):
     assert resolve("tools/new_job.py") == tree / "tools" / "new_job.py"
     assert resolve("/opt/elsewhere/tool.py") == Path("/opt/elsewhere/tool.py")
     assert resolve(str(tmp_path / "mainx" / "tools" / "new_job.py")) == tmp_path / "mainx" / "tools" / "new_job.py"
+
+
+def test_a_symlinked_main_path_still_resolves_into_the_tree_under_test(tmp_path):
+    """Codex r2 F2 (P1): a plist path reaching main through a symlink alias must not escape
+    to main's copy of the script."""
+    real, tree = tmp_path / "main-real", tmp_path / "tree"
+    (real / "tools").mkdir(parents=True)
+    (real / "tools" / "deleted.py").write_text("")          # exists only in main
+    (tree / "tools").mkdir(parents=True)
+    alias = tmp_path / "main-alias"
+    alias.symlink_to(real)
+    for ref, root in ((alias / "tools" / "deleted.py", real), (real / "tools" / "deleted.py", alias)):
+        resolved = _resolve_script_ref(str(ref), tree, root)
+        assert resolved == tree / "tools" / "deleted.py" and not resolved.is_file()
 
 
 def test_the_main_checkout_root_is_where_the_shared_git_dir_lives():

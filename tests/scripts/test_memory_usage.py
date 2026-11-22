@@ -522,3 +522,22 @@ def test_a_dot_slash_print_after_cd_counts(tmp_path):
     res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": "cd memory && cat ./feedback_alpha_rule.md"}),
                            _tool_result("t1", "body")])
     assert _chans(res.events) == [("feedback_alpha_rule", "bash_print")]
+
+
+# ---------------------------------------------------------------------------- Codex r2 (2026-11-22)
+
+@pytest.mark.parametrize("out", [
+    "memory/notes.md:12:feedback_alpha_rule.md:3:saved grep output",
+    "memory/notes.md-12-feedback_alpha_rule.md-3-saved context line",
+    "/x/proj/memory/MEMORY.md:4:feedback_alpha_rule.md:2:quoted",
+])
+def test_a_rule_cited_inside_another_memory_files_grep_line_does_not_count(tmp_path, out):
+    """Codex r2 F1 (P0): the opening path is the matched file; a rule name after it is text."""
+    res = _scan(tmp_path, [_tool_use("t1", "Grep", {"pattern": "x"}), _tool_result("t1", out)])
+    assert res.events == []
+
+
+def test_a_print_naming_a_rule_after_another_memory_path_does_not_count(tmp_path):
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": "cat memory/notes.md-feedback_alpha_rule.md"}),
+                           _tool_result("t1", "x")])
+    assert res.events == []
