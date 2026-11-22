@@ -105,9 +105,10 @@ class CorpusMoved(Exception):
 def stable_entries(memory_dir: Path, repo_root: Path, inputs: dict) -> dict[str, str]:
     """entries() twice; the two scans must agree, else CorpusMoved. One pass hashes files
     one at a time, so a file hashed early can change while a later one is read (Codex B7
-    F1). This narrows the window to the scan itself; it cannot cover a change after verify
-    returns, so the apply step must re-check each file's sha (the report's .entries.json)
-    at the moment it writes that file."""
+    F1). This catches a change that lands between the two passes; it cannot catch one made
+    after a file's second hash (Grok B7 F1), nor one after verify returns. So the apply step
+    must compare each file's sha with the report's .entries.json (the map the approved
+    digest was computed over) at the moment it writes that file, and refuse on mismatch."""
     a = entries(memory_dir, repo_root, inputs)
     b = entries(memory_dir, repo_root, inputs)
     if a != b:
@@ -164,7 +165,7 @@ def _parse_all(text: str, head: str, rx: re.Pattern, what: str) -> list[re.Match
     out = []
     for sec in _sections(text, head):
         m = rx.match(sec)
-        if not m:
+        if not m or sec.count("Current line:") != 1 or sec.count("Proposed line:") != 1:
             raise ValueError(f"{what}: section {sec.splitlines()[0]!r} does not parse")
         out.append(m)
     return out
@@ -179,6 +180,9 @@ def load_frontmatter_repairs(path: Path | None, memory_dir: Path) -> list[dict]:
     out = []
     for m in _parse_all(Path(path).read_text(encoding="utf-8"), r"## \d+\. ", _FM_SECTION,
                         "frontmatter proposals"):
+        if not RULE_RE.match(m["file"]) or "/" in m["file"]:
+            raise ValueError(f"frontmatter proposals: {m['file']!r} is not a memory rule file the "
+                             "report hashes")
         p = Path(memory_dir) / m["file"]
         text = p.read_text(encoding="utf-8") if p.is_file() else None
         out.append({"file": m["file"], "old": m["old"], "new": m["new"],
@@ -207,6 +211,8 @@ def load_lessons_repairs(path: Path | None, repo_root: Path) -> tuple[list[dict]
     out = []
     for s in _parse_all(text, r"## L\d+\n", _LES_SECTION, "lessons proposals"):
         n = int(s["line"])
+        if any(r["line"] == n for r in out):
+            raise ValueError(f"lessons proposals: two sections for L{n}")
         out.append({"line": n, "old": s["old"], "new": s["new"],
                     "applies": 0 < n <= len(lines) and lines[n - 1] == s["old"]})
     return out, stale
@@ -251,10 +257,10 @@ def _after_memory(fields: dict, defect, memory_dir: Path, repo_root: Path) -> st
     if defect is not None:
         return f"defect: frontmatter ({defect[0]})"
     ms = ls.memory_state(fields, memory_dir=memory_dir, repo_root=repo_root)
+    if ms.terminal:  # same order as _before_memory (Grok B7 F8)
+        return "terminal"
     if ms.disposition.state == "closed":
         return "closed"
-    if ms.terminal:
-        return "terminal"
     if ms.disposition.state == "defect":
         return "defect: promoted"
     if ms.due == "no_number" and (ls._count(fields.get("occurrences", 0)) or 0) < 2:
@@ -298,7 +304,8 @@ def _lessons_rows(text: str) -> list[tuple[int, str]]:
     start = next((i for i, line in enumerate(lines) if line.startswith("## Section 2")), None)
     if start is None:
         return []
-    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    end = next((i for i in range(start + 1, len(lines))
+                if lines[i].startswith(("## Section 1", "## Section 2"))), len(lines))  # as read_lessons
     return [(i + 1, lines[i]) for i in range(start + 1, end) if lines[i].strip().startswith("|")]
 
 
@@ -342,6 +349,13 @@ def _table(counter: Counter, head: tuple[str, str]) -> list[str]:
 def build_report(memory_dir: Path, repo_root: Path, inputs: dict,
                  today: _dt.date | None = None) -> tuple[str, str]:
     """(markdown, digest). Reads only; the caller writes the markdown."""
+    text, digest, _ = build_report_entries(memory_dir, repo_root, inputs, today)
+    return text, digest
+
+
+def build_report_entries(memory_dir: Path, repo_root: Path, inputs: dict,
+                         today: _dt.date | None = None) -> tuple[str, str, dict]:
+    """(markdown, digest, the exact entries map the digest was computed over) (Grok B7 F2)."""
     today = today or _dt.date.today()
     ents = stable_entries(memory_dir, repo_root, inputs)
     digest = digest_of(ents)
@@ -461,7 +475,7 @@ def build_report(memory_dir: Path, repo_root: Path, inputs: dict,
     L.append("")
     if stable_entries(memory_dir, repo_root, inputs) != ents:
         raise CorpusMoved(["(the corpus or an input changed while the report was built)"])
-    return "\n".join(L), digest
+    return "\n".join(L), digest, ents
 
 
 # ---------------------------------------------------------------- CLI
@@ -498,20 +512,23 @@ def main(argv=None) -> int:
     inputs = _inputs(args)
     mem, repo = Path(args.memory_dir), Path(args.repo_root)
     if args.cmd == "report":
-        text, digest = build_report(mem, repo, inputs)
+        text, digest, hashed = build_report_entries(mem, repo, inputs)
         out = Path(args.out) if args.out else (
             repo / "output/memory-hygiene" / f"{_dt.date.today():%m%d%y}-cutover-report.md")
         protected = [mem.resolve(), (repo / "memory").resolve()]
+        corpus = [p for p in mem.iterdir() if p.is_file()] + [
+            p for p in (repo / "memory").iterdir() if p.is_file()]
         for target in (out, out.with_suffix(".entries.json")):
             t = target.resolve()
-            if any(t == d or d in t.parents for d in protected):
+            linked = target.exists() and any(target.samefile(c) for c in corpus)  # Grok B7 F3
+            if linked or any(t == d or d in t.parents for d in protected):
                 print(json.dumps({"status": "refused",
                                   "error": f"{target} is inside the memory folder or repo memory/; "
                                            "the report never writes there"}))
                 return 2
         out.write_text(text, encoding="utf-8")
         side = out.with_suffix(".entries.json")
-        side.write_text(json.dumps(entries(mem, repo, inputs), indent=0, sort_keys=True), encoding="utf-8")
+        side.write_text(json.dumps(hashed, indent=0, sort_keys=True), encoding="utf-8")
         print(json.dumps({"status": "ok", "sha256": digest, "report": str(out), "entries": str(side)}))
         return 0
     baseline = json.loads(Path(args.entries).read_text(encoding="utf-8")) if args.entries else None

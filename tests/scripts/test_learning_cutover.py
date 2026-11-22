@@ -633,3 +633,83 @@ def test_F6_no_does_not_apply_line_when_every_lessons_repair_applies(world, tmp_
                                        "| p1 | r1 | 2 | No | 2026-01-01 |", "| p1 | r1 | 2 | No | 2026-01-01 |", 7)
     text, _ = _report(world, tmp_path)
     assert "DOES NOT APPLY" not in text.split("### Lessons repairs", 1)[1].split("###", 1)[0]
+
+
+# ---------------------------------------------------------------- Grok B7 r1 F2-F8
+
+def test_G2_the_sidecar_is_the_hashed_map(world, tmp_path, monkeypatch, capsys):
+    mem, repo, inputs = world
+    real = lc.build_report_entries
+
+    def then_move(*a, **k):
+        out = real(*a, **k)
+        (mem / "feedback_alpha.md").write_text("moved after hashing\n", encoding="utf-8")
+        return out
+
+    monkeypatch.setattr(lc, "build_report_entries", then_move)
+    out = tmp_path / "r.md"
+    assert lc.main(["report", "--memory-dir", str(mem), "--repo-root", str(repo), "--out", str(out),
+                    "--reopen-at", str(inputs["reopen_at"]), "--no-default-inputs"]) == 0
+    res = json.loads(capsys.readouterr().out)
+    side = json.loads(out.with_suffix(".entries.json").read_text(encoding="utf-8"))
+    assert lc.digest_of(side) == res["sha256"]
+
+
+def test_G3_report_refuses_a_hard_link_to_the_corpus(world, tmp_path, capsys):
+    mem, repo, _ = world
+    link = tmp_path / "innocent.md"
+    os_link = __import__("os").link
+    os_link(repo / "memory/lessons.md", link)
+    before = (repo / "memory/lessons.md").read_bytes()
+    assert lc.main(["report", "--memory-dir", str(mem), "--repo-root", str(repo), "--out", str(link),
+                    "--no-default-inputs"]) == 2
+    assert (repo / "memory/lessons.md").read_bytes() == before
+
+
+def _fm_section(n, f, sha, old="a", new="b"):
+    return (f"## {n}. `{f}`\n\n- sha256 of the current file: `{sha}`\n\nCurrent line:\n\n```yaml\n{old}\n```"
+            f"\n\nProposed line:\n\n```yaml\n{new}\n```\n\n")
+
+
+def test_G4_a_second_pair_under_one_heading_is_an_error(world, tmp_path):
+    mem, _, _ = world
+    md = tmp_path / "props" / "fm.md"
+    sec = _fm_section(1, "feedback_alpha.md", "0" * 64)
+    md.write_text(sec + "Current line:\n\n```yaml\nc\n```\n\nProposed line:\n\n```yaml\nd\n```\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="does not parse"):
+        lc.load_frontmatter_repairs(md, mem)
+
+
+def test_G5_a_repair_for_a_file_outside_the_hashed_scope_is_an_error(world, tmp_path):
+    mem, _, _ = world
+    md = tmp_path / "props" / "fm.md"
+    md.write_text(_fm_section(1, "MEMORY.md", "0" * 64), encoding="utf-8")
+    with pytest.raises(ValueError, match="not a memory rule file"):
+        lc.load_frontmatter_repairs(md, mem)
+
+
+def test_G6_two_lessons_repairs_for_one_line_are_an_error(world, tmp_path):
+    _, repo, _ = world
+    md = _lessons_props(tmp_path, "0" * 64, "a", "b", 7)
+    md.write_text(md.read_text(encoding="utf-8") + "\n## L7\n\nCurrent line:\n\n```text\nc\n```\n\n"
+                  "Proposed line:\n\n```text\nd\n```\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="two sections for L7"):
+        lc.load_lessons_repairs(md, repo)
+
+
+def test_G7_section_2_runs_past_other_headings_as_read_lessons_does(world):
+    mem, repo, _ = world
+    (repo / "memory/lessons.md").write_text(
+        LESSONS + "\n## Notes\n\n| p9 | r9 | 3 | No | 2026-01-09 |\n\n## Section 1\n\n| a | b | c | d |\n",
+        encoding="utf-8")
+    rows = lc.lessons_transitions(repo, mem, [], None)
+    assert [r["line"] for r in rows] == [7, 8, 12]
+
+
+def test_G8_promoted_and_terminal_reads_terminal_before_and_after(world):
+    mem, repo, _ = world
+    (mem / "feedback_both.md").write_text(
+        RULE.format(name="b", occ=3, promoted="yes - hook", gate="x").replace(
+            "  promoted: yes - hook", "  promoted: yes - hook\n  terminal: yes"), encoding="utf-8")
+    row = next(r for r in lc.memory_transitions(mem, repo, [], []) if r["file"] == "feedback_both.md")
+    assert (row["before"], row["after"]) == ("terminal", "terminal")
