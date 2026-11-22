@@ -85,13 +85,12 @@ def test_digest_is_deterministic(world):
     assert len(_digest(world)) == 64
 
 
-@pytest.mark.parametrize("target", ["rule", "lessons", "friction", "input"])
+@pytest.mark.parametrize("target", ["rule", "lessons", "input"])
 def test_one_changed_byte_changes_the_digest(world, target):
     mem, repo, inputs = world
     before = _digest(world)
     path = {"rule": mem / "feedback_alpha.md",
             "lessons": repo / "memory" / "lessons.md",
-            "friction": repo / "memory" / "friction-log.md",
             "input": inputs["reopen_at"]}[target]
     raw = bytearray(path.read_bytes())
     raw[-2] = ord("x") if raw[-2] != ord("x") else ord("y")
@@ -124,9 +123,9 @@ def test_files_outside_the_rule_scope_do_not_change_the_digest(world):
 def test_a_missing_input_that_appears_later_changes_the_digest(world):
     mem, repo, inputs = world
     before = _digest(world)
-    late = inputs["reopen_at"].parent / "kinds.json"
-    late.write_text("[]", encoding="utf-8")
-    inputs["friction_kinds"] = late
+    late = inputs["reopen_at"].parent / "i7.jsonl"
+    late.write_text("", encoding="utf-8")
+    inputs["i7"] = late
     assert lc.cutover_digest(mem, repo, inputs) != before
 
 
@@ -137,10 +136,9 @@ def test_a_named_input_that_does_not_exist_is_an_error(world):
         lc.cutover_digest(mem, repo, inputs)
 
 
-@pytest.mark.parametrize("name", ["lessons.md", "friction-log.md"])
-def test_a_missing_corpus_file_is_an_error_not_a_digest(world, name):
+def test_a_missing_lessons_file_is_an_error_not_a_digest(world):
     mem, repo, inputs = world
-    (repo / "memory" / name).unlink()
+    (repo / "memory" / "lessons.md").unlink()
     with pytest.raises(FileNotFoundError):
         lc.cutover_digest(mem, repo, inputs)
 
@@ -222,7 +220,7 @@ def test_memory_after_state_uses_the_proposed_reopen_at(world, tmp_path):
     rows = lc.memory_transitions(mem, repo, lc.load_reopen(inputs["reopen_at"]), {})
     after = {r["file"]: r["after"] for r in rows}
     assert after["feedback_alpha.md"] == "due"          # occ 3 >= reopen_at 3
-    assert after["feedback_beta.md"] == "no_number"     # relative row: no number
+    assert after["feedback_beta.md"] == "not_due (below 2)"  # open, occ 1: not a defect
 
 
 def test_frontmatter_repair_with_a_stale_sha_is_flagged(world, tmp_path):
@@ -234,36 +232,6 @@ def test_frontmatter_repair_with_a_stale_sha_is_flagged(world, tmp_path):
         "  promoted: 'no'\n```\n", encoding="utf-8")
     repairs = lc.load_frontmatter_repairs(md, mem)
     assert repairs[0]["stale"] is True
-
-
-def _kinds(world, bound_sha, rows):
-    path = world[2]["reopen_at"].parent / "kinds.json"
-    path.write_text(json.dumps({"summary": {"sha256": bound_sha}, "rows": rows}), encoding="utf-8")
-    world[2]["friction_kinds"] = path
-    return path
-
-
-def test_friction_after_state_comes_from_the_planned_kind(world):
-    _, repo, inputs = world
-    _kinds(world, lc.file_sha(repo / "memory/friction-log.md"),
-           [{"date": "2026-01-01", "surface": "tool.py", "nature": "broke", "planned_kind": "harness"}])
-    k = lc.load_friction_kinds(inputs["friction_kinds"], repo)
-    assert k["stale"] is False
-    rows = lc.friction_transitions(repo, k)
-    assert rows == [{"before": "due", "after": "not_counting"}]
-
-
-def test_a_friction_row_missing_from_the_dry_run_is_not_guessed(world):
-    _, repo, inputs = world
-    _kinds(world, lc.file_sha(repo / "memory/friction-log.md"), [])
-    rows = lc.friction_transitions(repo, lc.load_friction_kinds(inputs["friction_kinds"], repo))
-    assert rows[0]["after"].startswith("no planned kind")
-
-
-def test_a_dry_run_bound_to_another_ledger_is_stale_in_the_report(world, tmp_path):
-    _kinds(world, "f" * 64, [])
-    text, _ = _report(world, tmp_path)
-    assert "STALE" in text.split("### Friction", 1)[1]
 
 
 def test_verify_cli_names_the_changed_file_from_the_sidecar(world, tmp_path, capsys):
@@ -280,10 +248,64 @@ def test_verify_cli_names_the_changed_file_from_the_sidecar(world, tmp_path, cap
     assert res["status"] == "refused" and res["changed"] == ["repo/memory/lessons.md"]
 
 
-def test_report_counts_dry_run_rows_gone_from_the_ledger(world, tmp_path):
+
+def test_the_friction_ledger_is_not_in_the_digest(world):
     _, repo, _ = world
-    _kinds(world, lc.file_sha(repo / "memory/friction-log.md"),
-           [{"date": "2025-01-01", "surface": "old.py", "nature": "gone", "planned_kind": "friction"}])
+    before = _digest(world)
+    (repo / "memory/friction-log.md").write_text(FRICTION + "| 2026-02-02 | x | y | z | 1 | - |\n",
+                                                 encoding="utf-8")
+    assert _digest(world) == before
+    (repo / "memory/friction-log.md").unlink()
+    assert _digest(world) == before
+
+
+def test_the_friction_dry_run_is_not_in_the_digest(world):
+    mem, repo, inputs = world
+    before = _digest(world)
+    inputs["friction_kinds"] = _kinds(world, "f" * 64)
+    assert lc.cutover_digest(mem, repo, inputs) == before
+
+
+def _kinds(world, bound_sha):
+    path = world[2]["reopen_at"].parent / "kinds.json"
+    path.write_text(json.dumps({"summary": {"sha256": bound_sha, "rules": [
+        {"rule": "default-friction", "rows": 7, "kind": "friction"},
+        {"rule": "fp-nature", "rows": 2, "kind": "false-positive-block"}]}, "rows": []}),
+        encoding="utf-8")
+    world[2]["friction_kinds"] = path
+    return path
+
+
+def test_report_shows_friction_rules_labelled_approximate(world, tmp_path):
+    _, repo, _ = world
+    _kinds(world, lc.file_sha(repo / "memory/friction-log.md"))
     text, _ = _report(world, tmp_path)
-    assert "Dry-run rows no longer in the ledger: 1." in text
-    assert "Ledger rows the dry run does not cover: 1." in text
+    fr = text.split("### Friction", 1)[1].split("\n## ", 1)[0]
+    assert "approximate" in text.split("### Friction", 1)[1].split("\n", 1)[0]
+    assert "| fp-nature | 2 | false-positive-block |" in fr
+    assert "as it is now" in fr
+
+
+def test_report_says_when_the_friction_dry_run_predates_the_ledger(world, tmp_path):
+    _kinds(world, "f" * 64)
+    text, _ = _report(world, tmp_path)
+    assert "has since changed" in text.split("### Friction", 1)[1]
+
+
+def test_a_candidate_with_no_proposal_is_no_number_and_listed(world, tmp_path):
+    mem, _, _ = world
+    (mem / "feedback_gamma.md").write_text(
+        RULE.format(name="feedback_gamma", occ=4, promoted="partial", gate="5th fire"), encoding="utf-8")
+    text, _ = _report(world, tmp_path)
+    assert "0 proposed with no number, 1 with no proposal" in text
+    block = text.split("**Candidates with no reopen_at proposal (1):**", 1)[1].split("**Defects", 1)[0]
+    assert "`feedback_gamma.md`" in block
+    assert "feedback_alpha.md" not in block
+
+
+def test_report_lists_defects_as_known_migration_items(world, tmp_path):
+    mem, _, _ = world
+    (mem / "feedback_delta.md").write_text("no frontmatter here\n", encoding="utf-8")
+    text, _ = _report(world, tmp_path)
+    block = text.split("**Defects (known migration items):**", 1)[1].split("\n## ", 1)[0]
+    assert "`feedback_delta.md`: defect: frontmatter (no_frontmatter)" in block

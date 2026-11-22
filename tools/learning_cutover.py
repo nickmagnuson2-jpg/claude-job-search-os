@@ -15,8 +15,11 @@ This module applies NOTHING. It never writes to the memory folder, memory/lesson
 memory/friction-log.md; the only file it writes is the report (`report --out`).
 
 Hash scope: every memory rule file (RULE_RE, the same set output/analysis/state_diff.py
-measured), memory/friction-log.md and memory/lessons.md under --repo-root, and each named
-input file. An input not given is recorded as MISSING, so one that appears later changes
+measured), memory/lessons.md under --repo-root, and each bound input file. NOT
+memory/friction-log.md: other sessions append to it continuously, and its migration is
+rule-based (a kind from row content), re-run on the live ledger at apply by friction_log
+migrate-kinds, whose own check confirms only Kind cells and the header changed. The report
+shows those rules and their counts, labelled approximate. An input not given is recorded as MISSING, so one that appears later changes
 the hash; an input named but absent is an error, never a silent MISSING.
 """
 from __future__ import annotations
@@ -39,8 +42,11 @@ import memory_frontmatter as mf  # noqa: E402  after
 REPO_ROOT = TOOLS.parent
 MEMORY_DIR = Path.home() / ".claude" / "projects" / "-Users-mag-Documents-Obsidian-30-projects-job-search" / "memory"
 RULE_RE = re.compile(r"(feedback|reference|project|user)_.*\.md$")
-CORPUS_FILES = ("memory/friction-log.md", "memory/lessons.md")
-INPUT_NAMES = ("reopen_at", "frontmatter", "lessons", "i7", "friction_kinds")
+CORPUS_FILES = ("memory/lessons.md",)
+# Bound inputs are in the hash. friction_kinds is read for the report only (org 68 ruling,
+# 2026-11-22): the friction migration is rule-based and re-run on the live ledger at apply.
+BOUND_INPUTS = ("reopen_at", "frontmatter", "lessons", "i7")
+INPUT_NAMES = BOUND_INPUTS + ("friction_kinds",)
 DEFAULT_INPUTS = {
     "reopen_at": "output/memory-hygiene/112226-reopen-at-proposals.jsonl",
     "frontmatter": "output/memory-hygiene/112226-malformed-frontmatter-proposals.md",
@@ -69,7 +75,7 @@ def entries(memory_dir: Path, repo_root: Path, inputs: dict) -> dict[str, str]:
         if not p.is_file():
             raise FileNotFoundError(f"corpus file missing: {p}")
         out[f"repo/{rel}"] = file_sha(p)
-    for name in INPUT_NAMES:
+    for name in BOUND_INPUTS:
         p = inputs.get(name)
         if p is None:
             out[f"input/{name}"] = MISSING
@@ -153,67 +159,18 @@ def load_lessons_repairs(path: Path | None, repo_root: Path) -> tuple[list[dict]
 
 
 def load_friction_kinds(path: Path | None, repo_root: Path):
-    """The friction_log migrate-kinds dry-run output (B2: {"summary": {"sha256": <ledger
-    sha>, ...}, "rows": [{"date", "surface", "nature", "planned_kind", ...}]}), or None.
-    stale: the ledger changed since the dry run (or the dry run names no ledger sha)."""
+    """The friction_log migrate-kinds dry-run output (B2: {"summary": {"sha256", "rules":
+    [{"rule", "rows", "kind"}], ...}, "rows": [...]}), or None. Read for the report only;
+    `current` says whether it was computed on the ledger as it is now."""
     if path is None:
         return None
     data = json.loads(Path(path).read_text(encoding="utf-8"))
-    rows = data.get("rows") if isinstance(data, dict) else None
-    if not isinstance(rows, list):
-        raise ValueError(f"friction kinds input {path} has no rows list")
-    bound = (data.get("summary") or {}).get("sha256")
-    stale = bound != file_sha(Path(repo_root) / "memory/friction-log.md")
-    return {"rows": rows, "bound_sha": bound, "stale": stale}
-
-
-def _friction_key(row: dict) -> tuple:
-    return (str(row.get("date", "")).strip(), str(row.get("surface", "")).strip(),
-            str(row.get("nature", "")).strip())
-
-
-def friction_keys(repo_root: Path) -> list[tuple]:
-    """(date, surface, nature) of every ledger data row, read with today's parse_row."""
-    import friction_log as fl
-    text = (Path(repo_root) / "memory/friction-log.md").read_text(encoding="utf-8")
-    body = text.split(fl.ENTRIES_MARKER, 1)[1] if fl.ENTRIES_MARKER in text else ""
-    out = []
-    for line in body.split("\n"):
-        p = fl.parse_row(line) if line.strip().startswith("|") else {}
-        if p and p["date"] != "Date" and not set(p["date"]) <= set("-: "):
-            out.append(_friction_key(p))
-    return out
-
-
-def friction_transitions(repo_root: Path, kinds: dict | None) -> list[dict]:
-    """before (today: RESOLVED prefix, then the ladder on rows whose Promotion cell is
-    set) and after (learning_state.friction_state on the planned kind) per ledger row. A
-    row the dry run does not cover gets no after-state: it is never guessed."""
-    import friction_log as fl  # today's reader
-    text = (Path(repo_root) / "memory/friction-log.md").read_text(encoding="utf-8")
-    body = text.split(fl.ENTRIES_MARKER, 1)[1] if fl.ENTRIES_MARKER in text else ""
-    planned = {} if kinds is None else {_friction_key(r): r.get("planned_kind") for r in kinds["rows"]}
-    rows = []
-    for line in body.split("\n"):
-        p = fl.parse_row(line) if line.strip().startswith("|") else {}
-        if not p or p["date"] in ("Date",) or set(p["date"]) <= set("-: "):
-            continue
-        occ = ls._count(str(p["occurrences"]).split()[0] if str(p["occurrences"]).split() else "")
-        if fl.is_resolved(p["fix"]):
-            before = "resolved"
-        elif p["promotion"].strip() not in ("", "-", "--") and (occ or 0) >= 2:
-            before = "due"
-        else:
-            before = "open"
-        key = _friction_key(p)
-        if kinds is None:
-            after = "input missing"
-        elif key not in planned:
-            after = "no planned kind (row not in the dry run)"
-        else:
-            after = ls.friction_state(planned[key], p["fix"], occ if occ is not None else p["occurrences"])
-        rows.append({"before": before, "after": after})
-    return rows
+    summary = data.get("summary") if isinstance(data, dict) else None
+    if not isinstance(summary, dict) or not isinstance(summary.get("rules"), list):
+        raise ValueError(f"friction kinds input {path} has no summary.rules list")
+    ledger = Path(repo_root) / "memory/friction-log.md"
+    current = ledger.is_file() and summary.get("sha256") == file_sha(ledger)
+    return {"rules": summary["rules"], "bound_sha": summary.get("sha256"), "current": current}
 
 
 # ---------------------------------------------------------------- reader states
@@ -235,6 +192,8 @@ def _before_memory(text: str) -> str:
 
 
 def _after_memory(fields: dict, defect, memory_dir: Path, repo_root: Path) -> str:
+    """no_number is a defect only for a candidate (occurrences >= 2 and open). Below 2 the
+    state is "not_due (below 2)" (org 68 matrix correction, 2026-11-22)."""
     if defect is not None:
         return f"defect: frontmatter ({defect[0]})"
     ms = ls.memory_state(fields, memory_dir=memory_dir, repo_root=repo_root)
@@ -244,6 +203,8 @@ def _after_memory(fields: dict, defect, memory_dir: Path, repo_root: Path) -> st
         return "terminal"
     if ms.disposition.state == "defect":
         return "defect: promoted"
+    if ms.due == "no_number" and (ls._count(fields.get("occurrences", 0)) or 0) < 2:
+        return "not_due (below 2)"
     return ms.due
 
 
@@ -328,52 +289,52 @@ def build_report(memory_dir: Path, repo_root: Path, inputs: dict,
 
     mem = memory_transitions(memory_dir, repo_root, reopen, {r["file"]: r for r in fm_repairs})
     les = lessons_transitions(repo_root, memory_dir, les_repairs, les_stale)
-    fr = friction_transitions(repo_root, kinds)
     flagged = [r for r in reopen if r.get("status") == "relative" or r.get("confidence") == "low"]
     n_rel = sum(r.get("status") == "relative" for r in reopen)
     n_low = sum(r.get("confidence") == "low" for r in reopen)
-    no_num = Counter()
-    for r in mem:
-        if r["after"] == "no_number":
-            o = mf.read_file(Path(memory_dir) / r["file"])[0].get("occurrences")
-            no_num["occurrences missing" if o in (None, "") else
-                   "occurrences < 2" if isinstance(o, int) and o < 2 else
-                   "occurrences >= 2" if isinstance(o, int) else "occurrences not a count"] += 1
+    proposed = {r["file"] for r in reopen}
+    uncovered = [r for r in mem if r["after"] == "no_number" and r["file"] not in proposed]
     n_rules = sum(1 for k in ents if k.startswith("memory/"))
 
     L = [f"# Learning-loop cutover report ({today.isoformat()})", "",
          f"**Cutover SHA-256:** `{digest}`", "",
          "Approve by this hash. `learning_cutover.py verify --expect-sha <hash>` recomputes it "
-         "and refuses if any rule file, memory/friction-log.md, memory/lessons.md or any input "
-         "below changed. This report applies nothing.", "",
+         "and refuses if any memory rule file, memory/lessons.md or any bound input below "
+         "changed. memory/friction-log.md is not bound (see Friction). This report applies nothing.", "",
          f"- Memory rule files hashed: {n_rules} (`(feedback|reference|project|user)_*.md` in {memory_dir})",
-         f"- memory/friction-log.md: `{ents['repo/memory/friction-log.md']}`",
-         f"- memory/lessons.md: `{ents['repo/memory/lessons.md']}`", "- Inputs:"]
-    for name in INPUT_NAMES:
+         f"- memory/lessons.md: `{ents['repo/memory/lessons.md']}`", "- Bound inputs:"]
+    for name in BOUND_INPUTS:
         sha = ents[f"input/{name}"]
-        where = inputs.get(name)
-        L.append(f"  - {name}: input missing" if sha == MISSING else f"  - {name}: `{sha}` ({where})")
-    L.append("")
+        L.append(f"  - {name}: input missing" if sha == MISSING
+                 else f"  - {name}: `{sha}` ({inputs.get(name)})")
+    fk = inputs.get("friction_kinds")
+    L += [f"- Not bound (approximate): friction_kinds: "
+          + ("input missing" if fk is None else f"`{file_sha(fk)}` ({fk})"), ""]
 
     mem_after = Counter(r["after"] for r in mem)
     les_after = Counter(r["after"] for r in les)
     L += ["## Default rules (applied to every record no proposal covers)", "",
           "| Rule | Records it decides |", "|---|---|",
-          f"| Memory rule in the backlog with no reopen_at: `no_number`, a defect, never due | {mem_after['no_number']} |",
+          f"| Candidate (occurrences >= 2, open) with no reopen_at: `no_number`, a defect, never due | {mem_after['no_number']} "
+          f"({mem_after['no_number'] - len(uncovered)} proposed with no number, {len(uncovered)} with no proposal) |",
+          f"| Open rule below 2 occurrences: `not_due (below 2)`, not a defect | {mem_after['not_due (below 2)']} |",
           f"| Unknown promoted token or pointer token without a pointer: defect, stays open | {mem_after['defect: promoted'] + les_after['defect']} |",
           f"| Frontmatter the strict reader cannot parse (after proposed repairs): defect | {sum(v for k, v in mem_after.items() if k.startswith('defect: frontmatter'))} |",
           f"| Lessons row that cannot be read as 5 cells (after proposed repairs): defect | {les_after['defect: row']} |",
-          f"| Ladder lanes (lessons, friction) use threshold {ls.LADDER_THRESHOLD}: lessons rows due | {les_after['open/due'] + les_after['partial/due']} |",
-          f"| Same ladder: friction rows due | {Counter(r['after'] for r in fr)['due'] if kinds else 'input missing'} |",
+          f"| Lessons ladder, threshold {ls.LADDER_THRESHOLD}: rows due | {les_after['open/due'] + les_after['partial/due']} |",
           "| `occurrences` is never machine-written; no proposal changes it | - |", "",
-          "`no_number` by occurrences: " + (", ".join(f"{k} {v}" for k, v in sorted(no_num.items())) or "none") + ".", "",
-          "Records in a defect state:", ""]
+          f"**Candidates with no reopen_at proposal ({len(uncovered)}):** occurrences >= 2 and open under "
+          "learning_state, but not in the reopen_at proposals (the scanner's candidate set). "
+          "Today's reader state shows why it skipped each.", "",
+          "| File | Today's reader | After |", "|---|---|---|"]
+    L += [f"| `{r['file']}` | {r['before']} | {r['after']} |" for r in uncovered]
+    L += ["", "**Defects (known migration items):**", ""]
     L += [f"- `{r['file']}`: {r['after']}" for r in mem if r["after"].startswith("defect")] or ["- none"]
     L.append("")
 
     L += ["## For Nick: reopen_at rows to read before apply", "",
-          f"{len(flagged)} distinct rows ({n_low} low confidence, {n_rel} relative, {n_low + n_rel - len(flagged)} both). "
-          "Each needs your number or `no_number`.", "",
+          f"{len(flagged)} distinct rows ({n_low} low confidence, {n_rel} relative, "
+          f"{n_low + n_rel - len(flagged)} both). Each needs your number or `no_number`.", "",
           "| File | Occ | Proposed | Status | Confidence | Gate fragment |", "|---|---|---|---|---|---|"]
     for r in flagged:
         frag = str(r.get("prose_fragment", "")).replace("|", "/")[:90]
@@ -410,21 +371,17 @@ def build_report(memory_dir: Path, repo_root: Path, inputs: dict,
     else:
         L.append(f"{len(i7)} rows. " + ", ".join(
             f"{k} {v}" for k, v in sorted(Counter(r.get("disposition") for r in i7).items())) + ".")
-    L += ["", "### Friction"]
+    L += ["", "### Friction (approximate; not hash-bound)", ""]
     if kinds is None:
-        L.append("Kinds dry run: input missing. Friction after-states are not computed.")
+        L.append("Kinds dry run: input missing.")
     else:
-        kc = Counter(r.get("planned_kind") for r in kinds["rows"])
-        L.append(f"Kinds dry run: {len(kinds['rows'])} rows. Planned kinds: "
-                 + ", ".join(f"{k} {v}" for k, v in sorted(kc.items(), key=str)) + ".")
-        ledger_keys = set(friction_keys(repo_root))
-        gone = sum(1 for r in kinds["rows"] if _friction_key(r) not in ledger_keys)
-        L.append(f"Dry-run rows no longer in the ledger: {gone}. Ledger rows the dry run does not "
-                 f"cover: {Counter(r['after'] for r in fr)['no planned kind (row not in the dry run)']}.")
-        if kinds["stale"]:
-            L.append(f"**STALE:** the dry run was bound to friction-log.md `{kinds['bound_sha']}`; the ledger "
-                     "hashed above differs. Rows added since have no planned kind below. Re-run the dry run "
-                     "before approval.")
+        L += ["The friction migration is rule-based: each row's kind comes from its own content. At "
+              "apply, `friction_log migrate-kinds` re-runs these rules on the live ledger, and its own "
+              "check confirms only the Kind cells and the header changed. Counts are as of the dry run"
+              + (" (computed on the ledger as it is now)." if kinds["current"] else
+                 f" (ledger `{kinds['bound_sha']}`, which has since changed)."), "",
+              "| Rule | Rows | Kind |", "|---|---|---|"]
+        L += [f"| {r.get('rule')} | {r.get('rows')} | {r.get('kind')} |" for r in kinds["rules"]]
     L.append("")
 
     L += ["## Reader-state changes (before: today's tools; after: learning_state with proposals applied in memory)", "",
@@ -432,8 +389,6 @@ def build_report(memory_dir: Path, repo_root: Path, inputs: dict,
     L += _table(Counter((r["before"], r["after"]) for r in mem), ("Before", "After"))
     L += ["", "### Lessons Section 2 rows", ""]
     L += _table(Counter((r["before"], r["after"]) for r in les), ("Before", "After"))
-    L += ["", "### Friction ledger rows", ""]
-    L += _table(Counter((r["before"], r["after"]) for r in fr), ("Before", "After"))
     L.append("")
     return "\n".join(L), digest
 
