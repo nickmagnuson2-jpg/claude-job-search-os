@@ -845,7 +845,8 @@ def test_r3_F1_a_repair_that_keeps_the_comment_does_not_cover(world, tmp_path):
 @pytest.mark.parametrize("line,expected", [
     ('promoted: "no"  # c', True), ('promoted: "yes (PR #1)"', False), ("promoted: 'a #b'", False),
     ("promoted: 'it''s #1'  # c", True), ("promoted: no # c", True), ("promoted: a#b", False),
-    ('promoted: "a \\" #b"', False), ("promoted: # c", True)])
+    ('promoted: "a \\" #b"', False), ("promoted: # c", True), ("promoted: 'it''s #1'", False),
+    ('promoted: "unterminated #x', False)])
 def test_r3_F1_yaml_comment_detection(line, expected):
     assert lc._has_yaml_comment(line) is expected
 
@@ -855,3 +856,19 @@ def test_r3_F2_below_2_with_a_threshold_keeps_the_label(world):
     rows = lc.memory_transitions(mem, repo, [{"file": "feedback_beta.md", "proposed_reopen_at": 3,
                                               "status": "number"}], [])
     assert {r["file"]: r["after"] for r in rows}["feedback_beta.md"] == "not_due (below 2)"
+
+
+
+def test_r3_F1_a_stale_repair_never_covers(world, tmp_path):
+    mem, repo, inputs = world
+    (mem / "feedback_gamma.md").write_text(RULE.format(name="g", occ=1, promoted='"no"  # note', gate="x"),
+                                           encoding="utf-8")
+    _hand(world, tmp_path, [{"file": "feedback_gamma.md", "promoted_lines_verbatim": ['  promoted: "no"  # note'],
+                             "value_as_read": "no", "hash_is_yaml_comment": True}])
+    md = tmp_path / "props" / "fm.md"
+    md.write_text(_fm_section(1, "feedback_gamma.md", "0" * 64, old='  promoted: "no"  # note',
+                              new='  promoted: "no"'), encoding="utf-8")
+    inputs["frontmatter"] = md
+    assert lc._repaired_text(mem / "feedback_gamma.md", lc.load_frontmatter_repairs(md, mem)) == \
+        (mem / "feedback_gamma.md").read_text(encoding="utf-8")
+    assert lc.build_report_entries(mem, repo, inputs)[3] == ["feedback_gamma.md"]
