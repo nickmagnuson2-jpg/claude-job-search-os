@@ -264,8 +264,9 @@ def _after_memory(fields: dict, defect, memory_dir: Path, repo_root: Path) -> st
         return "closed"
     if ms.disposition.state == "defect":
         return "defect: promoted"
-    if ms.due == "no_number" and (ls._count(fields.get("occurrences", 0)) or 0) < 2:
-        return "not_due (below 2)"
+    if (ms.due in ("no_number", "not_due") and fields.get("reopen_at") in (None, "")
+            and (ls._count(fields.get("occurrences", 0)) or 0) < 2):
+        return "not_due (below 2)"  # learning_state 231e2529 reads this as not_due
     return ms.due
 
 
