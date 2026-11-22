@@ -53,7 +53,7 @@ def run(memdir: Path, verdicts: Path, *extra):
 
 def test_dry_run_changes_nothing(corpus, tmp_path):
     v = tmp_path / "v.txt"
-    v.write_text("feedback_example.md\toccurrences=3\n", encoding="utf-8")
+    v.write_text("feedback_example.md\tneeds_review=false\n", encoding="utf-8")
     before = (corpus / "feedback_example.md").read_bytes()
     rc, rep = run(corpus, v)
     assert rc == 0 and rep["changed"] == 1 and rep["applied_mode"] is False
@@ -62,11 +62,12 @@ def test_dry_run_changes_nothing(corpus, tmp_path):
 
 def test_apply_sets_only_the_frontmatter_value(corpus, tmp_path):
     v = tmp_path / "v.txt"
-    v.write_text('feedback_example.md\toccurrences=3\tpromoted="yes -- hook, 2026-05-14"\n', encoding="utf-8")
+    v.write_text('feedback_example.md\tneeds_review=false\tpromoted="yes -- hook, 2026-05-14"\n', encoding="utf-8")
     rc, rep = run(corpus, v, "--apply")
     assert rc == 0, rep
     text = (corpus / "feedback_example.md").read_text(encoding="utf-8")
-    assert "  occurrences: 3\n" in text
+    assert "  needs_review: false\n" in text
+    assert "  occurrences: 1\n" in text
     assert '  promoted: "yes -- hook, 2026-05-14"\n' in text
     # the decoy line in the BODY must be untouched
     assert "occurrences: 1 appears in the body too, as a decoy." in text
@@ -82,7 +83,7 @@ def test_empty_verdict_file_is_an_error(corpus, tmp_path):
 
 def test_no_op_is_reported_unchanged_not_applied(corpus, tmp_path):
     v = tmp_path / "v.txt"
-    v.write_text("feedback_example.md\toccurrences=1\n", encoding="utf-8")
+    v.write_text("feedback_example.md\tneeds_review=true\n", encoding="utf-8")
     rc, rep = run(corpus, v, "--apply")
     assert rc == 0 and rep["changed"] == 0 and rep["unchanged"] == 1
 
@@ -117,7 +118,7 @@ def test_body_prose_that_looks_like_a_description_is_never_touched(corpus, tmp_p
 
 def test_missing_file_is_reported_not_silently_skipped(corpus, tmp_path):
     v = tmp_path / "v.txt"
-    v.write_text("feedback_nope.md\toccurrences=2\n", encoding="utf-8")
+    v.write_text("feedback_nope.md\tneeds_review=false\n", encoding="utf-8")
     rc, rep = run(corpus, v, "--apply")
     assert rc == 1 and any("no such file" in f for f in rep["failed"])
 
@@ -125,14 +126,18 @@ def test_missing_file_is_reported_not_silently_skipped(corpus, tmp_path):
 def test_absent_key_is_reported(corpus, tmp_path):
     (corpus / "feedback_bare.md").write_text("---\nname: x\n---\nbody\n", encoding="utf-8")
     v = tmp_path / "v.txt"
-    v.write_text("feedback_bare.md\toccurrences=2\n", encoding="utf-8")
+    v.write_text("feedback_bare.md\tneeds_review=false\n", encoding="utf-8")
     rc, rep = run(corpus, v, "--apply")
     assert rc == 1 and any("key-absent" in f for f in rep["failed"])
 
 
 def test_conservation_rejects_a_line_count_change():
-    original = "---\nname: x\n  occurrences: 1\n---\nbody\n"
+    original = "---\nname: x\n  reopen_at: 1\n---\nbody\n"
     assert amv.conservation_ok(original, original.replace("1", "3"))
+    # occurrences is no longer an allowed key (2026-11-22), so changing its line is not
+    # a permitted diff either.
+    occ = "---\nname: x\n  occurrences: 1\n---\nbody\n"
+    assert not amv.conservation_ok(occ, occ.replace("1", "3"))
     assert not amv.conservation_ok(original, original + "extra\n")
     assert not amv.conservation_ok(original, original.replace("body", "tampered"))
 
@@ -227,14 +232,15 @@ def test_insertion_leaves_body_and_other_keys_byte_identical(corpus, tmp_path):
 
 
 def test_non_insertable_absent_key_still_reports_key_absent(tmp_path):
-    """occurrences is settable but NOT insertable: a file missing it is a schema
-    defect to surface, not a hole to quietly fill."""
+    """needs_review is settable but NOT insertable: a file missing it is a schema
+    defect to surface, not a hole to quietly fill. (This used occurrences until
+    2026-11-22, when occurrences stopped being settable at all.)"""
     d = tmp_path / "m"
     d.mkdir()
     (d / "feedback_x.md").write_text(
         "---\nname: x\nmetadata:\n  promoted: no\n---\n\nbody\n", encoding="utf-8")
     v = tmp_path / "v.txt"
-    v.write_text("feedback_x.md\toccurrences=2\n", encoding="utf-8")
+    v.write_text("feedback_x.md\tneeds_review=false\n", encoding="utf-8")
     rc, rep = run(d, v)
     assert rc == 1 and any("key-absent" in f for f in rep["failed"])
 
@@ -452,3 +458,27 @@ def test_every_insertable_key_has_an_insertion_anchor():
     """An insertable key with no INSERT_AFTER entry crashed with KeyError on its first
     insert (found adding the exit1 keys, 2026-11-06)."""
     assert amv.INSERTABLE_KEYS <= set(amv.INSERT_AFTER)
+
+
+def test_occurrences_is_never_machine_written(corpus, tmp_path):
+    """2026-11-22 (state matrix): a count is recorded only by memory_write.py bump."""
+    v = tmp_path / "v.txt"
+    v.write_text("feedback_example.md\toccurrences=3\tneeds_review=false\n", encoding="utf-8")
+    rc, rep = run(corpus, v, "--apply")
+    assert rc == 1, rep
+    assert rep["failed"] == ["line 1: occurrences: never machine-written; record a witnessed "
+                             "fire with memory_write.py bump"]
+    text = (corpus / "feedback_example.md").read_text(encoding="utf-8")
+    assert "  occurrences: 1\n" in text
+    assert "  needs_review: false\n" in text     # the other pair still applies
+    assert "occurrences" not in amv.ALLOWED_KEYS
+
+
+def test_a_verdict_of_only_occurrences_is_an_empty_change_set(corpus, tmp_path):
+    v = tmp_path / "v.txt"
+    v.write_text("feedback_example.md\toccurrences=3\n", encoding="utf-8")
+    rc, rep = run(corpus, v, "--apply")
+    assert rc == 2
+    assert rep["parse_errors"] == ["line 1: occurrences: never machine-written; record a "
+                                   "witnessed fire with memory_write.py bump"]
+    assert (corpus / "feedback_example.md").read_text(encoding="utf-8") == FILE

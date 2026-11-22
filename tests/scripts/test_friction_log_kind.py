@@ -238,7 +238,10 @@ def test_apply_sets_only_kind_cells(ledger):
     assert HEADER7 in ledger.read_text(encoding="utf-8")
     # A second dry run finds nothing left to assign.
     code, out = run(ledger, "migrate-kinds", "--dry-run")
-    assert {r["rule"]: r["rows"] for r in out["rules"]}["already-set"] == 6
+    counts = {r["rule"]: r["rows"] for r in out["rules"]}
+    assert counts["already-set"] == 6
+    assert sum(counts.values()) == 6          # each row is planned exactly once
+    assert counts["unrecognized-kind"] == 0
 
 
 def test_unrecognized_kind_is_reported_and_left_alone(ledger):
@@ -248,6 +251,8 @@ def test_unrecognized_kind_is_reported_and_left_alone(ledger):
     ledger.write_text(text, encoding="utf-8")
     code, out = run(ledger, "migrate-kinds", "--dry-run")
     assert {r["rule"]: r["rows"] for r in out["rules"]}["unrecognized-kind"] == 1
+    assert "mystery" not in out["kinds_after"]
+    assert sum(out["kinds_after"].values()) == 6
     assert out["unrecognized"] == ["| 2026-06-08 | doohickey.py | doohickey thing | — | 1 | — | mystery |"]
     code, out = run(ledger, "migrate-kinds", "--apply", "--expect-sha", sha(ledger))
     assert code == 0
@@ -271,3 +276,29 @@ def test_identical_duplicate_rows_are_each_counted(ledger):
     assert code == 0, out
     assert out["changed"] == 7
     assert rows(ledger).count(dup + " friction |") == 2
+
+
+def test_apply_keeps_text_after_the_table_and_ends_in_one_newline(ledger):
+    ledger.write_text(LEGACY + "\nA note after the table.\n", encoding="utf-8")
+    code, out = run(ledger, "migrate-kinds", "--apply", "--expect-sha", sha(ledger))
+    assert code == 0, out
+    text = ledger.read_text(encoding="utf-8")
+    assert text.endswith("|\n\nA note after the table.\n")
+
+
+def test_apply_on_a_ledger_without_a_final_newline(ledger):
+    ledger.write_text(LEGACY.rstrip("\n"), encoding="utf-8")
+    code, out = run(ledger, "migrate-kinds", "--apply", "--expect-sha", sha(ledger))
+    assert code == 0, out
+    text = ledger.read_text(encoding="utf-8")
+    assert text.endswith(" friction |\n") and not text.endswith("\n\n")
+
+
+def test_only_kind_changed():
+    import friction_log as fl
+    old = "| 2026-06-02 | widget_sync.py | widget missing | — | 1 | — |"
+    assert fl.only_kind_changed(old, old[:-1] + "| friction |")
+    assert not fl.only_kind_changed(old, old[:-1] + "| mystery |")
+    assert not fl.only_kind_changed(old, old.replace("| 1 |", "| 2 |")[:-1] + "| friction |")
+    assert not fl.only_kind_changed(old, old.replace("widget missing", "x")[:-1] + "| friction |")
+    assert not fl.only_kind_changed("not a row", old[:-1] + "| friction |")

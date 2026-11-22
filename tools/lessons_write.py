@@ -106,8 +106,7 @@ def atomic_write(path: Path, text: str) -> None:
             fh.write(text)
         os.replace(tmp, path)
     except BaseException:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
+        os.unlink(tmp)          # mkstemp created it; a failed replace leaves it behind
         raise
 
 

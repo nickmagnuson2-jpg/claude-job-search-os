@@ -715,6 +715,14 @@ MIGRATION_RULES = (
 DEFAULT_RULE = ("default-friction", DEFAULT_KIND)
 
 
+def assemble(pre: str, header_block: str, rows: list[str], trailing: str) -> str:
+    """The ledger text from its parts, ending in one newline."""
+    body = pre + "\n" + header_block + "\n" + "\n".join(rows)
+    if trailing.strip():
+        body += "\n" + trailing
+    return body if body.endswith("\n") else body + "\n"
+
+
 def ledger_sha256() -> str:
     import hashlib
     return hashlib.sha256(LEDGER.read_bytes()).hexdigest()
@@ -740,6 +748,15 @@ def plan_kinds(parsed: list[dict]) -> list[dict]:
         else:
             plan.append({"row": r, "rule": DEFAULT_RULE[0], "kind": DEFAULT_RULE[1]})
     return plan
+
+
+def only_kind_changed(old: str, new: str) -> bool:
+    """True when `new` is `old` with only its Kind cell set to a known kind."""
+    a, b = parse_row(old), parse_row(new)
+    return (bool(a) and bool(b)
+            and all(a[k] == b[k] for k in ("date", "surface", "nature", "fix",
+                                            "occurrences", "promotion"))
+            and b["kind"] in ls.FRICTION_KINDS)
 
 
 def with_kind(raw: str, kind: str) -> str:
@@ -781,21 +798,13 @@ def cmd_migrate_kinds(args: argparse.Namespace) -> None:
     changes = {e["row"]["_raw"]: with_kind(e["row"]["_raw"], e["kind"])
                for e in plan if e["rule"] not in ("already-set", "unrecognized-kind")}
     new_rows = [changes.get(r, r) for r in data_rows]
-    # Conservation: every row keeps every field except Kind, and only rows in the plan move.
-    for old, new in zip(data_rows, new_rows):
-        if old == new:
-            continue
-        a, b = parse_row(old), parse_row(new)
-        same = all(a[k] == b[k] for k in ("date", "surface", "nature", "fix", "occurrences",
-                                           "promotion"))
-        if not same or b["kind"] not in ls.FRICTION_KINDS:
-            fail(f"refusing: rewriting a row changed more than its Kind: {old[:120]}")
-    body = pre + "\n" + header_block + "\n" + "\n".join(new_rows)
-    if trailing.strip():
-        body += "\n" + trailing
-    if not body.endswith("\n"):
-        body += "\n"
-    atomic_write(LEDGER, body)
+    # Conservation: every changed row keeps every field except Kind. with_kind() cannot
+    # violate this; the check stands guard against a future edit to it (only_kind_changed
+    # is unit-tested directly, since no CLI input can reach the refusal).
+    broken = [o for o, n in zip(data_rows, new_rows) if o != n and not only_kind_changed(o, n)]
+    if broken:
+        fail(f"refusing: rewriting a row changed more than its Kind: {broken[0][:120]}")
+    atomic_write(LEDGER, assemble(pre, header_block, new_rows, trailing))
     # Rows, not distinct texts: the live ledger holds identical duplicate rows.
     ok({"action": "applied", "changed": sum(o != n for o, n in zip(data_rows, new_rows)),
         **report})
