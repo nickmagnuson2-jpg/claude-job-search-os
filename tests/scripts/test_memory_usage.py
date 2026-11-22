@@ -112,7 +112,7 @@ def test_a_write_tool_is_not_an_entry(tmp_path, tool):
     f"cat {MP}feedback_alpha_rule.md",
     f"head -20 {MP}feedback_alpha_rule.md",
     f"cd {MP} && sed -n 1,10p feedback_alpha_rule.md",
-    f"FOO=1 tail {MP}feedback_alpha_rule.md | wc -l",
+    f"FOO=1 tail {MP}feedback_alpha_rule.md | head -5",
     f"grep -n promoted {MP}feedback_alpha_rule.md",
 ])
 def test_a_bash_print_with_output_is_an_entry(tmp_path, cmd):
@@ -141,9 +141,9 @@ def test_a_failed_bash_whose_output_carries_the_files_frontmatter_is_an_entry(tm
 
 
 def test_grep_lines_in_a_failed_result_are_entries(tmp_path):
-    """Real case, 2026-11-22: a checker exits 1 and prints `<stem>.md: <text>` lines."""
+    """A grep that printed the rule's lines and then failed still put them in context."""
     out = "Exit code 1\nfeedback_alpha_rule.md:4:the rule text"
-    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": "python3 tools/x.py"}),
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": f"cd {MP} && grep -n rule *.md; false"}),
                            _tool_result("t1", out, error=True)])
     assert _chans(res.events) == [("feedback_alpha_rule", "grep_line")]
 
@@ -607,7 +607,7 @@ def test_search_file_args_finds_only_the_file_operands(seg, files):
     ("grep --exclude-from excludes memory/a.md output/", ["output/"]),
     ("grep -d skip memory/a.md output/", ["output/"]),
     ("grep --binary-files text memory/a.md output/", ["output/"]),
-    ("grep --label x memory/a.md output/", ["output/"]),
+    ("grep --label x memory/a.md output/", None),                      # confirm F2: --label fakes the path
     ("rg -j 4 memory/a.md output/", ["output/"]),
     ("rg -r X memory/a.md output/", ["output/"]),                       # rg -r is --replace (a value)
     ("grep -r memory/a.md output/", ["output/"]),                       # grep -r is recursive (no value)
@@ -666,3 +666,161 @@ def test_grep_h_still_counts_it_is_no_filename_there():
 def test_env_option_skipping_applies_only_after_env_or_time(cmd):
     """Grok r3 F2: kills classify_bash::IF_TRUE::fcb00f22, which was wrongly allowlisted."""
     assert mu.classify_bash(cmd, {"feedback_alpha_rule"})[0] == set()
+
+
+# ---------------------------------------------------------------------------- B4 confirmation (2026-11-22)
+# Codex and Grok confirmation reviews of 2ca32856: four ways an entry was counted while the
+# rule's text never reached the tool result.
+
+@pytest.mark.parametrize("cmd", [
+    f"FOO=1 tail {MP}feedback_alpha_rule.md | wc -l",               # Codex F1, Grok F2: a count
+    f"cat {MP}feedback_alpha_rule.md | md5",
+    f"cat {MP}feedback_alpha_rule.md | grep -c promoted",
+    f"cat {MP}feedback_alpha_rule.md | python3 -c 'print(1)'",
+    f"cat {MP}feedback_alpha_rule.md >/dev/null; echo done",
+    f"cat {MP}feedback_alpha_rule.md > /tmp/copy.txt && echo ok",
+    f"cat {MP}feedback_alpha_rule.md | head -3 > /tmp/copy.txt; echo ok",
+    f"cat {MP}feedback_alpha_rule.md &> /tmp/copy.txt; echo ok",
+    f"cat {MP}feedback_alpha_rule.md 1>/tmp/copy.txt; echo ok",
+])
+def test_a_print_whose_stdout_does_not_reach_the_result_is_not_an_entry(tmp_path, cmd):
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", "17")])
+    assert [e for e in res.events if e.channel == "bash_print"] == []
+
+
+@pytest.mark.parametrize("cmd", [
+    f"cat {MP}feedback_alpha_rule.md 2>/dev/null",
+    f"cat {MP}feedback_alpha_rule.md 2>&1 | head -40",
+    f"sed -n 1,30p {MP}feedback_alpha_rule.md | cut -c1-300",
+    f"cat {MP}feedback_alpha_rule.md | tail -30 | cut -c1-300",
+    f"head -9 {MP}feedback_alpha_rule.md | grep -E 'occurrences|promoted'",
+    f"cat {MP}feedback_alpha_rule.md | sed -n '1,60p'",
+    f"cat {MP}feedback_alpha_rule.md | nl | cat",
+    f"cat {MP}feedback_alpha_rule.md >&2",
+])
+def test_a_print_through_pass_through_filters_is_an_entry(tmp_path, cmd):
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", "promoted: no")])
+    assert _chans(res.events) == [("feedback_alpha_rule", "bash_print")]
+
+
+@pytest.mark.parametrize("cmd", [
+    "cd output/drain && cat feedback_alpha_rule.triage.json",       # found while measuring
+    "cat $D/feedback_alpha_rule.verify.json | head -c 1500",
+    "cat memory/feedback_alpha_rule.mdx",
+    "cat memory/feedback_alpha_rule",
+])
+def test_a_print_counts_only_for_the_rules_own_md_file(tmp_path, cmd):
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", "x")])
+    assert res.events == []
+
+
+@pytest.mark.parametrize("cmd,out", [
+    ("printf 'feedback_alpha_rule.md:3:not the rule text\\n'",          # Codex F2
+     "feedback_alpha_rule.md:3:not the rule text"),
+    ("grep --label feedback_alpha_rule.md -H x /tmp/other",
+     "feedback_alpha_rule.md:1:unrelated text"),
+    ("PYTHONIOENCODING=utf-8 python3 tools/promotion_schema.py --memory-dir $M",  # a checker message
+     "feedback_alpha_rule.md: I4 reopen_gate names no number"),
+    ("cat /x/output/report.md",                                       # Grok F3: a report quoting grep output
+     "/x/proj/memory/feedback_alpha_rule.md:3:saved grep output in a report"),
+    ("cd output/drain; cat x.triage.json",
+     "feedback_alpha_rule.md: 'a quoted clause'"),
+    ("rg -o promoted memory/",                                        # Grok F1: only-matching
+     "memory/feedback_alpha_rule.md:promoted"),
+    ("grep -oH feedback_alpha_rule memory/feedback_alpha_rule.md",
+     "memory/feedback_alpha_rule.md:feedback_alpha_rule"),
+    ("grep -rno promoted memory/",
+     "memory/feedback_alpha_rule.md:12:promoted"),
+])
+def test_a_grep_shaped_line_counts_only_from_a_grep_that_prints_lines(tmp_path, cmd, out):
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", out)])
+    assert [e for e in res.events if e.channel == "grep_line"] == []
+
+
+@pytest.mark.parametrize("cmd", [
+    "grep -rn promoted memory/",
+    "M=~/m/memory; /usr/bin/grep -n promoted $M/*.md | head -20",
+    "cd memory && rg -n promoted",
+    "env -i grep -rn promoted memory/",
+])
+def test_a_grep_line_from_a_line_printing_grep_is_an_entry(tmp_path, cmd):
+    out = "memory/feedback_alpha_rule.md:12:promoted: no"
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", out)])
+    assert _chans(res.events) == [("feedback_alpha_rule", "grep_line")]
+
+
+@pytest.mark.parametrize("tool", ["Agent", "Task", "mcp__x__y", "WebFetch"])
+def test_a_grep_shaped_line_from_a_non_search_tool_is_not_an_entry(tmp_path, tool):
+    res = _scan(tmp_path, [_tool_use("t1", tool, {"prompt": "x"}),
+                           _tool_result("t1", "feedback_alpha_rule.md:3:quoted by a subagent")])
+    assert res.events == []
+
+
+@pytest.mark.parametrize("cmd", [
+    f"grep -E 'occurrences|promoted' {MP}feedback_alpha_rule.md",       # quoted | is the pattern
+    f"grep -n \"a;b\" {MP}feedback_alpha_rule.md",
+    f"grep -n 'a&&b' {MP}feedback_alpha_rule.md | head -3",
+])
+def test_separators_inside_quotes_do_not_split_the_command(tmp_path, cmd):
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", "3:promoted: no")])
+    assert _chans(res.events) == [("feedback_alpha_rule", "bash_print")]
+
+
+@pytest.mark.parametrize("cmd", [
+    f"cat notes.txt it's; ls {MP}feedback_alpha_rule.md",              # unclosed quote: no joined stage
+    f"head -3 don't.txt | cat; ls {MP}feedback_alpha_rule.md",
+])
+def test_an_unclosed_quote_does_not_join_later_commands_into_a_print(tmp_path, cmd):
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", "x")])
+    assert res.events == []
+
+
+@pytest.mark.parametrize("text,commands", [
+    ("a | b && c; d\ne || f", [["a ", " b "], [" c"], [" d"], ["e "], [" f"]]),
+    ("grep 'x|y' f | head", [["grep 'x|y' f ", " head"]]),
+    ('grep "x;y" f', [['grep "x;y" f']]),
+    ("echo it's | cat; ls", [["echo it's ", " cat"], [" ls"]]),
+    ("a|b", [["a", "b"]]),
+    ('echo \\"x; grep "a|b" f', [['echo \\"x'], [' grep "a|b" f']]),   # an escaped quote opens nothing
+    ('grep "a\\"|b" f | head', [['grep "a\\"|b" f ', ' head']]),
+    ("grep 'a\\' f | head", [["grep 'a\\' f ", " head"]]),        # no escapes inside single quotes
+])
+def test_split_commands(text, commands):
+    assert mu._split_commands(text) == commands
+
+
+@pytest.mark.parametrize("cmd", [
+    'cd memory; for f in feedback_alpha_rule.md; do echo "$f: $(grep -m3 -E \'^ *promoted:\' $f)"; done',
+    "grep -l x $M/feedback_*.md | head -8 | xargs -I{} /usr/bin/grep -H 'promoted:' {}",
+    "ls memory/*.md | xargs -n 1 -P 4 grep -H promoted",
+])
+def test_a_grep_run_by_xargs_or_inside_a_substitution_prints_lines(tmp_path, cmd):
+    out = "memory/feedback_alpha_rule.md:   promoted: no"
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", out)])
+    assert _chans(res.events) == [("feedback_alpha_rule", "grep_line")]
+
+
+@pytest.mark.parametrize("cmd", [
+    'echo "$(grep -c x memory/feedback_alpha_rule.md)"',
+    "ls memory | xargs -I{} grep -l promoted {}",
+    "ls memory | xargs -0 echo",
+    "xargs",
+])
+def test_a_substitution_or_xargs_without_a_line_printing_grep_is_not_a_source(tmp_path, cmd):
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}),
+                           _tool_result("t1", "memory/feedback_alpha_rule.md:3:x")])
+    assert res.events == []
+
+
+@pytest.mark.parametrize("text,bodies", [
+    ("echo $(a) $(b)", ["a", "b"]),
+    ("echo \"$(grep -E '^ *(occurrences|promoted):' f | tr x y)\"",
+     ["grep -E '^ *(occurrences|promoted):' f | tr x y"]),
+    ("x $(a $(b) c)", ["a $(b) c", "b"]),
+    ('x $(echo ")" ; grep y f)', ['echo ")" ; grep y f']),
+    ("x $(echo \\) y)", ["echo \\) y"]),
+    ("x $(unclosed", []),
+    ("no substitution (here)", []),
+])
+def test_substitutions(text, bodies):
+    assert mu._substitutions(text) == bodies

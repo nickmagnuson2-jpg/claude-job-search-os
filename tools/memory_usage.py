@@ -49,7 +49,12 @@ GREP_LINE = re.compile(r"^\s*([^\s:]*?)((?:feedback|reference|project|user)_[A-Z
 HEREDOC = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?[^\n]*\n(.*?)\n\1\b", re.S)
 PRINT_VERBS = {"cat", "head", "tail", "sed", "less", "more", "bat", "awk", "nl", "grep", "rg"}
 WRITE_VERBS = {"mv", "cp", "rm", "touch", "tee"}
-SEGMENT_SPLIT = re.compile(r"\|\||&&|[;|\n]")
+# Filters that pass the printed text on to the result (B4 confirmation, Codex F1 / Grok F2): a
+# print piped into anything else (wc, md5, python) or with stdout redirected to a file puts a
+# count or nothing in context, not the rule. grep/rg pass only when they print lines.
+PASS_THROUGH = {"head", "tail", "cut", "sed", "cat", "nl"}
+# stdout sent to a file: `>f`, `>>f`, `1>f`, `&>f`. Not `2>f` (stderr) or `>&2` (still shown).
+STDOUT_REDIRECT = re.compile(r"(?:^|[^0-9&>])>>?(?!&)\s*\S|(?:^|\s)1>>?(?!&)\s*\S|&>")
 REDIRECT_TO_RULE = re.compile(r">\s*\S*(?:feedback|reference|project|user)_")
 CONTENT_RECORD_TYPES = ("user", "assistant", "attachment")
 
@@ -112,7 +117,8 @@ def _names_in_memory(segment: str, stems: set[str]) -> set[str]:
     any other folder is a different file with the same name (Codex r1 F2)."""
     found = set()
     for stem in _names(segment, stems):
-        for m in re.finditer(rf"(\S*?){re.escape(stem)}", segment):
+        # The rule's own .md file: `<stem>.triage.json` in output/ is another file (B4 confirmation).
+        for m in re.finditer(rf"(\S*?){re.escape(stem)}\.md(?![\w.])", segment):
             if _memory_prefix(m.group(1)):
                 found.add(stem)
                 break
@@ -126,14 +132,15 @@ SEARCH_VERBS = {"grep", "rg"}
 # (help and version shorts are deliberately absent: they print no file). An unknown
 # --name=value is skipped instead; see _search_file_args.
 # Options that print names, counts or matches only (-l, -L, -c, -q, -o and their long forms)
-# are deliberately absent, so they count nothing by the same rule.
+# are deliberately absent, so they count nothing by the same rule. So is --label, which prints
+# any name as the path of stdin's lines (B4 confirmation, Codex F2).
 _GRAMMAR = {
     "grep": {
         "value_short": set("efABCmdD"),
         "flag_short": set("abhHiInrRsuUvwxyzZEFGPT0123456789"),
         "value_long": {"--regexp", "--file", "--after-context", "--before-context", "--context",
                        "--max-count", "--directories", "--devices", "--binary-files", "--exclude",
-                       "--exclude-from", "--exclude-dir", "--include", "--label", "--group-separator"},
+                       "--exclude-from", "--exclude-dir", "--include", "--group-separator"},
         "flag_long": {"--recursive", "--dereference-recursive", "--line-number", "--ignore-case",
                       "--no-ignore-case", "--no-filename", "--with-filename", "--color", "--colour",
                       "--fixed-strings", "--extended-regexp", "--basic-regexp", "--perl-regexp",
@@ -210,39 +217,151 @@ def _search_file_args(segment: str) -> list[str] | None:
     return args if explicit_pattern else args[1:]
 
 
+def _stage_tokens(stage: str) -> list[str]:
+    """A pipeline stage's words from its command word on: variable assignments, cd and the
+    options of env and time are skipped (Codex r3 F3)."""
+    toks = stage.strip().split()
+    while toks and (re.match(r"^\w+=", toks[0]) or toks[0] in ("cd", "time", "env")):
+        if toks[0] in ("env", "time"):   # their own options precede the command
+            toks = toks[1:]
+            while toks and toks[0].startswith("-"):
+                toks = toks[2:] if toks[0] in ("-u", "--unset", "-C", "--chdir") else toks[1:]
+            continue
+        toks = toks[2:] if toks[0] == "cd" else toks[1:]
+    return toks
+
+
+def _split_commands(text: str) -> list[list[str]]:
+    """Commands (split at ||, &&, ; and newlines) as lists of pipeline stages (split at |),
+    ignoring separators inside quotes: `grep -E 'a|b'` is one stage. With an unclosed quote,
+    quotes are ignored, so a stray apostrophe cannot join later commands into one stage."""
+    commands, stages, cur, quote, i = [], [], [], None, 0
+    while i < len(text):
+        c = text[i]
+        if c == "\\" and quote != "'":   # an escaped character is literal, outside single quotes
+            cur.append(text[i:i + 2])
+            i += 2
+            continue
+        if quote:
+            quote = None if c == quote else quote
+        elif c in "'\"":
+            quote = c
+        elif text.startswith(("||", "&&"), i) or c in ";\n":
+            stages.append("".join(cur)); commands.append(stages); stages, cur = [], []
+            i += 2 if c in "|&" else 1
+            continue
+        elif c == "|":
+            stages.append("".join(cur)); cur = []
+            i += 1
+            continue
+        cur.append(c)
+        i += 1
+    stages.append("".join(cur)); commands.append(stages)
+    if quote:   # an unclosed quote would make the rest one stage: split as if unquoted
+        return [re.split(r"(?<!\|)\|(?!\|)", c) for c in re.split(r"\|\||&&|[;\n]", text)]
+    return commands
+
+
+def _pipelines(command: str) -> list[list[tuple[str, list[str]]]]:
+    """Each command of a Bash call as its pipeline stages, heredoc bodies removed; a stage is
+    (raw text, words from the command word on)."""
+    return [[(st, _stage_tokens(st)) for st in cmd]
+            for cmd in _split_commands(HEREDOC.sub(" ", command))]
+
+
+def _prints_lines(toks: list[str]) -> bool:
+    """A grep/rg stage whose output is lines of text (not names, counts or matches only)."""
+    return bool(toks) and toks[0].split("/")[-1] in SEARCH_VERBS and \
+        _search_file_args(" ".join(toks)) is not None
+
+
+def _reaches_result(stages: list, i: int) -> bool:
+    """Whether stage i's stdout reaches the tool result: no stdout redirect from it on, and
+    every later stage passes the text through."""
+    if any(STDOUT_REDIRECT.search(raw) for raw, _ in stages[i:]):
+        return False
+    for _raw, toks in stages[i + 1:]:
+        verb = toks[0].split("/")[-1] if toks else ""
+        if _prints_lines(toks) or (verb in PASS_THROUGH and not (verb == "sed" and "-i" in toks)):
+            continue
+        return False
+    return True
+
+
 def classify_bash(command: str, stems: set[str]) -> tuple[set[str], set[str], int]:
     """(printed stems, written stems, heredoc references) for one Bash command.
 
-    A stem counts as printed only as an argument of a segment whose command word is a print
-    verb. Heredoc bodies are removed first and their rule-name references counted, because a
-    Python script that opens a file may or may not print it.
+    A stem counts as printed only as an argument of a pipeline stage whose command word is a
+    print verb, and only when that stage's stdout reaches the result (_reaches_result). Heredoc
+    bodies are removed first and their rule-name references counted, because a Python script
+    that opens a file may or may not print it.
     """
     heredoc_refs = sum(len(_names(m.group(2), stems)) for m in HEREDOC.finditer(command))
-    text = HEREDOC.sub(" ", command)
     printed: set[str] = set()
     written: set[str] = set()
-    for seg in SEGMENT_SPLIT.split(text):
-        toks = seg.strip().split()
-        while toks and (re.match(r"^\w+=", toks[0]) or toks[0] in ("cd", "time", "env")):
-            if toks[0] in ("env", "time"):   # their own options precede the command (Codex r3 F3)
-                toks = toks[1:]
-                while toks and toks[0].startswith("-"):
-                    toks = toks[2:] if toks[0] in ("-u", "--unset", "-C", "--chdir") else toks[1:]
+    for stages in _pipelines(command):
+        for i, (seg, toks) in enumerate(stages):
+            if not toks:
                 continue
-            toks = toks[2:] if toks[0] == "cd" else toks[1:]
-        if not toks:
-            continue
-        verb = toks[0].split("/")[-1]
-        if verb in SEARCH_VERBS:
-            files = _search_file_args(" ".join(toks))
-            found = _names_in_memory(" ".join(files), stems) if files else set()
-        else:
-            found = _names_in_memory(seg, stems)
-        if REDIRECT_TO_RULE.search(seg) or (verb == "sed" and "-i" in toks) or verb in WRITE_VERBS:
-            written |= found
-        elif verb in PRINT_VERBS:
-            printed |= found
+            verb = toks[0].split("/")[-1]
+            if verb in SEARCH_VERBS:
+                files = _search_file_args(" ".join(toks))
+                found = _names_in_memory(" ".join(files), stems) if files else set()
+            else:
+                found = _names_in_memory(seg, stems)
+            if REDIRECT_TO_RULE.search(seg) or (verb == "sed" and "-i" in toks) or verb in WRITE_VERBS:
+                written |= found
+            elif verb in PRINT_VERBS and _reaches_result(stages, i):
+                printed |= found
     return printed, written, heredoc_refs
+
+
+XARGS_VALUE = {"-I", "-n", "-P", "-L", "-s", "-E", "-d", "-J", "-R", "-S"}
+
+
+def _after_xargs(toks: list[str]) -> list[str]:
+    """The command xargs runs, its own options skipped: `xargs -I{} grep -H x {}` -> grep ..."""
+    if not toks or toks[0].split("/")[-1] != "xargs":
+        return toks
+    i = 1
+    while i < len(toks) and toks[i].startswith("-"):
+        i += 2 if toks[i] in XARGS_VALUE else 1
+    return toks[i:]
+
+
+def _substitutions(text: str) -> list[str]:
+    """The bodies of $( ) command substitutions, nested ones included; parentheses inside
+    quotes do not end a body (`$(grep -E '(a|b):' f)`)."""
+    bodies, start = [], text.find("$(")
+    while start != -1:
+        depth, quote, i = 1, None, start + 2
+        while i < len(text) and depth:
+            c = text[i]
+            if c == "\\" and quote != "'":
+                i += 2
+                continue
+            if quote:
+                quote = None if c == quote else quote
+            elif c in "'\"":
+                quote = c
+            elif c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+            i += 1
+        if depth == 0:
+            bodies.append(text[start + 2:i - 1])
+        start = text.find("$(", start + 2)
+    return bodies
+
+
+def search_prints_lines(command: str) -> bool:
+    """Whether a Bash command has a grep/rg stage that prints lines, the only Bash source of
+    grep-shaped output that is a file's own text (B4 confirmation, Codex F2 / Grok F1, F3).
+    A grep run by xargs or inside $( ) counts: its lines reach the result as well."""
+    texts = [command] + _substitutions(command)
+    return any(_prints_lines(_after_xargs(toks))
+               for text in texts for stages in _pipelines(text) for _raw, toks in stages)
 
 
 def _result_text(content) -> str:
@@ -363,8 +482,12 @@ def collect(project_dir: Path, stems: set[str], exclude_sessions: Iterable[str] 
                                            if re.search(rf"(?m)^\s*name:\s*['\"]?{re.escape(s)}\b", text)}
                             for stem in printed:
                                 add(session, stem, "bash_print", day, (stem, "bash_print", tid))
-                        for stem in _grep_lines(text, stems):
-                            add(session, stem, "grep_line", day, (stem, "grep_line", tid))
+                        # Grep-shaped lines are a file's text only from a search that prints
+                        # lines; a checker, a cat of a report or a subagent can print the same
+                        # shape about a rule it never read (B4 confirmation).
+                        if name == "Grep" or (name == "Bash" and search_prints_lines(inp.get("command", ""))):
+                            for stem in _grep_lines(text, stems):
+                                add(session, stem, "grep_line", day, (stem, "grep_line", tid))
                 else:  # attachment
                     att = rec.get("attachment") or {}
                     if att.get("type") == "file":
