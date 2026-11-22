@@ -290,3 +290,28 @@ def test_metadata_indent_skips_a_blank_or_comment_first_line(tmp_path, gap, monk
     mf.record_fire(p, "2026-11-22 a fire")
     assert mf.read_file(p)[0]["occurrences"] == 3
     assert gap in p.read_text(encoding="utf-8")
+
+
+def test_a_plain_continuation_line_in_an_intended_span_is_fine(tmp_path):
+    old = "name: x\ndescription: a value that\n  wraps onto a second line\nmetadata:\n  promoted: no\n"
+    new = "name: x\ndescription: a value that wraps onto a second line\nmetadata:\n  promoted: no\n"
+    p = _file(tmp_path, old)
+    mf.repair(p, expect_sha256=_sha(p), new_block=new,
+              intended={"description": "a value that wraps onto a second line"})
+
+
+def test_an_absorbed_key_that_is_itself_intended_is_allowed(tmp_path):
+    old = "name: x\ndescription: broken\n  hidden: kept\n"
+    new = "name: x\ndescription: fixed\nhidden: kept\n"
+    p = _file(tmp_path, old)
+    fields = mf.repair(p, expect_sha256=_sha(p), new_block=new,
+                       intended={"description": "fixed", "hidden": "kept"})
+    assert fields["hidden"] == "kept"
+
+
+def test_a_hash_inside_a_quoted_value_of_a_readable_block_needs_no_note(tmp_path):
+    old = 'name: x\nmetadata:\n  promoted: "n/a -- see PR #61"\n'
+    new = "name: x\nmetadata:\n  promoted: 'superseded by ruling 2026-11-22 (earlier value: n/a -- see PR #61)'\n"
+    p = _file(tmp_path, old)
+    mf.repair(p, expect_sha256=_sha(p), new_block=new,
+              intended={"promoted": "superseded by ruling 2026-11-22 (earlier value: n/a -- see PR #61)"})
