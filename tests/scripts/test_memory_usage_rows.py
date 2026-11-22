@@ -130,7 +130,9 @@ def test_meta_carries_the_previous_runs_counts():
     assert _meta()["previous_counts"] is None
 
 
-def test_a_half_life_is_proposed_only_with_30_gaps_over_a_window_longer_than_it():
+def test_gaps_are_recorded_with_their_sample_size_and_no_half_life_is_proposed():
+    """Org 68, 2026-11-22: p75 of reuse gaps measures reuse, not validity, and the window
+    cuts off long gaps. Record the distribution; propose nothing until Nick rules."""
     many = {f"feedback_m{i}": {"last_context_entry": date(2026, 11, 20), "last_entry_any_session": date(2026, 11, 20),
                                "channels": {"read": 1}, "sessions": 1, "broad_session_entries": 0,
                                "use_days": [date(2026, 11, 1), date(2026, 11, 11), date(2026, 11, 20)]}
@@ -140,23 +142,11 @@ def test_a_half_life_is_proposed_only_with_30_gaps_over_a_window_longer_than_it(
     scan = mu.ScanResult([], W_START, W_END, {"heredoc_refs": 0, "sibling_transcripts_not_scanned": 0}, 1)
     m = mu.build_meta(built, scan, many, previous_counts=None)
     g = m["gaps_by_kind"]["MACHINERY"]
-    assert g["n"] == 30 and g["p75"] == 10
-    assert g["proposed_half_life_days"] == 10 and "Nick" in g["proposal_note"]
-    few = mu.build_meta(_rows().values(), scan, _summary(), previous_counts=None)
-    assert few["gaps_by_kind"]["MACHINERY"]["proposed_half_life_days"] is None
-
-
-def test_no_half_life_is_proposed_when_the_window_is_shorter_than_it():
-    many = {f"feedback_l{i}": {"last_context_entry": date(2026, 11, 20), "last_entry_any_session": date(2026, 11, 20),
-                               "channels": {"read": 1}, "sessions": 1, "broad_session_entries": 0,
-                               "use_days": [date(2026, 11, 1), date(2026, 11, 11), date(2026, 11, 20)]}
-            for i in range(15)}
-    rows = [{"file": k, "kind": "LESSON", "source": TRUSTED[0]} for k in many]
-    built = mu.build_rows(many, set(many), rows, W_START, W_END)
-    scan = mu.ScanResult([], W_START, W_END, {"heredoc_refs": 0, "sibling_transcripts_not_scanned": 0}, 1)
-    m = mu.build_meta(built, scan, many, previous_counts=None)
-    assert m["gaps_by_kind"]["LESSON"]["n"] == 30
-    assert m["gaps_by_kind"]["LESSON"]["proposed_half_life_days"] is None   # 90-day window < 240
+    assert (g["n"], g["p75"], g["half_life_days"]) == (30, 10, 60)
+    for kind in ls.HALF_LIFE_DAYS:
+        assert m["gaps_by_kind"][kind]["proposal"] == "no proposal: estimator under review"
+        assert "proposed_half_life_days" not in m["gaps_by_kind"][kind]
+    assert m["gaps_by_kind"]["FACT"]["n"] == 0 and m["gaps_by_kind"]["FACT"]["p75"] is None
 
 
 # ---------------------------------------------------------------------------- file

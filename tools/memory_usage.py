@@ -284,7 +284,10 @@ USAGE_FILE = "memory-usage.jsonl"
 CLASS_MAP_FILE = "memory-classes.jsonl"
 KIND_ORDER = ("MACHINERY", "FACT", "LESSON")
 NO_KIND = "no kind"
-MIN_GAPS_FOR_PROPOSAL = 30
+# Gaps between uses measure reuse, not how long a rule stays valid, and the window cuts off
+# long gaps. The distribution is recorded; no half-life is proposed until Nick rules on an
+# estimator (org 68, 2026-11-22).
+NO_PROPOSAL = "no proposal: estimator under review"
 GAPS_NOTE = ("Observation has known gaps (Python heredocs that open a file, sibling-folder "
              "transcripts), so 'unverified' means not re-confirmed and never claims a rule is unused.")
 KIND_RELIABILITY_NOTE = ("Two independent full reads agree on a file's kind about 70% of the time "
@@ -345,7 +348,7 @@ def _p75(values: list[int]) -> int | None:
 def build_meta(rows: Iterable[dict], scan: ScanResult, summary: dict[str, dict],
                previous_counts: dict | None, class_map: str | None = None) -> dict:
     """The meta row: counts by kind and state, the window, the rules used, known gaps, and
-    each kind's interval distribution with a half-life proposal for Nick (never applied)."""
+    each kind's distribution of gaps between uses with its sample size (no proposal)."""
     import learning_state as ls
     rows = list(rows)
     counts: dict[str, Counter] = defaultdict(Counter)
@@ -358,12 +361,8 @@ def build_meta(rows: Iterable[dict], scan: ScanResult, summary: dict[str, dict],
     by_kind = {}
     for kind, half_life in ls.HALF_LIFE_DAYS.items():
         g = gaps.get(kind, [])
-        p75 = _p75(g)
-        eligible = len(g) >= MIN_GAPS_FOR_PROPOSAL and window_days > half_life
-        by_kind[kind] = {"n": len(g), "p75": p75, "half_life_days": half_life,
-                         "proposed_half_life_days": p75 if eligible else None,
-                         "proposal_note": (f"Data-derived p75 from {len(g)} gaps; a proposal for Nick, "
-                                           "never applied by this script.") if eligible else None}
+        by_kind[kind] = {"n": len(g), "p75": _p75(g), "half_life_days": half_life,
+                         "proposal": NO_PROPOSAL}
     return {
         "type": "meta",
         "generated_at": datetime.now(LOCAL_TZ).isoformat(timespec="seconds"),
