@@ -53,7 +53,8 @@ class _DuplicateKey(Exception):
 class _UniqueKeyLoader(yaml.SafeLoader):
     """safe_load, except a key repeated in one mapping is an error. Plain safe_load keeps the
     LAST value, so `promoted: no` then `promoted: yes` read closed with no defect (Codex r1
-    F1, P0, 2026-11-22)."""
+    F1, P0, 2026-11-22). SafeLoader's mapping constructor calls construct_mapping, so the
+    override is reached without registering a constructor."""
 
     def construct_mapping(self, node, deep=False):
         seen = set()
@@ -64,9 +65,6 @@ class _UniqueKeyLoader(yaml.SafeLoader):
             seen.add(key)
         return super().construct_mapping(node, deep=deep)
 
-
-_UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
-                                 _UniqueKeyLoader.construct_mapping)
 
 
 class Defect(NamedTuple):
