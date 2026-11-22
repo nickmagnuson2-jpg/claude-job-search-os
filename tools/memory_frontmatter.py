@@ -44,7 +44,17 @@ import yaml
 _BLOCK = re.compile(r"\A---\n(.*?\n)?---(?:\n|\Z)", re.DOTALL)
 
 NEVER_MACHINE_WRITTEN = frozenset({"occurrences"})
-_COMMENT = re.compile(r"(?:^|\s)#")
+
+
+def _comment_lines(block: str) -> set[int]:
+    """Indexes of the block's lines that hold a YAML comment, by PyYAML's own scanner: a "#"
+    outside every token is a comment, one inside a token is value text. A regex cannot
+    tell "PR #61" inside quotes from a comment, and misses a comment glued to a quoted
+    value ("no"# waits); both were found on 2026-11-22 (org 72, Grok r2)."""
+    spans = [(t.start_mark.index, t.end_mark.index)
+             for t in yaml.scan(block, Loader=yaml.SafeLoader)]
+    return {block.count("\n", 0, i) for i, ch in enumerate(block)
+            if ch == "#" and not any(a <= i < b for a, b in spans)}
 
 
 class _DuplicateKey(Exception):
@@ -215,13 +225,14 @@ def _set_keys(text: str, updates: dict) -> str:
     m = _BLOCK.match(text)
     lines = (m.group(1) or "").split("\n")
     for key, value in updates.items():
-        spans, meta_end, child_indent = _key_spans("\n".join(lines))
+        block = "\n".join(lines)
+        spans, meta_end, child_indent = _key_spans(block)
+        commented = _comment_lines(block)  # per key: an earlier replacement shifts lines
         if key in spans:
             a, b, indent = spans[key]
-            if any(_COMMENT.search(line) for line in lines[a:b]):
+            if commented & set(range(a, b)):
                 # A comment is invisible to read(), so the consistency check cannot see it
-                # go; refuse rather than delete it (Codex r2 F1, P0). Over-refuses a "#"
-                # inside a quoted value, which costs a hand edit, never data.
+                # go; refuse rather than delete it (Codex r2 F1, P0).
                 raise WriteRefused([f"{key}: its lines carry a YAML comment that a rewrite "
                                     "would delete; edit this key by hand"])
             lines[a:b] = _render(key, value, indent)

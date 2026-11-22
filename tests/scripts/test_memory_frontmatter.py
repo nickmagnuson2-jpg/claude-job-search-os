@@ -518,3 +518,59 @@ def test_writers_refuse_a_symlink(tmp_path, monkeypatch):
     with pytest.raises(mf.WriteRefused):
         mf.record_fire(alias, "2026-11-22 a fire")
     assert alias.is_symlink() and target.read_text(encoding="utf-8") == RULE
+
+
+# ------------------------------------------------------------------ comment detection by yaml's own tokens
+# Org 72 ruling (2026-11-22): the regex refused 7 of 8 live promoted values that hold
+# "PR #61" inside quotes, and Grok r2 (on 6439d2e2) showed a comment glued to a quoted
+# value ("no"# waits) passed it. A "#" is a comment only where PyYAML's scanner says so.
+
+@pytest.mark.parametrize("line", [
+    '  promoted: "yes -- hook, tools/check_x.py (PR #61), 2026-11-17"',   # inside a quoted scalar
+    "  promoted: 'yes -- hook (#61)'",                                     # single-quoted
+    "  promoted: yes -- hook PR#61",                                       # unquoted, no space before #
+])
+def test_a_hash_inside_the_value_is_not_a_comment(tmp_path, line):
+    text = RULE.replace("  promoted: no", line)
+    p = _file(tmp_path, text)
+    mf.write(p, {"promoted": "partial -- half"})
+    assert mf.read_file(p)[0]["promoted"] == "partial -- half"
+
+
+@pytest.mark.parametrize("line", [
+    "  promoted: no  # waits for the 3rd fire",          # trailing comment
+    '  promoted: "no"# waits',                           # glued to a quoted value (Grok r2)
+    "  promoted: 'no'# waits",
+    "  promoted: no\n    # rationale on its own line",   # comment on its own line under the key
+])
+def test_a_real_comment_on_the_key_is_refused(tmp_path, line):
+    text = RULE.replace("  promoted: no", line)
+    p = _file(tmp_path, text)
+    with pytest.raises(mf.WriteRefused) as e:
+        mf.write(p, {"promoted": "partial -- half"})
+    assert "comment" in str(e.value)
+    assert p.read_text(encoding="utf-8") == text
+
+
+def test_a_hash_in_block_scalar_content_is_not_a_comment(tmp_path):
+    text = RULE.replace('  reopen_gate: "3rd fire: build the check"',
+                        "  reopen_gate: >-\n    3rd fire\n    # not a comment here")
+    p = _file(tmp_path, text)
+    mf.write(p, {"reopen_gate": "4th fire"})
+    assert mf.read_file(p)[0]["reopen_gate"] == "4th fire"
+
+
+def test_comment_check_follows_line_shifts_between_updates(tmp_path):
+    # Replacing a 3-line value with 1 line moves every later line up by 2; the second key's
+    # comment must still be seen, and an uncommented key must not be refused.
+    text = ("---\nname: x\nreopen_gate: >-\n  one\n  two\nterminal: no\n"
+            "promoted: no  # keep me\n---\nbody\n")
+    p = _file(tmp_path, text)
+    with pytest.raises(mf.WriteRefused):
+        mf.write(p, {"reopen_gate": "single", "promoted": "partial -- half"})
+    assert p.read_text(encoding="utf-8") == text
+    text2 = ("---\nname: x\nreopen_gate: >-\n  one\n  two\nterminal: no  # judgment\n"
+             "promoted: no\n---\nbody\n")
+    p2 = _file(tmp_path, text2, "feedback_second.md")
+    mf.write(p2, {"reopen_gate": "single", "promoted": "partial -- half"})
+    assert "terminal: no  # judgment" in p2.read_text(encoding="utf-8")
