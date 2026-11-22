@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -55,6 +56,16 @@ def commit_of(root: Path, sha: str) -> str | None:
     r = subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "--quiet",
                         f"{sha}^{{commit}}"], capture_output=True, text=True)
     return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+
+
+def is_linked_worktree(root: Path) -> bool:
+    """git's own answer: a linked worktree's git dir differs from the common dir. Covers
+    layouts the file-read resolver cannot place (--separate-git-dir, submodule worktrees),
+    which must refuse rather than fall back to this worktree's copy (Codex r1 F1)."""
+    r = subprocess.run(["git", "-C", str(root), "rev-parse", "--path-format=absolute",
+                        "--git-dir", "--git-common-dir"], capture_output=True, text=True)
+    lines = r.stdout.split()
+    return r.returncode == 0 and len(lines) == 2 and Path(lines[0]) != Path(lines[1])
 
 
 def read_rows(root: Path) -> list[dict]:
@@ -120,6 +131,11 @@ def main(argv: list[str] | None = None) -> int:
         return _out({"status": "error", "code": "not_a_commit",
                      "message": f"{args.tip} is not a commit in {root}"}, 1)
     main = main_checkout(root)        # `root` itself unless it is a linked worktree
+    if main.resolve() == root.resolve() and is_linked_worktree(root):
+        return _out({"status": "error", "code": "main_checkout_unresolved",
+                     "message": f"{root} is a linked worktree whose main checkout cannot be "
+                                "found from its .git file; the push gate reads main's ledger, "
+                                "so run this from the main checkout"}, 2)
     ledger = str(main / LEDGER)
     if args.command == "record":
         append_row(main, {"kind": "audit", "verdict": "clean", "tree": tree, "tip": args.tip,
@@ -134,8 +150,10 @@ def main(argv: list[str] | None = None) -> int:
     except LedgerError as e:
         return _out({"status": "error", "code": "ledger_unreadable", "message": str(e)}, 2)
     if stranded:
-        fix = (f"PYTHONIOENCODING=utf-8 python3 {main / 'tools' / 'audit_pii_record.py'} "
-               f"--repo-root {main} record --tip {commit_of(root, args.tip)}")
+        fix = " ".join(shlex.quote(str(a)) for a in (
+            "python3", main / "tools" / "audit_pii_record.py", "--repo-root", main,
+            "record", "--tip", commit_of(root, args.tip)))
+        fix = f"PYTHONIOENCODING=utf-8 {fix}"
         return _out({"status": "ok", "action": "check", "tree": tree, "recorded": False,
                      "code": "recorded_only_in_worktree", "ledger": ledger,
                      "message": "recorded only in this worktree's copy, which the push gate "

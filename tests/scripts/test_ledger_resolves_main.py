@@ -15,6 +15,7 @@ rows not yet written to main; resolving main there would hide those rows.
 Fixtures are invented; this file is a public artifact.
 """
 import json
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -174,3 +175,60 @@ def test_a_worktree_whose_main_cannot_be_found_reports_unknown(tmp_path):
     wt.mkdir()
     (wt / ".git").write_text("gitdir: /nowhere/.git/worktrees/wt\n", encoding="utf-8")
     assert "unknown" in cv.open_p0_line(wt, ["tools/x.py"])
+
+
+# ------------------------------------------------------------------ Codex r1 F1, F2
+
+@pytest.fixture
+def separate_gitdir_worktree(tmp_path):
+    """--separate-git-dir: the worktree's gitdir has no `.git` component, so the
+    file-read resolver cannot find main (Codex r1 F1)."""
+    main = tmp_path / "main"
+    gd = tmp_path / "gitdir"
+    subprocess.run(["git", "init", "-q", "-b", "main", f"--separate-git-dir={gd}", str(main)],
+                   check=True)
+    (main / "tools").mkdir()
+    (main / "tools" / "x.py").write_text("x = 1\n", encoding="utf-8")
+    _git(main, "add", "-A")
+    _git(main, "commit", "-q", "-m", "one")
+    wt = tmp_path / "wt"
+    _git(main, "worktree", "add", "-q", "-b", "feature", str(wt))
+    return main.resolve(), wt.resolve()
+
+
+@pytest.mark.parametrize("cmd", ["record", "check"])
+def test_a_worktree_whose_main_cannot_be_resolved_refuses_loudly(separate_gitdir_worktree, cmd):
+    main, wt = separate_gitdir_worktree
+    tree = _git(wt, "rev-parse", "HEAD^{tree}")
+    if cmd == "check":     # a worktree-only record must not pass by default
+        (wt / AUDIT).write_text(json.dumps(_clean_row(tree)) + "\n", encoding="utf-8")
+    before = (wt / AUDIT).read_text(encoding="utf-8") if (wt / AUDIT).exists() else None
+    r = _cli(wt, cmd, "--tip", "HEAD")
+    out = json.loads(r.stdout)
+    assert r.returncode == 2 and out["code"] == "main_checkout_unresolved", r.stdout
+    after = (wt / AUDIT).read_text(encoding="utf-8") if (wt / AUDIT).exists() else None
+    assert after == before and not (main / AUDIT).exists()
+
+
+def test_the_fix_command_is_runnable_when_paths_hold_spaces_and_metacharacters(tmp_path):
+    """Codex r1 F2: the paths were interpolated unquoted."""
+    base = tmp_path / "a dir; $(x)"
+    main = base / "main"
+    (main / "tools").mkdir(parents=True)
+    (main / "tools" / "x.py").write_text("x = 1\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q", "-b", "main", str(main)], check=True)
+    _git(main, "add", "-A")
+    _git(main, "commit", "-q", "-m", "one")
+    wt = base / "wt"
+    _git(main, "worktree", "add", "-q", "-b", "feature", str(wt))
+    tree = _git(wt, "rev-parse", "HEAD^{tree}")
+    (wt / AUDIT).write_text(json.dumps(_clean_row(tree)) + "\n", encoding="utf-8")
+    msg = json.loads(_cli(wt, "check", "--tip", "HEAD").stdout)["message"]
+    fix = msg.split("re-record from the main checkout: ", 1)[1]
+    # The command names main's own copy of the tool; point it at this branch's copy,
+    # which the fixture's main checkout does not hold.
+    fix = fix.replace(shlex.quote(str(main.resolve() / "tools" / "audit_pii_record.py")),
+                      shlex.quote(str(RECORD)))
+    r = subprocess.run(fix, shell=True, capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _cli(wt, "check", "--tip", "HEAD").returncode == 0
