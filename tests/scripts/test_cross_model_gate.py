@@ -1831,9 +1831,7 @@ def test_old_hook_with_new_gate_blocks_a_tree_keyed_push(tmp_path):
     assert "not given or did not resolve" in out
 
 
-def test_a_failed_gate_probe_passes_no_tip(tmp_path, monkeypatch):
-    """If the gate's `--help` fails, the hook does not guess: it passes no tip, so a tree
-    row covers nothing (fail closed) instead of the push being let through."""
+def _break_gate_help(monkeypatch):
     real = _source
 
     def broken_help(path, old):
@@ -1844,10 +1842,21 @@ def test_a_failed_gate_probe_passes_no_tip(tmp_path, monkeypatch):
                                 "if '--help' in _s.argv: _s.exit(3)\n", 1)
         return text
     monkeypatch.setitem(globals(), "_source", broken_help)
-    rc, out = _hook_push(tmp_path, old_hook=False, old_gate=False,
-                         rows=[_tree_row_older_than_the_work])
-    assert rc != 0
-    assert "not given or did not resolve" in out
+
+
+@pytest.mark.parametrize("ledger", ["tree row, older than the work",
+                                    "legacy row, newer than the work"])
+def test_a_failed_gate_probe_blocks(tmp_path, monkeypatch, ledger):
+    """Nick, 2026-11-21 (option A): a gate whose `--help` fails is broken, not old (an old
+    gate still prints help), so the hook BLOCKS. It used to pass no --tip and no --base and
+    run the single-diff rule, which a legacy row newer than the work still cleared
+    (Codex 2026-11-21 F1, Grok F1 on the docs branch)."""
+    _break_gate_help(monkeypatch)
+    rc, out = _hook_push(tmp_path, old_hook=False, old_gate=False, rows=[
+        {"tree row, older than the work": _tree_row_older_than_the_work,
+         "legacy row, newer than the work": _legacy_row("2099-01-01T00:00:00+00:00")}[ledger]])
+    assert rc != 0, out
+    assert "could not run tools/cross_model_gate.py --help" in out
 
 
 # --- MERGE CHAIN (Nick, 2026-11-18: "No PRs") -------------------------------------
@@ -2133,3 +2142,109 @@ def test_merge_chain_reports_the_fable_standin(tmp_path, monkeypatch):
     _row(tmp_path, tree=tree1, paths=["CLAUDE.md"], model="fable")
     v = g.check_chain(tmp_path, base, m1)
     assert v.blocked is False and "Fable standing in for Grok" in v.message
+
+
+def _drop_chain(tmp_path):
+    """A chain whose merges add a file and then remove it: the net diff is empty."""
+    git = _chain_repo(tmp_path)
+    base = git("rev-parse", "HEAD")
+    add = _branch(git, tmp_path, base, "add", {"tools/uncovered.py": _BIG})
+    git("checkout", "-q", "-b", "drop", add)
+    git("rm", "-q", "tools/uncovered.py")
+    git("commit", "-qm", "drop")
+    drop = git("rev-parse", "HEAD")
+    git("checkout", "-q", "main")
+    m1 = _mc.build(tmp_path, base, add, "add")
+    m2 = _mc.build(tmp_path, m1, drop, "drop")
+    return base, m2
+
+
+def _fail_merge_tree(monkeypatch):
+    real = _mc._git
+
+    def fake(root, *args, **kw):
+        if "merge-tree" in args:
+            return _sp.CompletedProcess(args, 128, "", "forced failure")
+        return real(root, *args, **kw)
+    monkeypatch.setattr(_mc, "_git", fake)
+
+
+def test_merge_chain_git_failure_blocks_not_falls_back(tmp_path, monkeypatch):
+    """Grok 10.F3 (Nick, 2026-11-21, option A): a git failure while walking the chain is
+    not "not a chain". Falling back to check() on an empty net diff cleared the push."""
+    base, m2 = _drop_chain(tmp_path)
+    _fail_merge_tree(monkeypatch)
+    v = g.check_chain(tmp_path, base, m2)
+    assert v is not None and v.blocked is True
+    assert "could not be read" in v.message and "forced failure" in v.message
+
+
+def test_main_blocks_a_merge_chain_git_failure_with_a_message(tmp_path, monkeypatch, capsys):
+    base, m2 = _drop_chain(tmp_path)
+    _fail_merge_tree(monkeypatch)
+    monkeypatch.delenv("CODEX_VERIFY_WAIVE", raising=False)
+    monkeypatch.setattr(sys, "stdin", __import__("io").StringIO(""))
+    rc = g.main(["--repo-root", str(tmp_path), "--base", base, "--tip", m2])
+    assert rc == 2
+    assert "merge chain could not be read" in capsys.readouterr().err
+
+
+def test_merge_chain_git_that_cannot_start_blocks(tmp_path, monkeypatch):
+    """Codex 2026-11-21 F2: an OSError launching git is a GitError, so it blocks."""
+    base, m2 = _drop_chain(tmp_path)
+
+    def boom(*a, **k):
+        raise OSError(24, "Too many open files")
+    monkeypatch.setattr(_mc.subprocess, "run", boom)
+    v = g.check_chain(tmp_path, base, m2)
+    assert v is not None and v.blocked is True
+    assert "could not run" in v.message and "Too many open files" in v.message
+
+
+def test_merge_chain_git_that_cannot_start_while_diffing_blocks(tmp_path, monkeypatch):
+    """Codex 2026-11-21 r2 F1: a launch failure in the diff phase, after walk() succeeds,
+    escaped check_chain as GitError instead of returning a block."""
+    base, m2 = _drop_chain(tmp_path)
+    real = _mc._git
+
+    def fake(root, *args, **kw):
+        if "diff" in args:
+            raise _mc.GitError("git diff could not run: [Errno 24] Too many open files")
+        return real(root, *args, **kw)
+    monkeypatch.setattr(_mc, "_git", fake)
+    v = g.check_chain(tmp_path, base, m2)
+    assert v is not None and v.blocked is True
+    assert "diff could not be read" in v.message and "Too many open files" in v.message
+
+
+def test_merge_chain_with_a_non_utf8_path_blocks_not_crashes(tmp_path):
+    """Codex 2026-11-21 r3 F1: git prints raw pathname bytes under core.quotepath=off, and
+    decoding them as UTF-8 raised UnicodeDecodeError out of check_chain. Built with plumbing,
+    since the filesystem need not accept such a name."""
+    git = _chain_repo(tmp_path)
+    base = git("rev-parse", "HEAD")
+    blob = _sp.run(["git", "hash-object", "-w", "--stdin"], cwd=tmp_path, input=_BIG.encode(),
+                   capture_output=True, check=True).stdout.decode().strip()
+    def mktree(listing: bytes) -> bytes:
+        return _sp.run(["git", "mktree"], cwd=tmp_path, input=listing,
+                       capture_output=True, check=True).stdout.strip()
+    sub = mktree(b"100644 blob " + blob.encode() + b"\tbad\xff.py\n")
+    listing = _sp.run(["git", "ls-tree", base], cwd=tmp_path, capture_output=True,
+                      check=True).stdout + b"040000 tree " + sub + b"\ttools\n"
+    tree = mktree(listing).decode()
+    tip = git("commit-tree", tree, "-p", base, "-m", "bad name")
+    merge = _mc.build(tmp_path, base, tip, "bad name")
+    v = g.check_chain(tmp_path, base, merge)
+    assert v is not None and v.blocked is True
+
+
+def test_merge_chain_with_a_missing_branch_tip_object_blocks(tmp_path):
+    """Grok 2026-11-21 gate-fixes r1 F1: an add-then-drop chain whose add tip's object is
+    gone read as "not a chain", and the empty net diff then cleared the push."""
+    base, m2 = _drop_chain(tmp_path)
+    add = _sp.run(["git", "rev-parse", "add"], cwd=tmp_path, capture_output=True,
+                  text=True, check=True).stdout.strip()
+    (tmp_path / ".git" / "objects" / add[:2] / add[2:]).unlink()
+    v = g.check_chain(tmp_path, base, m2)
+    assert v is not None and v.blocked is True
+    assert "could not be read" in v.message

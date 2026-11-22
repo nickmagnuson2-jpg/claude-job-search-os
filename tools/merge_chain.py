@@ -48,6 +48,17 @@ class ChainError(ValueError):
     says which commit and why."""
 
 
+class GitError(RuntimeError):
+    """A git command failed, so whether the range is a chain is UNKNOWN (grok 10.F3,
+    2026-11-19). Deliberately not a ChainError: the push gates catch ChainError and judge
+    the push as one diff, which is the wrong verdict for a chain whose net diff is empty.
+    Anything that catches only ChainError lets this one through, which fails closed."""
+
+
+def _fail(what: str, r) -> GitError:
+    return GitError(f"{what} failed (rc {r.returncode}): {r.stderr.strip()[:200]}")
+
+
 @dataclass(frozen=True)
 class Merge:
     sha: str
@@ -58,29 +69,51 @@ class Merge:
 
 
 def _git(root, *args: str, stdin: str | None = None, env: dict | None = None):
-    return subprocess.run(["git", "-C", str(root), *args], input=stdin, text=True,
-                          capture_output=True, env=env)
+    try:
+        # surrogateescape: git prints raw pathname bytes (core.quotepath=off), and a name
+        # that is not UTF-8 must not crash the caller (Codex 2026-11-21 r3 F1). Such a path
+        # matches no ledger row, so the gate treats it as unreviewed.
+        return subprocess.run(["git", "-C", str(root), *args], input=stdin, text=True,
+                              errors="surrogateescape", capture_output=True, env=env)
+    except (OSError, subprocess.SubprocessError) as e:
+        # git that cannot start (EMFILE, EACCES) is a git failure too (Codex 2026-11-21 F2)
+        raise GitError(f"git {args[0] if args else ''} could not run: {e}") from e
 
 
 def _commit(root, sha: str) -> str | None:
+    """The full sha, or None when there is no such commit. rc 1 from --verify --quiet is
+    git's "no such object"; any other failure raises GitError."""
     r = _git(root, "rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}")
+    if r.returncode not in (0, 1):
+        raise _fail(f"rev-parse {sha[:8]}", r)
     return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
 
 
-def _show(root, rev: str, path: str) -> str | None:
+def _show(root, rev: str, path: str) -> tuple[str, str] | None:
+    """(mode, text) of the file at rev, or None when rev has no such path. A failed read
+    raises GitError: it is not "missing" (Codex 2026-11-21 F1: a failed read of the base
+    resolved the allowlist against an empty base)."""
+    listed = _git(root, "ls-tree", rev, "--", path)
+    if listed.returncode != 0:
+        raise _fail(f"{path} at {rev[:8]}: ls-tree", listed)
+    if not listed.stdout.strip():
+        return None
     r = _git(root, "show", f"{rev}:{path}")
-    return r.stdout if r.returncode == 0 else None
+    if r.returncode != 0:
+        raise _fail(f"{path} at {rev[:8]}: show", r)
+    return listed.stdout.split()[0], r.stdout
 
 
-def _merge_tree(root, p1: str, p2: str) -> tuple[str | None, list[str], str]:
-    """(tree, conflicted paths, error). tree is None only when git printed none."""
+def _merge_tree(root, p1: str, p2: str) -> tuple[str, list[str]]:
+    """(tree, conflicted paths). Both parents are known commits (expected_tree checks),
+    so git printing no tree is a git failure, and raises GitError."""
     r = _git(root, "merge-tree", "--write-tree", "--name-only", "--no-messages", p1, p2)
     lines = [ln for ln in r.stdout.splitlines() if ln.strip()]
     # rc 1 is a conflict ONLY when a tree id was printed: git also exits 1 on a bad ref.
     if r.returncode not in (0, 1) or not lines or not _SHA.match(lines[0]):
-        return None, [], (r.stderr.strip()[:300] or f"merge-tree rc {r.returncode}")
+        raise _fail("merge-tree", r)
     conflicted = sorted(set(lines[1:])) if r.returncode == 1 else []
-    return lines[0], conflicted, ""
+    return lines[0], conflicted
 
 
 def _resolve_allowlist(root, p1: str, p2: str, conflict_tree: str) -> tuple[str | None, str]:
@@ -89,14 +122,16 @@ def _resolve_allowlist(root, p1: str, p2: str, conflict_tree: str) -> tuple[str 
     # rc 1 with no output is git's answer for unrelated histories (no merge base); any
     # other failure is an error, never "no base".
     if bases.returncode not in (0, 1):
-        return None, f"{ALLOWLIST}: merge-base failed: {bases.stderr.strip()[:200]}"
+        raise _fail(f"{ALLOWLIST}: merge-base", bases)
     base_shas = bases.stdout.split()
     if len(base_shas) > 1:
         return None, f"{ALLOWLIST}: {len(base_shas)} merge bases; refusing to guess one"
     ours, theirs = _show(root, p1, ALLOWLIST), _show(root, p2, ALLOWLIST)
     if ours is None or theirs is None:
         return None, f"{ALLOWLIST}: missing on one side (a delete conflict is not resolved)"
-    base_text = (_show(root, base_shas[0], ALLOWLIST) or "") if base_shas else ""
+    (mode, ours), (_mode, theirs) = ours, theirs
+    at_base = _show(root, base_shas[0], ALLOWLIST) if base_shas else None
+    base_text = at_base[1] if at_base else ""
     try:
         def load(text: str, empty_ok: bool) -> dict:
             if not text.strip():
@@ -112,11 +147,7 @@ def _resolve_allowlist(root, p1: str, p2: str, conflict_tree: str) -> tuple[str 
         return None, f"{ALLOWLIST}: unreadable side: {e}"
     blob = _git(root, "hash-object", "-w", "--stdin", stdin=allowlist_write.serialize(merged))
     if blob.returncode != 0:
-        return None, f"{ALLOWLIST}: hash-object failed: {blob.stderr.strip()[:200]}"
-    listed = _git(root, "ls-tree", p1, "--", ALLOWLIST)
-    if listed.returncode != 0 or not listed.stdout.split():
-        return None, f"{ALLOWLIST}: ls-tree failed: {listed.stderr.strip()[:200]}"
-    mode = listed.stdout.split()[0]
+        raise _fail(f"{ALLOWLIST}: hash-object", blob)
     with tempfile.TemporaryDirectory(prefix="merge-chain-index.") as tmp:
         # A path that does not exist yet: read-tree creates the index there.
         env = {**os.environ, "GIT_INDEX_FILE": str(Path(tmp) / "index")}
@@ -125,19 +156,21 @@ def _resolve_allowlist(root, p1: str, p2: str, conflict_tree: str) -> tuple[str 
         for step in steps:
             r = _git(root, *step, env=env)
             if r.returncode != 0:
-                return None, f"{ALLOWLIST}: {step[0]} failed: {r.stderr.strip()[:200]}"
+                raise _fail(f"{ALLOWLIST}: {step[0]}", r)
         r = _git(root, "write-tree", env=env)
         if r.returncode != 0 or not _SHA.match(r.stdout.strip()):
-            return None, f"{ALLOWLIST}: write-tree failed: {r.stderr.strip()[:200]}"
+            raise _fail(f"{ALLOWLIST}: write-tree", r)
         return r.stdout.strip(), "allowlist resolved"
 
 
 def expected_tree(root, p1: str, p2: str) -> tuple[str | None, str]:
     """(tree, why). tree is the only tree a merge of p1 and p2 may have; None when there
-    is none, and `why` then names the conflicting paths or the error."""
-    tree, conflicted, err = _merge_tree(root, p1, p2)
-    if tree is None:
-        return None, err
+    is none, and `why` then names the unknown commit or the conflicting paths. A git
+    failure raises GitError: it says nothing about the merge."""
+    for sha in (p1, p2):
+        if _commit(root, sha) is None:
+            return None, f"not a commit here: {sha}"
+    tree, conflicted = _merge_tree(root, p1, p2)
     if not conflicted:
         return tree, "clean"
     if conflicted != [ALLOWLIST]:
@@ -146,25 +179,27 @@ def expected_tree(root, p1: str, p2: str) -> tuple[str | None, str]:
 
 
 def build(root, p1: str, p2: str, message: str) -> str:
-    """An unreferenced merge commit of p1 and p2 with the expected tree. Raises ChainError."""
+    """An unreferenced merge commit of p1 and p2 with the expected tree. Raises ChainError
+    when there is none, and GitError when a git command fails."""
     tree, why = expected_tree(root, p1, p2)
     if tree is None:
         raise ChainError(f"cannot merge {p2[:8]} onto {p1[:8]}: {why}")
     r = _git(root, "commit-tree", tree, "-p", p1, "-p", p2, "-F", "-", stdin=message)
     if r.returncode != 0 or not _SHA.match(r.stdout.strip()):
-        raise ChainError(f"commit-tree failed: {r.stderr.strip()[:200]}")
+        raise _fail("commit-tree", r)
     return r.stdout.strip()
 
 
 def walk(root, base: str, tip: str) -> list[Merge]:
     """Every first-parent commit in base..tip, oldest first, each verified. Raises
-    ChainError on the first commit that breaks the rule."""
+    ChainError on the first commit that breaks the rule, and GitError when a git command
+    fails, since then nobody knows whether the range is a chain."""
     b, t = _commit(root, base), _commit(root, tip)
     if b is None or t is None:
         raise ChainError(f"not a commit here: {base if b is None else tip}")
     r = _git(root, "rev-list", "--first-parent", "--parents", "--reverse", f"{b}..{t}")
     if r.returncode != 0:
-        raise ChainError(f"rev-list failed: {r.stderr.strip()[:200]}")
+        raise _fail("rev-list", r)
     rows = [ln.split() for ln in r.stdout.splitlines() if ln.strip()]
     if not rows:
         raise ChainError(f"no commits in {b[:8]}..{t[:8]}")
@@ -175,11 +210,22 @@ def walk(root, base: str, tip: str) -> list[Merge]:
             raise ChainError(f"{sha[:8]} has {len(parents)} parent(s); a merge chain needs "
                              "2 parents on every commit")
         p1, p2 = parents
+        # rev-list read these parents out of the commit itself, so a parent this object
+        # store cannot read means the store is incomplete, which says nothing about whether
+        # this is a chain (Grok 2026-11-21 gate-fixes r1 F1: it read as "not a commit" and
+        # the gates fell back to the single-diff rule).
+        for p in (p1, p2):
+            if _commit(root, p) is None:
+                raise GitError(f"{sha[:8]}'s parent {p[:8]} is not readable in this object "
+                               "store")
         if p1 != prev:
             raise ChainError(f"{sha[:8]}'s first parent is {p1[:8]}, not {prev[:8]}: the "
                              "chain does not start on the pushed base")
         want, why = expected_tree(root, p1, p2)
-        tree = _git(root, "rev-parse", f"{sha}^{{tree}}").stdout.strip()
+        tr = _git(root, "rev-parse", f"{sha}^{{tree}}")
+        tree = tr.stdout.strip()
+        if tr.returncode != 0 or not _SHA.match(tree):
+            raise _fail(f"rev-parse {sha[:8]}^{{tree}}", tr)
         if want is None or tree != want:
             raise ChainError(f"{sha[:8]}'s tree {tree[:8]} is not git's clean merge of "
                              f"{p1[:8]} and {p2[:8]} ({why})")

@@ -380,33 +380,110 @@ def failing_git(monkeypatch, subcommand, stdout="", rc=1):
 
 @pytest.mark.parametrize("step", ["ls-tree", "hash-object", "read-tree", "update-index",
                                   "write-tree"])
-def test_allowlist_plumbing_failure_has_no_expected_tree(repo, monkeypatch, step):
+def test_allowlist_plumbing_failure_is_a_git_error(repo, monkeypatch, step):
+    """A git failure is not an answer about the merge (grok 10.F3, 2026-11-19)."""
     _base, t1, t2 = allowlist_conflict(repo)
     failing_git(monkeypatch, step)
-    got, why = mc.expected_tree(repo, t1, t2)
-    assert got is None
-    assert f"{step} failed" in why and "forced failure" in why
+    with pytest.raises(mc.GitError, match=f"{step} failed.*forced failure"):
+        mc.expected_tree(repo, t1, t2)
 
 
 def test_a_failed_merge_base_is_an_error_not_an_empty_base(repo, monkeypatch):
     """rc 1 with no output means unrelated histories; rc 128 is git failing (grok 2026-11-19)."""
     _base, t1, t2 = allowlist_conflict(repo)
     failing_git(monkeypatch, "merge-base", rc=128)
-    got, why = mc.expected_tree(repo, t1, t2)
-    assert got is None
-    assert "merge-base failed" in why and "forced failure" in why
+    with pytest.raises(mc.GitError, match="merge-base failed.*forced failure"):
+        mc.expected_tree(repo, t1, t2)
 
 
 def test_build_raises_when_commit_tree_fails(repo, monkeypatch):
     base = head(repo)
     t1 = commit_on(repo, base, "x", {"a.txt": "a2\n"})
     failing_git(monkeypatch, "commit-tree")
-    with pytest.raises(mc.ChainError, match="commit-tree failed"):
+    with pytest.raises(mc.GitError, match="commit-tree failed"):
         mc.build(repo, base, t1, "m")
 
 
 def test_walk_raises_when_rev_list_fails(repo, monkeypatch):
     base, t1, _t2, m1, _m2 = chain_of_two(repo)
     failing_git(monkeypatch, "rev-list")
-    with pytest.raises(mc.ChainError, match="rev-list failed"):
+    with pytest.raises(mc.GitError, match="rev-list failed"):
         mc.walk(repo, base, m1)
+
+
+# ---------------------------------------------------------------- git failures (grok 10.F3)
+# A git failure inside walk() must never read as "not a chain": the gates catch ChainError
+# and fall back to judging the push as one diff, which gives the wrong verdict on a chain
+# whose net diff is empty. GitError is deliberately NOT a ChainError.
+def test_git_error_is_not_a_chain_error():
+    assert not issubclass(mc.GitError, mc.ChainError)
+
+
+def test_walk_raises_git_error_when_merge_tree_fails_mid_walk(repo, monkeypatch):
+    base, _t1, _t2, _m1, m2 = chain_of_two(repo)
+    failing_git(monkeypatch, "merge-tree", rc=128)
+    with pytest.raises(mc.GitError, match="merge-tree failed.*forced failure"):
+        mc.walk(repo, base, m2)
+
+
+def test_walk_raises_git_error_when_a_tree_cannot_be_read(repo, monkeypatch):
+    base, _t1, _t2, m1, _m2 = chain_of_two(repo)
+    real = mc._git
+
+    def fake(root, *args, **kw):
+        if args and args[0] == "rev-parse" and args[-1] == f"{m1}^{{tree}}":
+            return subprocess.CompletedProcess(args, 128, "", "forced failure")
+        return real(root, *args, **kw)
+    monkeypatch.setattr(mc, "_git", fake)
+    with pytest.raises(mc.GitError, match="forced failure"):
+        mc.walk(repo, base, m1)
+
+
+def test_walk_raises_git_error_when_rev_parse_fails_on_a_commit(repo, monkeypatch):
+    """rc 1 from rev-parse --verify --quiet is "no such commit"; any other rc is git failing."""
+    base, _t1, _t2, m1, _m2 = chain_of_two(repo)
+    failing_git(monkeypatch, "--verify", rc=128)
+    with pytest.raises(mc.GitError, match="forced failure"):
+        mc.walk(repo, base, m1)
+
+
+def test_an_unknown_ref_is_still_not_a_commit_not_a_git_error(repo):
+    got, why = mc.expected_tree(repo, head(repo), "ab" * 20)
+    assert got is None and "not a commit" in why
+
+
+@pytest.mark.parametrize("side", ["p1", "p2", "base"])
+def test_a_failed_allowlist_read_is_a_git_error_not_a_missing_side(repo, monkeypatch, side):
+    """Codex 2026-11-21 F1: `git show` failing was read as "missing on one side" (p1/p2)
+    or as an empty base, which resolved the allowlist against {} instead of the real base."""
+    base, t1, t2 = allowlist_conflict(repo)
+    rev = {"p1": t1, "p2": t2, "base": base}[side]
+    real = mc._git
+
+    def fake(root, *args, **kw):
+        if args[:1] == ("show",) and args[1].startswith(rev):
+            return subprocess.CompletedProcess(args, 128, "", "forced failure")
+        return real(root, *args, **kw)
+    monkeypatch.setattr(mc, "_git", fake)
+    with pytest.raises(mc.GitError, match="show failed.*forced failure"):
+        mc.expected_tree(repo, t1, t2)
+
+
+def test_git_that_cannot_start_is_a_git_error(repo, monkeypatch):
+    """Codex 2026-11-21 F2: an OSError launching git (EMFILE, EACCES) escaped every caller."""
+    def boom(*a, **k):
+        raise OSError(24, "Too many open files")
+    monkeypatch.setattr(mc.subprocess, "run", boom)
+    with pytest.raises(mc.GitError, match="could not run.*Too many open files"):
+        mc.walk(repo, "ab" * 20, "cd" * 20)
+
+
+def test_walk_a_parent_missing_from_the_object_store_is_a_git_error(repo):
+    """Grok 2026-11-21 gate-fixes r1 F1: rev-list names the parent, so a parent this object
+    store cannot read means the store is incomplete, not that this is not a chain."""
+    base, t1, _t2, _m1, m2 = chain_of_two(repo)
+    obj = repo / ".git" / "objects" / t1[:2] / t1[2:]
+    assert obj.is_file()
+    obj.unlink()
+    with pytest.raises(mc.GitError, match=f"{t1[:8]}.*not readable"):
+        mc.walk(repo, base, m2)

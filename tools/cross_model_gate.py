@@ -814,8 +814,9 @@ def check_chain(repo_root: Path, base: str, tip: str | None) -> Verdict | None:
     Open P0s are checked over every path any merge in the push changes.
 
     Returns None when base..tip is NOT a verified chain, so the caller applies
-    check() to the whole push, which blocks a merge no row reviewed. A diff that
-    git cannot produce for a verified chain blocks (fails closed).
+    check() to the whole push, which blocks a merge no row reviewed. A git failure
+    while walking the range, or a diff git cannot produce for a verified chain,
+    blocks (fails closed).
     """
     import merge_chain
     if not (base and tip):
@@ -824,11 +825,20 @@ def check_chain(repo_root: Path, base: str, tip: str | None) -> Verdict | None:
         merges = merge_chain.walk(repo_root, base, tip)
     except merge_chain.ChainError:
         return None
+    except merge_chain.GitError as e:
+        # Grok 10.F3 (Nick, 2026-11-21, option A): a git failure says nothing about
+        # whether this is a chain. Falling back to check() gave the wrong verdict on a
+        # chain whose net diff is empty, so it blocks.
+        v = Verdict(qualified=True, reason="may be a chain of merge commits")
+        v.blocked = True
+        v.message = (f"This push {v.reason}, but the merge chain could not be read: {e}\n"
+                     f"  Re-run the push. If it repeats, check the repository: git fsck")
+        return v
     v = Verdict(qualified=True, reason="is a chain of merge commits")
     try:
         per_merge = [(m, merge_chain.numstat(repo_root, m.p1, m.sha)) for m in merges]
         changed = sorted({p for p, _a, _r in merge_chain.numstat(repo_root, base, tip)})
-    except merge_chain.ChainError as e:
+    except (merge_chain.ChainError, merge_chain.GitError) as e:
         v.blocked = True
         v.message = f"This push is a merge chain, but its diff could not be read: {e}"
         return v

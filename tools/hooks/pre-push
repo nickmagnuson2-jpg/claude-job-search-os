@@ -45,16 +45,21 @@ esac
 # The probe runs once: which arguments this checkout's gate accepts. This hook file is
 # installed ONCE and shared by every worktree, while each checkout runs its OWN gate. A
 # gate older than an argument rejects it as unknown, so each is passed only when this
-# checkout's gate lists it in --help. An older gate then runs exactly as before; a failed
-# probe passes neither, and tree rows then cover nothing (the gate blocks, it does not
-# pass).
+# checkout's gate lists it in --help. An older gate then runs exactly as before.
+# A FAILED probe BLOCKS (Nick, 2026-11-21, option A). An old gate still prints its help, so
+# a probe that fails means the gate is broken, not old. Until then the hook passed neither
+# argument and ran the single-diff rule, which can clear a push that is too small to need
+# review, or one covered only by time-keyed rows (Codex/Grok 2026-11-21 F1). The block is
+# raised per pushed ref, so a push that only deletes refs is not stopped by it.
 #   --tip  (Nick, 2026-11-16): a review row carrying `tree` covers the push only when it
 #          equals the pushed tip's tree, whatever its time.
 #   --base (Nick, 2026-11-18, "No PRs"): when base..tip is a verified chain of merge
 #          commits (tools/merge_chain.py), each merge is checked against reviews of its
 #          branch tip's tree. Anything else gets the --tip rule.
-gate_help=""
-gate_help="$(PYTHONIOENCODING=utf-8 python3 "$root/tools/cross_model_gate.py" --help 2>/dev/null)" || gate_help=""
+probe_ok=1
+if ! gate_help="$(PYTHONIOENCODING=utf-8 python3 "$root/tools/cross_model_gate.py" --help 2>&1)"; then
+  probe_ok=0
+fi
 
 # EVERY pushed ref is judged (F9, 2026-11-18). Until then the loop kept only the LAST
 # ref's range, so `git push origin a b` checked b alone and a went out unreviewed.
@@ -69,6 +74,11 @@ while read -r _lref lsha _rref rsha; do
   [ -z "$lsha" ] && continue
   case "$lsha" in *[!0]*) ;; *) continue ;; esac   # deleting a ref: nothing to verify
   head="$lsha"
+  if [ "$probe_ok" != 1 ]; then
+    printf '\nBLOCKED: pre-push could not run tools/cross_model_gate.py --help, so it cannot tell which arguments the gate takes: %s\n' \
+      "${gate_help:-no output}" >&2
+    exit 1
+  fi
   # A new ref whose base cannot be found BLOCKS (Codex 2026-11-19 F1). It used to fall back
   # to `git diff --numstat <head>`, a diff of the commit against the WORKING TREE, which is
   # empty in a clean checkout, so the push exited 0 without running the gate.
