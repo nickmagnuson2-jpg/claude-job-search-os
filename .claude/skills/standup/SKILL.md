@@ -227,6 +227,8 @@ he did not run that skill (deleted 2026-10-29).
 
 **Learning lanes (from `results.learning_ledger.data`, S7):** one line, `Learning lanes: <due_total> due across <N> lanes`, inside the queue-depth block below. `due_total` counts records at 2+ fires still open across all five capture lanes, which no other surface shows. If the source failed, say "learning ledger unavailable" and continue.
 
+**Memory freshness (from `results.memory_freshness.text`, B4 2026-11-22):** print the one line verbatim, inside the queue-depth block below, after the learning-lanes line. It counts memory rules as current / unverified / unknown by kind, from the nightly `memory_usage.py` transcript scan, and says what changed since the last run. **Never call a rule "unused" or suggest deleting one from this line:** unverified means no re-confirmation was observed, and the scan has known gaps. If the line says "no run yet" or the source failed, say "memory freshness unavailable" and continue.
+
 **Queue depth (from `attention.py`) — surface SECOND, right below automation health.** This is the only place the promotion backlog is ever seen: the weekly scan writes it to `memory/promotion-backlog.md` and a Low-priority todo, and neither is read. Render a single compact block, never a duplicate of the Pipeline/Inbox sections below:
 
 ```
