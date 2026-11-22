@@ -270,7 +270,8 @@ def test_main_standup_prints_the_line_or_says_no_run_yet(tmp_path, capsys):
     assert "no run yet" in capsys.readouterr().out
     assert not (proj / "memory" / "memory-usage.jsonl").exists()
     assert mu.main(["--project-dir", str(proj)]) == 0
-    assert capsys.readouterr().out.startswith("Memory freshness (context entry")
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith("scope: memory rule files in") and lines[1].startswith("Memory freshness (context entry")
     assert mu.main(["--project-dir", str(proj), "--standup"]) == 0
     assert "first run" in capsys.readouterr().out
 
@@ -281,3 +282,19 @@ def test_the_script_runs_from_the_command_line(tmp_path):
     r = subprocess.run([sys.executable, str(Path(mu.__file__)), "--project-dir", str(proj), "--dry-run"],
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0 and '"type": "meta"' in r.stdout
+
+
+def test_a_run_states_its_reach(tmp_path, capsys):
+    """Count rule (tools/count_report.py): the run names its population and what it left out."""
+    proj = _proj(tmp_path)
+    (proj / "memory" / "reference_beta_fact.md").write_text("x")
+    (proj / "s1.jsonl").write_text(json.dumps({"type": "user", "timestamp": "2026-11-20T18:00:00Z",
+                                               "message": {"content": "hi"}}) + "\n"
+                                   + json.dumps({"type": "attachment", "timestamp": "2026-11-20T18:00:00Z",
+                                                 "attachment": {"type": "file",
+                                                                "filename": str(proj / "memory" / "feedback_alpha_rule.md")}})
+                                   + "\n")
+    assert mu.main(["--project-dir", str(proj)]) == 0
+    out = capsys.readouterr().out
+    assert (f"scope: memory rule files in {proj / 'memory'} | population 2 | included 1 | "
+            "excluded: no re-confirming context entry in the window 1") in out

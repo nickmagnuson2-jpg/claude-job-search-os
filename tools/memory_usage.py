@@ -38,6 +38,8 @@ from pathlib import Path
 from typing import Callable, Iterable
 from zoneinfo import ZoneInfo
 
+from count_report import report
+
 LOCAL_TZ = ZoneInfo("America/Los_Angeles")
 RULE_FILE = re.compile(r"^(?:feedback|reference|project|user)_.+\.md$")
 NAME = re.compile(r"(?:feedback|reference|project|user)_[A-Za-z0-9_\-]+")
@@ -519,6 +521,9 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(meta, indent=1))
         return 0
     write_usage(out, rows, meta)
+    entered = sum(1 for r in rows if r["last_context_entry"])
+    report(f"memory rule files in {memory_dir}", population=len(rows), included=entered,
+           excluded={"no re-confirming context entry in the window": len(rows) - entered})
     print(standup_line(out))
     return 0
 
