@@ -553,3 +553,18 @@ def test_below_two_with_no_reopen_at_is_not_due_and_not_a_defect():
     assert s.due == "not_due" and s.defects == ()
     # a present but bad reopen_at stays a defect at any count
     assert ls.due_state(1, 0) == "bad_reopen_at"
+
+
+# ------------------------------------------------------------------ mutation after Grok r1
+
+def test_merged_pointer_cannot_leave_the_memory_folder(tmp_path):
+    mem = tmp_path / "memory"
+    mem.mkdir()
+    (tmp_path / "outside.md").write_text("x", encoding="utf-8")
+    d = ls.disposition("merged into ../outside", memory_dir=mem)
+    assert d.state == "defect" and "not a memory file name" in d.defect
+
+
+def test_parked_by_an_existing_path_still_needs_a_date():
+    d = ls.disposition("parked by tools/learning_state.py")
+    assert d.state == "defect" and "YYYY-MM-DD" in d.defect
