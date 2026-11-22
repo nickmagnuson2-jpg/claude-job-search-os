@@ -611,3 +611,25 @@ def test_F7_only_promoted_defects_count_as_unknown_tokens(world, tmp_path):
         encoding="utf-8")
     text, _ = _report(world, tmp_path)
     assert "pointer token without a pointer: defect, stays open | 0 |" in text
+
+
+def test_F1_report_refuses_when_the_corpus_moves_while_it_is_built(world, monkeypatch):
+    mem, repo, inputs = world
+    real = lc.memory_transitions
+
+    def moving(*a, **k):
+        rows = real(*a, **k)
+        (mem / "feedback_alpha.md").write_text("moved\n", encoding="utf-8")
+        return rows
+
+    monkeypatch.setattr(lc, "memory_transitions", moving)
+    with pytest.raises(lc.CorpusMoved, match="changed during the scan"):
+        lc.build_report(mem, repo, inputs)
+
+
+def test_F6_no_does_not_apply_line_when_every_lessons_repair_applies(world, tmp_path):
+    _, repo, inputs = world
+    inputs["lessons"] = _lessons_props(tmp_path, lc.file_sha(repo / "memory/lessons.md"),
+                                       "| p1 | r1 | 2 | No | 2026-01-01 |", "| p1 | r1 | 2 | No | 2026-01-01 |", 7)
+    text, _ = _report(world, tmp_path)
+    assert "DOES NOT APPLY" not in text.split("### Lessons repairs", 1)[1].split("###", 1)[0]
