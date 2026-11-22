@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import contextlib
 import datetime as _dt
+import difflib
+import hashlib
 import os
 import re
 import stat
@@ -46,15 +48,18 @@ _BLOCK = re.compile(r"\A---\n(.*?\n)?---(?:\n|\Z)", re.DOTALL)
 NEVER_MACHINE_WRITTEN = frozenset({"occurrences"})
 
 
-def _comment_lines(block: str) -> set[int]:
-    """Indexes of the block's lines that hold a YAML comment, by PyYAML's own scanner: a "#"
-    outside every token is a comment, one inside a token is value text. A regex cannot
-    tell "PR #61" inside quotes from a comment, and misses a comment glued to a quoted
-    value ("no"# waits); both were found on 2026-11-22 (org 72, Grok r2)."""
+def _comment_lines(block: str) -> dict[int, int]:
+    """{line index: index in block of the line's first comment "#"}, by PyYAML's own
+    scanner: a "#" outside every token is a comment, one inside a token is value text. A
+    regex cannot tell "PR #61" inside quotes from a comment, and misses a comment glued to
+    a quoted value ("no"# waits); both were found on 2026-11-22 (org 72, Grok r2)."""
     spans = [(t.start_mark.index, t.end_mark.index)
              for t in yaml.scan(block, Loader=yaml.SafeLoader)]
-    return {block.count("\n", 0, i) for i, ch in enumerate(block)
-            if ch == "#" and not any(a <= i < b for a, b in spans)}
+    out: dict[int, int] = {}
+    for i, ch in enumerate(block):
+        if ch == "#" and not any(a <= i < b for a, b in spans):
+            out.setdefault(block.count("\n", 0, i), i)
+    return out
 
 
 class _DuplicateKey(Exception):
@@ -182,9 +187,17 @@ def _validate(fields, keys, memory_dir, repo_root, skills_home) -> list[str]:
 
 def _key_spans(block: str) -> tuple[dict, int | None, int]:
     """{key: (first line, end line, indent)} for top-level keys and keys under metadata:,
-    the line after metadata's last child (or None), and metadata's child indent."""
+    the line after metadata's last child (or None), and metadata's child indent. A key
+    written twice maps to its last span (repair() reads every span via _all_key_spans)."""
+    found, meta_end, child_indent = _all_key_spans(block)
+    return {k: (a, b, ind) for k, a, b, ind in found}, meta_end, child_indent
+
+
+def _all_key_spans(block: str) -> tuple[list, int | None, int]:
+    """Every (key, first line, end line, indent), in order, repeats included; found by line
+    structure alone, so it also works on a block the strict reader refuses."""
     lines = block.split("\n")
-    spans, meta_end, child_indent, in_meta = {}, None, 2, False
+    spans, meta_end, child_indent, in_meta = [], None, 2, False
     i = 0
     while i < len(lines):
         line = lines[i]
@@ -205,7 +218,7 @@ def _key_spans(block: str) -> tuple[dict, int | None, int]:
                 j += 1
             while j > i + 1 and not lines[j - 1].strip():
                 j -= 1
-            spans[m.group(2)] = (i, j, indent)
+            spans.append((m.group(2), i, j, indent))
             if in_meta and indent == child_indent:
                 meta_end = j
             i = j
@@ -230,7 +243,7 @@ def _set_keys(text: str, updates: dict) -> str:
         commented = _comment_lines(block)  # per key: an earlier replacement shifts lines
         if key in spans:
             a, b, indent = spans[key]
-            if commented & set(range(a, b)):
+            if set(commented) & set(range(a, b)):
                 # A comment is invisible to read(), so the consistency check cannot see it
                 # go; refuse rather than delete it (Codex r2 F1, P0).
                 raise WriteRefused([f"{key}: its lines carry a YAML comment that a rewrite "
@@ -312,6 +325,114 @@ def record_fire(path: Path, evidence: str, *, today: _dt.date | None = None) -> 
     new_text += f"- Fire {n} recorded {(today or _dt.date.today()).isoformat()}: {evidence}\n"
     _atomic_write(path, new_text)
     return n
+
+
+def repair(path: Path, *, expect_sha256: str, new_block: str, intended: dict,
+           body_note: str | None = None, memory_dir: Path | None = None,
+           repo_root: Path | None = None, skills_home: Path | None = None) -> dict:
+    """The one sanctioned path for a STRUCTURAL frontmatter repair (org 72, 2026-11-22: Nick
+    ruled nothing is hand-edited). write() cannot do these: it cannot read a malformed
+    block, and it refuses a line that carries a comment. Returns the new fields.
+
+    `new_block` is the whole text between the two --- lines. `intended` names every key the
+    repair touches, with the value it must read back as. The body is kept byte for byte;
+    `body_note`, when given, is one dated line inserted directly after the closing ---.
+
+    Refuses (WriteRefused, file untouched) when: CLAUDECODE is not "1"; the path is a
+    symlink; the file's sha256 is not expect_sha256; the file has no ---/--- block; the new
+    block fails the strict read; an intended key reads back different; a line outside the
+    intended keys' spans is changed, added or removed (spans come from line structure, so
+    an unparseable old block still works, and every key not named keeps its exact bytes);
+    `occurrences` is intended (record_fire is its only writer); learning_state finds a
+    defect in an intended key; a removed line's YAML comment is not carried in body_note;
+    or body_note is blank, undated, multi-line, or already in the file.
+    """
+    if os.environ.get("CLAUDECODE") != "1":
+        raise WriteRefused(["repair runs only inside a Claude Code session (CLAUDECODE=1)"])
+    path = Path(path)
+    if path.is_symlink():
+        raise WriteRefused([f"{path.name} is a symlink; repair the file it points to"])
+    data = path.read_bytes()
+    actual = hashlib.sha256(data).hexdigest()
+    if actual != expect_sha256:
+        raise WriteRefused([f"sha256 of {path.name} is {actual}, not the proposal's "
+                            f"{expect_sha256}: the file changed since the proposal"])
+    text = data.decode("utf-8")
+    m = _BLOCK.match(text)
+    if not m or m.group(1) is None:
+        raise WriteRefused(["frontmatter: the file has no ---/--- block to repair"])
+    old_block, closing, rest = m.group(1), text[m.end(1):m.end()], text[m.end():]
+    new_block = new_block if new_block.endswith("\n") else new_block + "\n"
+    reasons = [f"{k}: never machine-written (use record_fire)" for k in intended
+               if k in NEVER_MACHINE_WRITTEN]
+    new, defect = read("---\n" + new_block + "---\n")
+    if defect:
+        raise WriteRefused(reasons + [f"new block: {defect.code}: {defect.detail}"])
+    reasons += [f"{k}: reads back as {new.get(k)!r}, not {v!r}" for k, v in intended.items()
+                if new.get(k) != normalize(v)]
+    reasons += _outside_intended(old_block, new_block, set(intended))
+    reasons += _dropped_comments(old_block, new_block, body_note)
+    note = None if body_note is None else body_note.strip()
+    if note is not None:
+        if not note:
+            reasons.append("body_note is blank")
+        elif "\n" in note:
+            reasons.append("body_note must be one line")
+        elif not re.search(r"\b\d{4}-\d{2}-\d{2}\b", note):
+            reasons.append("body_note carries no YYYY-MM-DD date")
+        elif note in text:
+            reasons.append("body_note is already in the file")
+    folder = Path(memory_dir) if memory_dir is not None else path.parent
+    reasons += _validate(new, set(intended), folder, repo_root, skills_home)
+    if reasons:
+        raise WriteRefused(reasons)
+    new_text = "---\n" + new_block + closing + (f"\n{note}\n" if note else "") + rest
+    _atomic_write(path, new_text)
+    return new
+
+
+def _outside_intended(old_block: str, new_block: str, keys: set) -> list[str]:
+    """Every changed, added or removed line that lies outside the spans of `keys` (in the
+    old block for what left, in the new block for what arrived)."""
+    old_lines, new_lines = old_block.split("\n"), new_block.split("\n")
+    allowed_old = {ln for k, a, b, _ in _all_key_spans(old_block)[0] if k in keys
+                   for ln in range(a, b)}
+    allowed_new = {ln for k, a, b, _ in _all_key_spans(new_block)[0] if k in keys
+                   for ln in range(a, b)}
+    out = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, old_lines, new_lines,
+                                                       autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        stray = ([f"old line {i + 1}" for i in range(i1, i2) if i not in allowed_old]
+                 + [f"new line {j + 1}" for j in range(j1, j2) if j not in allowed_new])
+        if stray:
+            out.append(f"a change outside the intended keys: {', '.join(stray)}")
+    return out
+
+
+def _dropped_comments(old_block: str, new_block: str, body_note: str | None) -> list[str]:
+    """A YAML comment on a line the repair removes must appear verbatim in body_note."""
+    kept = set(new_block.split("\n"))
+    lines = old_block.split("\n")
+    return [f"old line {ln + 1}: its YAML comment {text!r} would be dropped; carry it in body_note"
+            for ln, text in _old_comments(old_block).items()
+            if lines[ln] not in kept and text and text not in (body_note or "")]
+
+
+def _old_comments(block: str) -> dict[int, str]:
+    """{line index: comment text} for a block that may not parse: the scanner when it can,
+    else every "#" after whitespace or at line start (over-detection only asks for a note)."""
+    try:
+        return {ln: block[i + 1:].split("\n", 1)[0].strip()
+                for ln, i in _comment_lines(block).items()}
+    except yaml.YAMLError:
+        out = {}
+        for ln, line in enumerate(block.split("\n")):
+            m = re.search(r"(?:^|\s)#(.*)$", line)
+            if m:
+                out[ln] = m.group(1).strip()
+        return out
 
 
 def write(path: Path, updates: dict, *, memory_dir: Path | None = None,
