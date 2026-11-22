@@ -4,6 +4,7 @@ Spec: output/memory-hygiene/112226-state-matrix.md, "Shared mechanism" row 1, an
 section 1b. Fixtures are synthetic rule files (public repo).
 """
 import datetime as dt
+import difflib
 import sys
 from pathlib import Path
 
@@ -157,11 +158,12 @@ def test_write_replaces_only_the_named_line(tmp_path):
     assert new["reopen_at"] == 3
     before = RULE.splitlines()
     after = p.read_text(encoding="utf-8").splitlines()
-    changed = [(a, b) for a, b in zip(before, after) if a != b]
-    assert changed == [("  promoted: no", "  promoted: partial -- hook landed, test owed")]
-    # the new key goes under metadata, at metadata's indentation
-    assert "  reopen_at: 3" in after
-    assert after[after.index("  reopen_at: 3") - 1].startswith("  ")
+    diff = list(difflib.ndiff(before, after))
+    assert [x[2:] for x in diff if x.startswith("- ")] == ["  promoted: no"]
+    assert [x[2:] for x in diff if x.startswith("+ ")] == [
+        "  promoted: partial -- hook landed, test owed", "  reopen_at: 3"]
+    # the new key goes at the end of metadata, at metadata's indentation
+    assert after[after.index("  reopen_at: 3") - 1] == "  last_cited: 2026-11-01"
     assert p.read_text(encoding="utf-8").endswith("\n**Rule:** an example.\n")
 
 

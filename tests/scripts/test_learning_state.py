@@ -393,3 +393,17 @@ def test_entry_outside_window_raises():
 def test_unknown_kind_name_raises():
     with pytest.raises(ValueError):
         ls.freshness_state("PRINCIPLE", None, D(2026, 8, 24), D(2026, 11, 22))
+
+
+def test_lessons_text_after_the_closing_pipe_is_a_defect_not_a_silent_drop():
+    # Real shape, 2026-11-22: a row ending in an HTML comment after its last pipe was
+    # dropped silently by a parser that required the line to end with "|".
+    cells, defect = ls.parse_lessons_row(GOOD + " <!-- a note -->")
+    assert cells is None
+    assert defect and "after the closing pipe" in defect
+
+
+def test_lessons_date_cell_may_carry_later_fires():
+    # Live convention: "2026-07-24 (6th: 2026-09-22)" records a later fire beside the first.
+    _, _, defects = ls.lessons_state(["p", "r", "6", "Partial: half", "2026-07-24 (6th: 2026-09-22)"])
+    assert defects == []

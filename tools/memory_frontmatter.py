@@ -64,13 +64,24 @@ class WriteRefused(Exception):
 def split(text: str) -> tuple[str, str] | None:
     """(block, rest) where block is the text between the two `---` lines, or None when the
     file does not open with a frontmatter block."""
-    raise NotImplementedError
+    m = _BLOCK.match(text)
+    return (m.group(1) or "", text[m.end():]) if m else None
 
 
 def normalize(value):
     """One type per meaning: bool -> "yes"/"no", None -> "", date/datetime -> ISO string.
     Lists and dicts are normalized element-wise; everything else is returned unchanged."""
-    raise NotImplementedError
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if value is None:
+        return ""
+    if isinstance(value, (_dt.date, _dt.datetime)):
+        return value.isoformat()
+    if isinstance(value, list):
+        return [normalize(v) for v in value]
+    if isinstance(value, dict):
+        return {k: normalize(v) for k, v in value.items()}
+    return value
 
 
 def read(text: str) -> tuple[dict, Defect | None]:
@@ -80,12 +91,28 @@ def read(text: str) -> tuple[dict, Defect | None]:
     ({}, Defect) when there is no block, the YAML does not parse, the block is not a
     mapping, or a key appears both at the top level and under `metadata:`.
     """
-    raise NotImplementedError
+    m = _BLOCK.match(text)
+    if not m:
+        return {}, Defect("no_frontmatter", "the file does not open with a ---/--- block")
+    try:
+        loaded = yaml.safe_load(m.group(1) or "")
+    except yaml.YAMLError as e:
+        return {}, Defect("yaml_error", " ".join(str(e).split())[:300])
+    if not isinstance(loaded, dict):
+        return {}, Defect("not_a_mapping", f"the block is {type(loaded).__name__}, not key: value")
+    fields = {k: v for k, v in loaded.items() if k != "metadata" or not isinstance(v, dict)}
+    meta = loaded.get("metadata")
+    if isinstance(meta, dict):
+        both = sorted(str(k) for k in meta if k in fields)
+        if both:
+            return {}, Defect("duplicate_key", "at the top level and under metadata: " + ", ".join(both))
+        fields.update(meta)
+    return {k: normalize(v) for k, v in fields.items()}, None
 
 
 def read_file(path: Path) -> tuple[dict, Defect | None]:
     """read() over a file's text (UTF-8)."""
-    raise NotImplementedError
+    return read(Path(path).read_text(encoding="utf-8"))
 
 
 def check_text(new_text: str, old_text: str | None = None, *, memory_dir: Path | None = None,
@@ -99,7 +126,104 @@ def check_text(new_text: str, old_text: str | None = None, *, memory_dir: Path |
     an untouched key does not block an unrelated edit. A change to a key in
     NEVER_MACHINE_WRITTEN is NOT refused here: a person records a fire by hand.
     """
-    raise NotImplementedError
+    fields, defect = read(new_text)
+    if defect:
+        return [f"frontmatter: {defect.code}: {defect.detail}"]
+    keys = None
+    if old_text is not None:
+        old, old_defect = read(old_text)
+        if old_defect is None:
+            keys = {k for k in set(fields) | set(old) if fields.get(k) != old.get(k)}
+    return _validate(fields, keys, memory_dir, repo_root, skills_home)
+
+
+def _validate(fields, keys, memory_dir, repo_root, skills_home) -> list[str]:
+    import learning_state  # same folder; imported here so neither module loads the other at import
+    return learning_state.validate_fields(fields, keys=keys, memory_dir=memory_dir,
+                                          repo_root=repo_root, skills_home=skills_home)
+
+
+def _key_spans(block: str) -> tuple[dict, int | None, int]:
+    """{key: (first line, end line, indent)} for top-level keys and keys under metadata:,
+    the line after metadata's last child (or None), and metadata's child indent."""
+    lines = block.split("\n")
+    spans, meta_end, child_indent, in_meta = {}, None, 2, False
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        m = re.match(r"^( *)([A-Za-z_][A-Za-z0-9_-]*)\s*:", line)
+        indent = len(m.group(1)) if m else None
+        if m and indent == 0:
+            in_meta = m.group(2) == "metadata" and not line.split(":", 1)[1].strip()
+            if in_meta and i + 1 < len(lines):
+                nxt = re.match(r"^( +)\S", lines[i + 1])
+                child_indent = len(nxt.group(1)) if nxt else 2
+        if m and indent == 0 and in_meta:
+            i += 1  # its children are keys of their own, not continuation lines
+            continue
+        if m and (indent == 0 or (in_meta and indent == child_indent)):
+            j = i + 1
+            while j < len(lines) and (not lines[j].strip()
+                                      or len(lines[j]) - len(lines[j].lstrip(" ")) > indent):
+                j += 1
+            while j > i + 1 and not lines[j - 1].strip():
+                j -= 1
+            spans[m.group(2)] = (i, j, indent)
+            if in_meta and indent == child_indent:
+                meta_end = j
+            i = j
+            continue
+        i += 1
+    return spans, meta_end, child_indent
+
+
+def _render(key: str, value, indent: int) -> list[str]:
+    dumped = yaml.safe_dump({key: value}, default_flow_style=False, allow_unicode=True,
+                            width=10 ** 9, sort_keys=False)
+    return [" " * indent + x for x in dumped.rstrip("\n").split("\n")]
+
+
+def _set_keys(text: str, updates: dict) -> str:
+    """text with each key in updates set, every other line unchanged."""
+    m = _BLOCK.match(text)
+    lines = (m.group(1) or "").split("\n")
+    for key, value in updates.items():
+        spans, meta_end, child_indent = _key_spans("\n".join(lines))
+        if key in spans:
+            a, b, indent = spans[key]
+            lines[a:b] = _render(key, value, indent)
+        elif meta_end is not None:
+            lines[meta_end:meta_end] = _render(key, value, child_indent)
+        else:
+            at = len(lines) - 1 if lines and lines[-1] == "" else len(lines)
+            lines[at:at] = _render(key, value, 0)
+    return text[:m.start(1)] + "\n".join(lines) + text[m.end(1):]
+
+
+def _refuse_unless_consistent(old: dict, new_text: str, updates: dict) -> dict:
+    new, defect = read(new_text)
+    if defect:
+        raise WriteRefused([f"the result does not re-read: {defect.code}: {defect.detail}"])
+    bad = [f"{k}: reads back as {new.get(k)!r}, not {v!r}" for k, v in updates.items()
+           if new.get(k) != normalize(v)]
+    bad += [f"{k}: changed although not updated" for k in set(old) | set(new)
+            if k not in updates and old.get(k) != new.get(k)]
+    if bad:
+        raise WriteRefused(bad)
+    return new
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    path = Path(path)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
 
 
 def record_fire(path: Path, evidence: str, *, today: _dt.date | None = None) -> int:
@@ -116,7 +240,27 @@ def record_fire(path: Path, evidence: str, *, today: _dt.date | None = None) -> 
     the occurrences line and appends one dated line to the end of the body:
     "- Fire <n> recorded <today>: <evidence>".
     """
-    raise NotImplementedError
+    if os.environ.get("CLAUDECODE") != "1":
+        raise WriteRefused(["record_fire runs only inside a Claude Code session (CLAUDECODE=1); "
+                            "a detector or scheduled job never records a fire"])
+    evidence = (evidence or "").strip()
+    if not evidence or not re.search(r"\b\d{4}-\d{2}-\d{2}\b", evidence):
+        raise WriteRefused(["evidence must say what fired and carry its YYYY-MM-DD date"])
+    text = Path(path).read_text(encoding="utf-8")
+    fields, defect = read(text)
+    if defect:
+        raise WriteRefused([f"frontmatter: {defect.code}: {defect.detail}"])
+    occ = fields.get("occurrences")
+    if type(occ) is not int or occ < 0:
+        raise WriteRefused([f"occurrences: {occ!r} is not a count to add one to"])
+    n = occ + 1
+    new_text = _set_keys(text, {"occurrences": n})
+    _refuse_unless_consistent(fields, new_text, {"occurrences": n})
+    if not new_text.endswith("\n"):
+        new_text += "\n"
+    new_text += f"- Fire {n} recorded {(today or _dt.date.today()).isoformat()}: {evidence}\n"
+    _atomic_write(path, new_text)
+    return n
 
 
 def write(path: Path, updates: dict, *, memory_dir: Path | None = None,
@@ -134,4 +278,22 @@ def write(path: Path, updates: dict, *, memory_dir: Path | None = None,
     changed; or learning_state.validate_fields reports a defect in an updated key.
     `memory_dir` / `repo_root` are passed to the validator to resolve pointers and paths.
     """
-    raise NotImplementedError
+    reasons = [f"{k}: never machine-written (use record_fire for a witnessed fire)"
+               for k in updates if k in NEVER_MACHINE_WRITTEN]
+    reasons += [f"{k}: {v!r} is not a string or an integer" for k, v in updates.items()
+                if isinstance(v, bool) or not isinstance(v, (str, int))]
+    if not updates:
+        reasons.append("nothing to write")
+    if reasons:
+        raise WriteRefused(reasons)
+    text = Path(path).read_text(encoding="utf-8")
+    fields, defect = read(text)
+    if defect:
+        raise WriteRefused([f"frontmatter: {defect.code}: {defect.detail}"])
+    new_text = _set_keys(text, updates)
+    new = _refuse_unless_consistent(fields, new_text, updates)
+    invalid = _validate(new, set(updates), memory_dir, repo_root, skills_home)
+    if invalid:
+        raise WriteRefused(invalid)
+    _atomic_write(path, new_text)
+    return new
