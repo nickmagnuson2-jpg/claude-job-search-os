@@ -22,7 +22,6 @@ CUTS = [
      "reason": "title not in the target's role_filters"},
     {"company": "Beta Inc", "title": "Strategy Lead", "location": "London", "url": "",
      "rule": "location", "reason": "location: excluded"},
-    "not a dict",
 ]
 NOW = datetime(2026, 1, 7, 15, 0, tzinfo=timezone.utc)
 
@@ -56,13 +55,65 @@ def test_the_key_ignores_the_reason_text_so_a_title_gate_rewording_keeps_it():
 
 # --- load_cuts ---------------------------------------------------------------------------------
 
-def test_load_cuts_keys_every_dict_and_skips_the_rest(tmp_path):
+def test_load_cuts_keys_every_cut(tmp_path):
     got = tcr.load_cuts(_root(tmp_path))
     assert got["error"] is None and got["scanned_at"] == "2026-01-06T16:30:00+00:00"
     assert [c["key"] for c in got["cuts"]] == [_key(CUTS[0]), _key(CUTS[1])]
     assert [c["role_key"] for c in got["cuts"]] == [CUTS[0]["url"], "beta inc::strategy lead"]
     assert got["fetch_failures"] == 0
     assert got["cuts"][0]["title"] == "Head of Operations Planning"
+
+
+# A corrupt queue must not render a partial cut list with no error (funnel-page-1118 tip
+# review, Codex F1 + Grok F2, parked P1). Same contract as every other bad queue: an error
+# and cuts None, so the page says "Cuts unavailable" and funnel_state records no scan.
+
+@pytest.mark.parametrize("bad", ["not a dict", None, 7, ["a", "list"]])
+def test_a_non_dict_cut_is_an_error_not_a_silent_drop(tmp_path, bad):
+    got = tcr.load_cuts(_root(tmp_path, cuts=CUTS + [bad]))
+    assert got["cuts"] is None and got["scanned_at"] is None
+    assert "1 of 3 cut_at_fetch entries" in got["error"] and "not an object" in got["error"]
+
+
+def test_every_dropped_entry_is_counted(tmp_path):
+    got = tcr.load_cuts(_root(tmp_path, cuts=["x", CUTS[0], 3]))
+    assert got["cuts"] is None and "2 of 3 cut_at_fetch entries" in got["error"]
+
+
+def _payload(cuts, count):
+    return {"scanned_at": "2026-01-06T16:30:00+00:00", "cut_at_fetch": cuts,
+            "cut_at_fetch_count": count}
+
+
+@pytest.mark.parametrize("count", [3, 1, 0])
+def test_a_count_that_disagrees_with_the_list_is_an_error(tmp_path, count):
+    got = tcr.load_cuts(_root(tmp_path, payload=_payload(CUTS, count)))
+    assert got["cuts"] is None and got["scanned_at"] is None
+    assert f"cut_at_fetch_count is {count}" in got["error"] and "lists 2" in got["error"]
+
+
+def test_a_matching_count_passes(tmp_path):
+    got = tcr.load_cuts(_root(tmp_path, payload=_payload(CUTS, 2)))
+    assert got["error"] is None and len(got["cuts"]) == 2
+
+
+@pytest.mark.parametrize("count", ["2", 2.0, True, None, [2]])
+def test_a_count_that_is_not_an_integer_is_an_error(tmp_path, count):
+    got = tcr.load_cuts(_root(tmp_path, payload=_payload(CUTS, count)))
+    assert got["cuts"] is None and "cut_at_fetch_count is not an integer" in got["error"]
+
+
+def test_a_queue_with_no_count_field_still_loads(tmp_path):
+    # Queues written before the count existed; the list alone is checked.
+    got = tcr.load_cuts(_root(tmp_path))
+    assert got["error"] is None and len(got["cuts"]) == 2
+
+
+def test_mark_on_a_corrupt_queue_is_exit_2_and_writes_nothing(tmp_path):
+    root = _root(tmp_path, cuts=CUTS + ["junk"])
+    code, out = tcr.mark(root, _key(CUTS[0]), "should show", now=NOW)
+    assert code == 2 and "not an object" in out["error"]
+    assert not tcr.rulings_path(root).exists()
 
 
 @pytest.mark.parametrize("payload,needle", [
