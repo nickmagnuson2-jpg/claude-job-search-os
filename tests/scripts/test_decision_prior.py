@@ -173,6 +173,7 @@ def test_repeat_is_refused_with_the_ruling_text(main, capsys, key, pats, anchor,
     assert anchor in hit["text"]                           # the answer itself, not only a pointer
     assert "--why-not-answered" in data["message"]
     assert [e for e in events(main) if e.get("type") == "asked"] == []
+    assert events(main, "predictions.jsonl") == []      # Grok r1 claim 1: no prediction either
     cited = [e for e in events(main) if e.get("type") == "cited"]
     assert key in {e["topic"] for e in cited}
     assert all(e["record_hash"] == dw.record_hash(e) for e in cited)
@@ -314,6 +315,30 @@ def test_blank_why_not_answered_is_refused(main, capsys):
     seed_all(main, capsys)
     rc, data, _ = add(main, capsys, "Is every weekend OK?", "--why-not-answered", "  ")
     assert rc == 1 and data["code"] == "blank_field"
+
+
+@pytest.mark.parametrize("dry", [False, True])
+def test_a_corrupt_queue_refuses_a_matching_add_and_writes_nothing(main, capsys, dry):
+    """Grok r1 F1: T8 (a corrupt queue refuses every command) holds on the citing path too."""
+    add(main, capsys, "Ship part one first?")
+    q = main / "data" / "run-manifest" / "questions.jsonl"
+    q.write_text(q.read_text(encoding="utf-8") + "{not json\n", encoding="utf-8")
+    before = q.read_bytes()
+    rc, data, _ = add(main, capsys, "Formerco again?", *(["--dry-run"] if dry else []))
+    assert rc == 1 and data["code"] == "corrupt_queue"
+    assert q.read_bytes() == before
+
+
+def test_one_override_of_a_two_row_company_counts_once(main, capsys):
+    """Grok r1 F2: the override names each topic once, however many rows it cites."""
+    p = main / "data" / "job-pipeline.md"
+    p.write_text(p.read_text(encoding="utf-8").replace(
+        "| Twiceco | Second Seat | Round 2 complete |", "| Twiceco | Second Seat | Withdrawn |"),
+        encoding="utf-8")
+    rc, data, _ = add(main, capsys, "Twiceco again?", "--why-not-answered", "a new seat opened")
+    assert rc == 0 and data["not_answered"]["topics"] == ["company:Twiceco"]
+    _, data, _ = run(main, capsys, "check")
+    assert data["overrides"] == {"company:Twiceco": 1}
 
 
 def test_dry_run_refusal_records_no_citation(main, capsys):

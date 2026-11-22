@@ -501,6 +501,9 @@ def cmd_add(p: dict, a) -> dict:
         raise Refusal("bad_prediction", f"--predict must be one of {labels}")
     usd = parse_usd(a.cls, a.usd)
 
+    # A corrupt queue refuses every add before anything is matched or written, the citing path
+    # included (T8; Grok r1 F1: the refusal path appended cited events past a corrupt line).
+    load_events(p["questions"])
     answers, warnings = prior_rulings(p, a.question)
     if answers and a.why_not_answered is None:
         refusal = Refusal(
@@ -517,8 +520,9 @@ def cmd_add(p: dict, a) -> dict:
                         "file": x["file"], "line": x["line"], "line_hash": sha(x["text"]),
                         "question": a.question.strip()}))
         raise refusal
-    not_answered = ({"topics": [x["topic"] for x in answers], "reason": a.why_not_answered.strip()}
-                    if answers else None)
+    # One entry per topic, however many rows it cites (Grok r1 F2: a two-row company counted twice).
+    not_answered = ({"topics": list(dict.fromkeys(x["topic"] for x in answers)),
+                     "reason": a.why_not_answered.strip()} if answers else None)
 
     def build(events: list, preds: list) -> tuple[dict, dict]:
         for q in open_questions(events).values():
