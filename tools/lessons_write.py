@@ -40,6 +40,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import learning_state as ls  # noqa: E402
 from vault_paths import main_checkout  # noqa: E402
+from hook_runtime import claude_project_dir  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SECTION_2 = "## Section 2"
@@ -50,6 +51,13 @@ PROMOTED_CELL = ls.LESSONS_COLUMNS.index("Promoted")
 class Refused(Exception):
     def __init__(self, reasons: list[str]):
         self.reasons = reasons
+
+
+def memory_dir() -> Path:
+    """The live memory folder, where a `merged into <file>` pointer must resolve (Grok r1
+    F2). MEMORY_DIR overrides it, for tests and dry runs on a copy."""
+    override = os.environ.get("MEMORY_DIR")
+    return Path(override) if override else claude_project_dir(main_checkout(REPO_ROOT)) / "memory"
 
 
 def lessons_path() -> Path:
@@ -95,7 +103,7 @@ def validate_cells(cells: list[str]) -> list[str]:
         return reasons
     # No cell holds a pipe or a newline, so format_row(cells) is exactly 5 cells and
     # parse_lessons_row would return these cells unchanged: validate them directly.
-    _disp, _due, defects = ls.lessons_state(cells, repo_root=REPO_ROOT)
+    _disp, _due, defects = ls.lessons_state(cells, memory_dir=memory_dir(), repo_root=REPO_ROOT)
     return list(defects)
 
 

@@ -38,8 +38,9 @@ LESSONS = f"""# Lessons
 """
 
 
-def run(args, path: Path):
-    env = {**os.environ, "LESSONS_PATH": str(path), "PYTHONIOENCODING": "utf-8"}
+def run(args, path: Path, memory_dir: Path | None = None):
+    env = {**os.environ, "LESSONS_PATH": str(path), "PYTHONIOENCODING": "utf-8",
+           "MEMORY_DIR": str(memory_dir or path.parent / "no-memory-here")}
     p = subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True,
                        env=env, timeout=60)
     out = json.loads(p.stdout) if p.stdout.strip().startswith("{") else None
@@ -222,3 +223,31 @@ def test_atomic_write_leaves_no_temp_file_when_replace_fails(tmp_path, monkeypat
         lessons_write.atomic_write(target, "new\n")
     assert target.read_text(encoding="utf-8") == "original\n"
     assert sorted(x.name for x in tmp_path.iterdir()) == ["lessons.md"]
+
+
+def test_a_merged_pointer_resolves_in_the_memory_folder(lessons, tmp_path):
+    """Grok r1 F2: lessons_state was called without the memory folder, so every merged
+    pointer was a defect."""
+    mem = tmp_path / "memory"
+    mem.mkdir()
+    (mem / "feedback_other_rule.md").write_text("---\nname: x\n---\n", encoding="utf-8")
+    code, out, p = run(["set-promoted", "Invented pattern beta", "merged into feedback_other_rule.md"],
+                       lessons, mem)
+    assert code == 0, p.stdout + p.stderr
+    code, out, _ = run(["set-promoted", "Invented pattern gamma", "merged into feedback_absent_rule.md"],
+                       lessons, mem)
+    assert code == 1
+    assert any("does not exist" in r for r in out["reasons"])
+
+
+def test_default_memory_dir_is_the_main_checkouts_live_tier():
+    sys.path.insert(0, str(REPO / "tools"))
+    import lessons_write
+    from hook_runtime import claude_project_dir
+    from vault_paths import main_checkout
+    env = os.environ.pop("MEMORY_DIR", None)
+    try:
+        assert lessons_write.memory_dir() == claude_project_dir(main_checkout(REPO)) / "memory"
+    finally:
+        if env is not None:
+            os.environ["MEMORY_DIR"] = env

@@ -75,6 +75,11 @@ def tripwire_refusal() -> str | None:
     return None
 
 
+# Keys the state matrix types as integers. A CLI value is a string, and the validator
+# refuses reopen_at="3" (Grok r1 F1, 2026-11-22), so a digit string becomes an int here.
+INT_KEYS = frozenset({"reopen_at"})
+
+
 def parse_assignments(pairs: list[str]) -> tuple[dict, list[str]]:
     updates: dict = {}
     errors: list[str] = []
@@ -86,7 +91,7 @@ def parse_assignments(pairs: list[str]) -> tuple[dict, list[str]]:
         elif key in updates:
             errors.append(f"{key}: given twice")
         else:
-            updates[key] = value
+            updates[key] = int(value) if key in INT_KEYS and value.isdigit() else value
     return updates, errors
 
 

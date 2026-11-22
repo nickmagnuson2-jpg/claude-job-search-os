@@ -780,3 +780,15 @@ def test_the_refusal_names_what_is_wrong_with_the_row(store, row, detail):
     with pytest.raises(dc.CaptureError) as exc:
         dc.confirm(cid, "edited", sent_text=SENT_EDIT, lesson_ref="Casey Doe / Acme")
     assert detail in str(exc.value).lower()
+
+
+def test_a_cited_merged_row_resolves_in_the_memory_folder(store, tmp_path, monkeypatch):
+    """Grok r1 F2: a valid `merged into <file>` row could never be cited."""
+    mem = tmp_path / "memory"
+    mem.mkdir()
+    (mem / "feedback_other_rule.md").write_text("---\nname: x\n---\n", encoding="utf-8")
+    monkeypatch.setenv("MEMORY_DIR", str(mem))
+    _lessons(store, ROW.replace("| 1 | No |", "| 1 | merged into feedback_other_rule.md |"))
+    cid = dc.capture(DRAFT)
+    meta = dc.confirm(cid, "edited", sent_text=SENT_EDIT, lesson_ref="Casey Doe / Acme")
+    assert meta["lesson_ref"] == "Casey Doe / Acme"

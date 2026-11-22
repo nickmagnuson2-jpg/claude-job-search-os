@@ -218,3 +218,18 @@ def test_a_bad_pair_is_never_written_even_beside_a_good_one(mem, pairs, reasons)
     assert code == 2
     assert out["reasons"] == reasons
     assert text(mem) == RULE
+
+
+def test_set_reopen_at_through_the_cli(mem):
+    """Grok r1 F1: the documented CLI line wrote nothing, because "3" is not an int."""
+    code, out, p = run(["set", "feedback_example_rule.md", "reopen_at=3"], mem)
+    assert code == 0, p.stdout + p.stderr
+    assert out["set"] == {"reopen_at": 3}
+    assert "  reopen_at: 3\n" in text(mem)
+
+
+@pytest.mark.parametrize("value", ["three", "-1", "0"])
+def test_set_reopen_at_rejects_a_non_positive_or_non_number(mem, value):
+    code, out, _ = run(["set", "feedback_example_rule.md", f"reopen_at={value}"], mem)
+    assert code == 1
+    assert text(mem) == RULE
