@@ -359,8 +359,8 @@ def repair(path: Path, *, expect_sha256: str, new_block: str, intended: dict,
     data = path.read_bytes()  # a symlink is refused by _atomic_write, before any write
     actual = hashlib.sha256(data).hexdigest()
     if actual != expect_sha256:
-        raise WriteRefused([f"sha256 of {path.name} is {actual}, not the proposal's "
-                            f"{expect_sha256}: the file changed since the proposal"])
+        raise WriteRefused([f"{path.name} has sha256 {actual}; the proposal expects "
+                            f"{expect_sha256}, so the file changed since the proposal"])
     text = data.decode("utf-8")
     m = _BLOCK.match(text)
     if not m or m.group(1) is None:
