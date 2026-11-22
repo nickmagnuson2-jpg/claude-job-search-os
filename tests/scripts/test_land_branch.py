@@ -1728,3 +1728,53 @@ def test_cli_verify_landed(mp, monkeypatch, capsys, ok, rc, want):
     assert lb.main(["--repo-root", str(mp["root"]), "--verify-landed", "a..b"]) == rc
     assert seen == ["a..b"]
     assert capsys.readouterr().out.strip() == want
+
+
+# ---------------------------------------------------------------- git failures (grok 10.F3)
+# merge_chain raises GitError, which is NOT a ChainError, when git fails. Every caller here
+# must turn it into a hold, refusal or problem, never a crash and never "not a chain".
+def _git_error(*a, **k):
+    raise mc.GitError("rev-list failed (rc 128): forced")
+
+
+def test_mp_holds_a_branch_whose_merge_hits_a_git_error(mp, monkeypatch):
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    monkeypatch.setattr(lb.mc, "build", _git_error)
+    rep = run_mp(mp, ["one"])
+    assert rep["held"] == [{"branch": "one", "tip": rep["held"][0]["tip"],
+                            "reasons": ["rev-list failed (rc 128): forced"]}]
+    assert rep["refusals"] == ["nothing to land: every branch is held"]
+
+
+def test_mp_refuses_when_walking_the_built_chain_hits_a_git_error(mp, monkeypatch):
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    monkeypatch.setattr(lb.mc, "walk", _git_error)
+    rep = run_mp(mp, ["one"])
+    assert rep["refusals"] == ["the built chain does not verify: rev-list failed (rc 128): forced"]
+    assert rep["chain_tip"] is None and rep["gate"] is None
+
+
+def test_verify_landed_reports_a_git_error_as_a_problem(mp, monkeypatch):
+    _, tip = branch(mp, "plain", {"p.py": "p = 1\n"})
+    monkeypatch.setattr(lb.mc, "walk", _git_error)
+    res = lb.verify_landed(mp["root"], f"{mp['base']}..{tip}", gh=gh_landed(None, {}))
+    assert res["ok"] is False
+    assert res["problems"] == ["not a merge-push chain: rev-list failed (rc 128): forced"]
+
+
+def test_check_refuses_when_the_allowlist_resolution_hits_a_git_error(mp, monkeypatch):
+    a = mc.ALLOWLIST
+    root = mp["root"]
+    (root / a).write_text('{\n  "k::main": "rm"\n}\n')
+    sh(root, "add", a)
+    sh(root, "commit", "-qm", "main allowlist")
+    ready_branch(mp, "one", {a: '{\n  "k::one": "r1"\n}\n'})
+    new_main = sh(root, "rev-parse", "HEAD")
+    sh(root, "update-ref", "refs/remotes/origin/main", new_main)
+    gh = gh_main_at(new_main, [mp["base"]], sh(root, "rev-parse", f"{new_main}^{{tree}}"))
+    monkeypatch.setattr(lb.mc, "expected_tree", _git_error)
+    r = by_name(lb.check(root, ["one"], gh=gh, allowlist_ok=True))["one"]
+    assert r["ready"] is False
+    assert "notes" not in r
+    assert any(x.startswith("conflicts with main: ") and "forced" in x for x in r["refusals"])
+    assert r["steps"]["merge_main"]["error"] == "rev-list failed (rc 128): forced"

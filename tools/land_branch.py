@@ -398,9 +398,14 @@ def check_branch(root: Path, branch: str, worktrees: dict, gh_state: dict | None
         r["refusals"].append(stale_base)
     if main_ref:
         m = merge_check(root, main_ref, tip)
+        resolved = None
+        if not m["clean"] and allowlist_ok and m["files"] == [mc.ALLOWLIST]:
+            try:
+                resolved = mc.expected_tree(root, main_ref, tip)[0]
+            except mc.GitError as e:     # unknown is not resolvable (grok 10.F3)
+                m = {**m, "files": [], "error": str(e)}
         r["steps"]["merge_main"] = m
-        if not m["clean"] and allowlist_ok and m["files"] == [mc.ALLOWLIST] \
-                and mc.expected_tree(root, main_ref, tip)[0]:
+        if resolved:
             # Nick, 2026-11-18: the allowlist is resolved by key (allowlist_merge), and
             # the push gate recomputes that resolution. Only --merge-push passes this.
             r.setdefault("notes", []).append(
@@ -902,7 +907,7 @@ def merge_push(root: Path, branches: list[str], *, dry_run: bool, gh=None,
             continue
         try:
             cur = mc.build(root, cur, tip, merge_message(desc, b, tip))
-        except mc.ChainError as e:
+        except (mc.ChainError, mc.GitError) as e:
             rep["held"].append({"branch": b, "tip": tip, "reasons": [str(e)]})
             continue
         rep["built"].append({"branch": b, "tip": tip, "merge": cur, "worktree": wt})
@@ -911,7 +916,7 @@ def merge_push(root: Path, branches: list[str], *, dry_run: bool, gh=None,
         return rep
     try:
         chain = mc.walk(root, base, cur)
-    except mc.ChainError as e:
+    except (mc.ChainError, mc.GitError) as e:
         rep["refusals"].append(f"the built chain does not verify: {e}")
         return rep
     for b, c in zip(rep["built"], chain):
@@ -999,7 +1004,7 @@ def verify_landed(root: Path, rng: str, gh=None) -> dict:
         return res
     try:
         chain = mc.walk(root, base, tip)
-    except mc.ChainError as e:
+    except (mc.ChainError, mc.GitError) as e:
         res["problems"].append(f"not a merge-push chain: {e}")
         return res
     rc, url, _ = git(["remote", "get-url", "--push", "origin"], root)

@@ -506,3 +506,22 @@ def test_chain_waiver_records_the_missing_branch_tips(repo):
     assert r.returncode == 0, r.stderr
     waived = [x for x in rows(repo) if x.get("kind") == "waiver"]
     assert [w["tree"] for w in waived] == [tree(repo, t2)]
+
+
+def test_chain_git_failure_blocks_the_record_check(repo, monkeypatch, capsys):
+    """Grok 10.F3: a git failure while walking the chain raises merge_chain.GitError, which
+    audited_tips does not catch as "not a chain", so record_gate blocks instead of judging
+    the pushed tip alone (which a clean record for the merge tree would have cleared)."""
+    base, t1, t2, m1, m2 = _chain(repo)
+    _clean(repo, m2)
+    pg = _import_guard()
+    real = _mc._git
+
+    def fake(root, *args, **kw):
+        if "merge-tree" in args:
+            return subprocess.CompletedProcess(args, 128, "", "forced failure")
+        return real(root, *args, **kw)
+    monkeypatch.setattr(_mc, "_git", fake)
+    monkeypatch.delenv("AUDIT_PII_WAIVE", raising=False)
+    assert pg.record_gate(repo, [(m2, base)]) == 1
+    assert "forced failure" in capsys.readouterr().err
