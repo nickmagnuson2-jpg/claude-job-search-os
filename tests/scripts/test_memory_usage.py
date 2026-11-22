@@ -383,3 +383,9 @@ def test_last_context_entry_is_the_latest_day_whatever_the_event_order():
     s = mu.summarize(ev, reconfirms=lambda n: True)["a"]
     assert s["last_context_entry"] == date(2026, 11, 9)
     assert s["last_entry_any_session"] == date(2026, 11, 9)
+
+
+def test_only_the_read_tool_counts_as_a_read_even_if_another_tool_names_a_file_path(tmp_path):
+    res = _scan(tmp_path, [_tool_use("t1", "NotebookRead", {"file_path": MP + "feedback_alpha_rule.md"}),
+                           _tool_result("t1", "cell text")])
+    assert res.events == []
