@@ -367,10 +367,21 @@ def test_a_segment_left_empty_after_cd_or_assignments_is_skipped(tmp_path, cmd):
     assert res.events == []
 
 
-def test_grep_lines_shown_by_reading_another_file_count(tmp_path):
+def test_grep_like_lines_inside_another_file_read_are_not_entries(tmp_path):
+    """Real data, 2026-11-22: 1,233 such lines were citations in docs (`x.md:89,269`), not
+    rule text. Reverted from 35c44a3e."""
     res = _scan(tmp_path, [_tool_use("t1", "Read", {"file_path": "/x/output/report.md"}),
                            _tool_result("t1", "12\tfeedback_alpha_rule.md:3:the rule text")])
-    assert _chans(res.events) == [("feedback_alpha_rule", "grep_line")]
+    assert res.events == []
+
+
+@pytest.mark.parametrize("out", [
+    "see `feedback_alpha_rule.md:89,269`; and more",
+    "feedback_alpha_rule.md:12, 40",
+])
+def test_a_line_citation_is_not_a_grep_content_line(tmp_path, out):
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": "cat output/doc.md"}), _tool_result("t1", out)])
+    assert res.events == []
 
 
 def test_reading_a_memory_file_counts_once_as_a_read(tmp_path):
@@ -395,4 +406,73 @@ def test_last_context_entry_is_the_latest_day_whatever_the_event_order():
 def test_only_the_read_tool_counts_as_a_read_even_if_another_tool_names_a_file_path(tmp_path):
     res = _scan(tmp_path, [_tool_use("t1", "NotebookRead", {"file_path": MP + "feedback_alpha_rule.md"}),
                            _tool_result("t1", "cell text")])
+    assert res.events == []
+
+
+# ---------------------------------------------------------------------------- Codex r1 (2026-11-22)
+
+def test_a_resumed_transcript_joins_its_original_session_for_breadth(tmp_path):
+    """r1 F1 (P0): a resume copies the old tool calls into a new file. The two files are one
+    logical session, so an audit split across them still counts as one broad session."""
+    mem = tmp_path / "proj" / "memory"
+    mem.mkdir(parents=True)
+    stems = [f"feedback_r{i:02d}" for i in range(25)]
+    for s in stems:
+        (mem / f"{s}.md").write_text("x")
+    def reads(ids):
+        out = []
+        for i in ids:
+            out += [_tool_use(f"t{i}", "Read", {"file_path": MP + f"{stems[i]}.md"}), _tool_result(f"t{i}", "x")]
+        return out
+    _write(mem.parent / "s1.jsonl", reads(range(15)))
+    _write(mem.parent / "s2.jsonl", reads(range(25)))          # resume: 15 copied + 10 new
+    res = mu.collect(mem.parent, mu.memory_stems(mem))
+    assert mu.session_breadth(res.events) == {"s1": 25}
+    summary = mu.summarize(res.events, reconfirms=lambda n: n < 20)
+    assert all(v["last_context_entry"] is None for v in summary.values())
+    assert len(summary) == 25
+
+
+def test_sessions_that_share_no_tool_call_stay_apart(tmp_path):
+    mem = _mem(tmp_path)
+    _write(mem.parent / "s1.jsonl", [_tool_use("t1", "Read", {"file_path": MP + "feedback_alpha_rule.md"}),
+                                     _tool_result("t1", "x")])
+    _write(mem.parent / "s2.jsonl", [_tool_use("t2", "Read", {"file_path": MP + "reference_beta_fact.md"}),
+                                     _tool_result("t2", "x")])
+    res = mu.collect(mem.parent, mu.memory_stems(mem))
+    assert mu.session_breadth(res.events) == {"s1": 1, "s2": 1}
+
+
+@pytest.mark.parametrize("cmd", [
+    "cat /tmp/feedback_alpha_rule.md",
+    "head output/analysis/feedback_alpha_rule.md",
+    "grep -rn '[[feedback_alpha_rule' output/",               # searching for the name
+])
+def test_a_print_of_a_same_named_file_outside_memory_is_not_an_entry(tmp_path, cmd):
+    """r1 F2 (P1): a path that names a folder other than memory/ is another file."""
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", "text")])
+    assert res.events == []
+
+
+@pytest.mark.parametrize("cmd", [
+    "cat memory/feedback_alpha_rule.md",
+    "cat $MEM/feedback_alpha_rule.md",
+    "cat \"${MEM}/feedback_alpha_rule.md\"",
+    "cd ~/x/memory && cat feedback_alpha_rule.md",
+    "cat \"$M\"/feedback_alpha_rule.md",
+    "cat 'memory'/feedback_alpha_rule.md",
+    "cat memory/canonical-sidecar/feedback_alpha_rule.md",   # backup copy of the same text
+])
+def test_a_print_through_memory_or_a_variable_or_a_bare_name_is_an_entry(tmp_path, cmd):
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", "text")])
+    assert _chans(res.events) == [("feedback_alpha_rule", "bash_print")]
+
+
+@pytest.mark.parametrize("content", ["", [], [{"type": "text", "text": ""}]])
+def test_an_empty_read_result_is_not_an_entry(tmp_path, content):
+    """r1 F4 (P1): no text entered context."""
+    res = _scan(tmp_path, [_tool_use("t1", "Read", {"file_path": MP + "feedback_alpha_rule.md"}),
+                           {"type": "user", "timestamp": "2026-11-20T18:00:01Z",
+                            "message": {"content": [{"type": "tool_result", "tool_use_id": "t1",
+                                                     "content": content}]}}])
     assert res.events == []

@@ -40,7 +40,7 @@ from zoneinfo import ZoneInfo
 LOCAL_TZ = ZoneInfo("America/Los_Angeles")
 RULE_FILE = re.compile(r"^(?:feedback|reference|project|user)_.+\.md$")
 NAME = re.compile(r"(?:feedback|reference|project|user)_[A-Za-z0-9_\-]+")
-GREP_LINE = re.compile(r"((?:feedback|reference|project|user)_[A-Za-z0-9_\-]+)\.md[:\-](?:\d+[:\-])?(.*)")
+GREP_LINE = re.compile(r"((?:feedback|reference|project|user)_[A-Za-z0-9_\-]+)\.md[:\-](\d+[:\-])?(.*)")
 HEREDOC = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?[^\n]*\n(.*?)\n\1\b", re.S)
 PRINT_VERBS = {"cat", "head", "tail", "sed", "less", "more", "bat", "awk", "nl", "grep", "rg"}
 WRITE_VERBS = {"mv", "cp", "rm", "touch", "tee"}
@@ -91,6 +91,21 @@ def _memory_stem(path: str, stems: set[str]) -> str | None:
     return stem if stem in stems else None
 
 
+def _names_in_memory(segment: str, stems: set[str]) -> set[str]:
+    """Stems named in a segment as a memory file: a bare name (relative, e.g. after a cd), a
+    path through a memory/ folder (its backup copies included), or a path through a shell
+    variable. A path through any
+    other folder is a different file with the same name (Codex r1 F2)."""
+    found = set()
+    for stem in _names(segment, stems):
+        for m in re.finditer(rf"(\S*?){re.escape(stem)}", segment):
+            prefix = m.group(1).replace('"', "").replace("'", "")
+            if not prefix or "memory/" in prefix or ("$" in prefix and prefix.endswith("/")):
+                found.add(stem)
+                break
+    return found
+
+
 def classify_bash(command: str, stems: set[str]) -> tuple[set[str], set[str], int]:
     """(printed stems, written stems, heredoc references) for one Bash command.
 
@@ -108,7 +123,7 @@ def classify_bash(command: str, stems: set[str]) -> tuple[set[str], set[str], in
             toks = toks[2:] if toks[0] == "cd" else toks[1:]
         if not toks:
             continue
-        found = _names(seg, stems)
+        found = _names_in_memory(seg, stems)
         verb = toks[0].split("/")[-1]
         if REDIRECT_TO_RULE.search(seg) or (verb == "sed" and "-i" in toks) or verb in WRITE_VERBS:
             written |= found
@@ -128,8 +143,10 @@ def _grep_lines(text: str, stems: set[str]) -> set[str]:
     for line in text.splitlines():
         m = GREP_LINE.search(line)
         if m and m.group(1) in stems:
-            rest = m.group(2).strip()
-            if rest and not rest.isdigit():
+            rest = m.group(3).strip()
+            # Without a `<n>:` line number, text starting with a digit is a citation
+            # (`x.md:89,269`), not grep output.
+            if rest and not (m.group(2) is None and rest[0].isdigit()):
                 hits.add(m.group(1))
     return hits
 
@@ -161,6 +178,15 @@ def collect(project_dir: Path, stems: set[str], exclude_sessions: Iterable[str] 
     last: date | None = None
     heredoc_refs = 0
     files = _transcripts(project_dir)
+    # A resumed transcript copies earlier tool calls into a new file. Files that share a
+    # tool call are one logical session, so breadth is counted over the join (Codex r1 F1).
+    parent: dict[str, str] = {}
+    tool_owner: dict[str, str] = {}
+
+    def root(x: str) -> str:
+        while parent.get(x, x) != x:
+            x = parent[x]
+        return x
 
     def add(session, stem, channel, day, key):
         if day is None or key in seen:
@@ -189,7 +215,14 @@ def collect(project_dir: Path, stems: set[str], exclude_sessions: Iterable[str] 
                     content = (rec.get("message") or {}).get("content")
                     for b in content if isinstance(content, list) else []:
                         if isinstance(b, dict) and b.get("type") == "tool_use":
-                            tools[b.get("id")] = (b.get("name"), b.get("input") or {})
+                            tid = b.get("id")
+                            tools[tid] = (b.get("name"), b.get("input") or {})
+                            if tid in tool_owner:
+                                a, c = root(tool_owner[tid]), root(session)
+                                if a != c:
+                                    parent[c] = a
+                            elif tid:
+                                tool_owner[tid] = session
                 elif kind == "user":
                     content = (rec.get("message") or {}).get("content")
                     for b in content if isinstance(content, list) else []:
@@ -204,9 +237,11 @@ def collect(project_dir: Path, stems: set[str], exclude_sessions: Iterable[str] 
                         if name == "Read":
                             stem = _memory_stem(inp.get("file_path", ""), stems)
                             if stem:
-                                add(session, stem, "read", day, (stem, "read", tid))
-                                continue
-                            # Another file read: grep-style lines it carries still count below.
+                                if text.strip():   # an empty result put no text in context
+                                    add(session, stem, "read", day, (stem, "read", tid))
+                            # Another file's text is not grep output: on real data its
+                            # `x.md:<n>` lines were citations, not rule text.
+                            continue
                         if name == "Bash" and text.strip():
                             printed, _written, refs = classify_bash(inp.get("command", ""), stems)
                             heredoc_refs += refs
@@ -226,6 +261,7 @@ def collect(project_dir: Path, stems: set[str], exclude_sessions: Iterable[str] 
                         if stem:
                             add(session, stem, "file_attachment", day,
                                 (session, stem, "file_attachment", rec.get("uuid") or line))
+    events = [Event(root(e.session), e.stem, e.channel, e.day) for e in events]
     gaps = {"heredoc_refs": heredoc_refs,
             "sibling_transcripts_not_scanned": sum(len(list(Path(d).rglob("*.jsonl"))) for d in sibling_dirs)}
     return ScanResult(events, first, last, gaps, transcripts=len(files))
