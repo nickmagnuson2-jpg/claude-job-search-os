@@ -94,10 +94,36 @@ def cutover_digest(memory_dir: Path, repo_root: Path, inputs: dict) -> str:
     return digest_of(entries(memory_dir, repo_root, inputs))
 
 
+class CorpusMoved(Exception):
+    """A file changed while it was being read: there is no single state to bind to."""
+
+    def __init__(self, changed: list[str]):
+        super().__init__("changed during the scan: " + ", ".join(changed))
+        self.changed = changed
+
+
+def stable_entries(memory_dir: Path, repo_root: Path, inputs: dict) -> dict[str, str]:
+    """entries() twice; the two scans must agree, else CorpusMoved. One pass hashes files
+    one at a time, so a file hashed early can change while a later one is read (Codex B7
+    F1). This narrows the window to the scan itself; it cannot cover a change after verify
+    returns, so the apply step must re-check each file's sha (the report's .entries.json)
+    at the moment it writes that file."""
+    a = entries(memory_dir, repo_root, inputs)
+    b = entries(memory_dir, repo_root, inputs)
+    if a != b:
+        raise CorpusMoved(sorted(k for k in set(a) | set(b) if a.get(k) != b.get(k)))
+    return a
+
+
 def verify(memory_dir: Path, repo_root: Path, inputs: dict, expected: str,
            baseline: dict | None = None) -> tuple[bool, dict]:
-    """(ok, info). info["changed"] lists labels that differ from `baseline` when given."""
-    ents = entries(memory_dir, repo_root, inputs)
+    """(ok, info). info["changed"] lists labels that differ from `baseline` when given, or
+    that changed during the scan (info["moved_during_scan"] True)."""
+    try:
+        ents = stable_entries(memory_dir, repo_root, inputs)
+    except CorpusMoved as e:
+        return False, {"expected": expected, "actual": None, "changed": e.changed,
+                       "moved_during_scan": True}
     actual = digest_of(ents)
     info = {"expected": expected, "actual": actual, "changed": []}
     if baseline is not None:
@@ -125,13 +151,34 @@ _FM_SECTION = re.compile(
     re.S)
 
 
+def _sections(text: str, head: str) -> list[str]:
+    """Every block from a heading matching `head` (a regex anchored at line start) to the
+    next `## ` heading."""
+    parts = re.split(r"(?m)^(?=## )", text)
+    return [p for p in parts if re.match(head, p)]
+
+
+def _parse_all(text: str, head: str, rx: re.Pattern, what: str) -> list[re.Match]:
+    """One full match per section, or ValueError naming the section: a section that does
+    not parse is never dropped from the count (Codex B7 F5)."""
+    out = []
+    for sec in _sections(text, head):
+        m = rx.match(sec)
+        if not m:
+            raise ValueError(f"{what}: section {sec.splitlines()[0]!r} does not parse")
+        out.append(m)
+    return out
+
+
 def load_frontmatter_repairs(path: Path | None, memory_dir: Path) -> list[dict]:
-    """One dict per proposed repair. stale: the file changed since the proposal was made
-    (or is gone). applies: the old line occurs exactly once in the current file."""
+    """One dict per proposed repair, in file order. stale: the file changed since the
+    proposal was made (or is gone). applies: the old line occurs exactly once in the
+    current file. A section that does not parse is a ValueError."""
     if path is None:
         return []
     out = []
-    for m in _FM_SECTION.finditer(Path(path).read_text(encoding="utf-8")):
+    for m in _parse_all(Path(path).read_text(encoding="utf-8"), r"## \d+\. ", _FM_SECTION,
+                        "frontmatter proposals"):
         p = Path(memory_dir) / m["file"]
         text = p.read_text(encoding="utf-8") if p.is_file() else None
         out.append({"file": m["file"], "old": m["old"], "new": m["new"],
@@ -147,14 +194,22 @@ _LES_SECTION = re.compile(
 
 
 def load_lessons_repairs(path: Path | None, repo_root: Path) -> tuple[list[dict], bool | None]:
-    """(repairs, stale). stale is None when there is no input."""
+    """(repairs, stale). stale is None when there is no input. applies: the named line of
+    the current lessons.md is exactly the old text (Codex B7 F6). A section that does not
+    parse is a ValueError."""
     if path is None:
         return [], None
     text = Path(path).read_text(encoding="utf-8")
     m = _LES_SHA.search(text)
-    stale = m is None or file_sha(Path(repo_root) / "memory/lessons.md") != m["sha"]
-    return [{"line": int(s["line"]), "old": s["old"], "new": s["new"]}
-            for s in _LES_SECTION.finditer(text)], stale
+    lessons = Path(repo_root) / "memory/lessons.md"
+    stale = m is None or file_sha(lessons) != m["sha"]
+    lines = lessons.read_text(encoding="utf-8").split("\n")
+    out = []
+    for s in _parse_all(text, r"## L\d+\n", _LES_SECTION, "lessons proposals"):
+        n = int(s["line"])
+        out.append({"line": n, "old": s["old"], "new": s["new"],
+                    "applies": 0 < n <= len(lines) and lines[n - 1] == s["old"]})
+    return out, stale
 
 
 def load_friction_kinds(path: Path | None, repo_root: Path):
@@ -208,9 +263,14 @@ def _after_memory(fields: dict, defect, memory_dir: Path, repo_root: Path) -> st
 
 
 def memory_transitions(memory_dir: Path, repo_root: Path, reopen: list[dict],
-                       repairs: dict[str, dict]) -> list[dict]:
-    """before/after state per rule file. After applies, in memory only, the proposed
-    frontmatter repair and the proposed reopen_at (status number); nothing is written."""
+                       repairs: list[dict]) -> list[dict]:
+    """before/after state per rule file. After applies, in memory only and in file order,
+    every current frontmatter repair whose old text occurs exactly once in the text as
+    repaired so far (Codex B7 F3), then the proposed reopen_at (status number). Nothing is
+    written. `unapplied` counts a file's repairs that were stale or did not apply."""
+    by_file: dict[str, list[dict]] = {}
+    for r in repairs:
+        by_file.setdefault(r["file"], []).append(r)
     at = {r["file"]: r["proposed_reopen_at"] for r in reopen
           if r.get("status") == "number" and isinstance(r.get("proposed_reopen_at"), int)}
     rows = []
@@ -219,13 +279,16 @@ def memory_transitions(memory_dir: Path, repo_root: Path, reopen: list[dict],
             continue
         text = p.read_text(encoding="utf-8")
         before = _before_memory(text)
-        fix = repairs.get(p.name)
-        if fix and fix["applies"] and not fix["stale"]:
-            text = text.replace(fix["old"] + "\n", fix["new"] + "\n", 1)
+        unapplied = 0
+        for fix in by_file.get(p.name, []):
+            if not fix["stale"] and text.count(fix["old"] + "\n") == 1:
+                text = text.replace(fix["old"] + "\n", fix["new"] + "\n", 1)
+            else:
+                unapplied += 1
         fields, defect = mf.read(text)
         if defect is None and p.name in at:
             fields = {**fields, "reopen_at": at[p.name]}
-        rows.append({"file": p.name, "before": before,
+        rows.append({"file": p.name, "before": before, "unapplied": unapplied,
                      "after": _after_memory(fields, defect, memory_dir, repo_root)})
     return rows
 
@@ -243,25 +306,27 @@ def lessons_transitions(repo_root: Path, memory_dir: Path, repairs: list[dict],
                         stale: bool | None) -> list[dict]:
     import learning_ledger as ll  # today's reader
     text = (Path(repo_root) / "memory/lessons.md").read_text(encoding="utf-8")
-    fixes = {} if stale else {r["line"]: r for r in repairs}
+    fixes = {} if stale else {r["line"]: r for r in repairs if r["applies"]}
     rows = []
     for n, line in _lessons_rows(text):
-        cells, bad = ls.parse_lessons_row(line)
-        if cells is None and bad is None:
-            continue  # header or separator
-        if cells is not None:
-            before = "closed" if ll._disposition(cells[3]) != ll.DISPOSITION_OPEN else "open"
-        else:
-            before = "unreadable"
+        # before: today's reader alone (learning_ledger.read_lessons' Section 2 rule: a
+        # row of 5+ cells that is not the header), never gated on the new parser (Codex
+        # B7 F2).
+        old = ll._row_cells(line)
+        if not old or old[0].lower() == "pattern":
+            continue  # separator or header, for both readers
+        before = (("closed" if ll._disposition(old[3]) != ll.DISPOSITION_OPEN else "open")
+                  if len(old) >= 5 else "not read (fewer than 5 cells)")
         fix = fixes.get(n)
-        if fix and fix["old"] == line:
-            cells, bad = ls.parse_lessons_row(fix["new"])
+        cells, bad = ls.parse_lessons_row(fix["new"] if fix else line)
+        kinds: tuple = ()
         if bad is not None:
-            after = "defect: row"
+            after, kinds = "defect: row", ("row",)
         else:
             d, due, defects = ls.lessons_state(cells, memory_dir=memory_dir, repo_root=repo_root)
+            kinds = tuple(x.split(":", 1)[0] for x in defects)
             after = "defect" if defects else (d.state if d.state == "closed" else f"{d.state}/{due}")
-        rows.append({"line": n, "before": before, "after": after})
+        rows.append({"line": n, "before": before, "after": after, "defect_kinds": kinds})
     return rows
 
 
@@ -278,7 +343,7 @@ def build_report(memory_dir: Path, repo_root: Path, inputs: dict,
                  today: _dt.date | None = None) -> tuple[str, str]:
     """(markdown, digest). Reads only; the caller writes the markdown."""
     today = today or _dt.date.today()
-    ents = entries(memory_dir, repo_root, inputs)
+    ents = stable_entries(memory_dir, repo_root, inputs)
     digest = digest_of(ents)
     reopen = load_reopen(inputs.get("reopen_at"))
     fm_repairs = load_frontmatter_repairs(inputs.get("frontmatter"), memory_dir)
@@ -286,7 +351,7 @@ def build_report(memory_dir: Path, repo_root: Path, inputs: dict,
     i7 = load_jsonl(inputs.get("i7"))
     kinds = load_friction_kinds(inputs.get("friction_kinds"), repo_root)
 
-    mem = memory_transitions(memory_dir, repo_root, reopen, {r["file"]: r for r in fm_repairs})
+    mem = memory_transitions(memory_dir, repo_root, reopen, fm_repairs)
     les = lessons_transitions(repo_root, memory_dir, les_repairs, les_stale)
     flagged = [r for r in reopen if r.get("status") == "relative" or r.get("confidence") == "low"]
     n_rel = sum(r.get("status") == "relative" for r in reopen)
@@ -317,7 +382,7 @@ def build_report(memory_dir: Path, repo_root: Path, inputs: dict,
           f"| Candidate (occurrences >= 2, open) with no reopen_at: `no_number`, a defect, never due | {mem_after['no_number']} "
           f"({mem_after['no_number'] - len(uncovered)} proposed with no number, {len(uncovered)} with no proposal) |",
           f"| Open rule below 2 occurrences: `not_due (below 2)`, not a defect | {mem_after['not_due (below 2)']} |",
-          f"| Unknown promoted token or pointer token without a pointer: defect, stays open | {mem_after['defect: promoted'] + les_after['defect']} |",
+          f"| Unknown promoted token or pointer token without a pointer: defect, stays open | {mem_after['defect: promoted'] + sum('promoted' in r['defect_kinds'] for r in les)} |",
           f"| Frontmatter the strict reader cannot parse (after proposed repairs): defect | {sum(v for k, v in mem_after.items() if k.startswith('defect: frontmatter'))} |",
           f"| Lessons row that cannot be read as 5 cells (after proposed repairs): defect | {les_after['defect: row']} |",
           f"| Lessons ladder, threshold {ls.LADDER_THRESHOLD}: rows due | {les_after['open/due'] + les_after['partial/due']} |",
@@ -355,7 +420,8 @@ def build_report(memory_dir: Path, repo_root: Path, inputs: dict,
     else:
         L.append(f"{len(fm_repairs)} repairs. Stale (file changed since proposed): "
                  f"{sum(r['stale'] for r in fm_repairs)}. Old line not found exactly once: "
-                 f"{sum(not r['applies'] for r in fm_repairs)}.")
+                 f"{sum(not r['applies'] for r in fm_repairs)}. Not applied in the after-state: "
+                 f"{sum(r['unapplied'] for r in mem)}.")
         L += [f"- `{r['file']}`" + (" STALE" if r["stale"] else "") + ("" if r["applies"] else " DOES NOT APPLY")
               for r in fm_repairs]
     L += ["", "### Lessons repairs"]
@@ -364,6 +430,10 @@ def build_report(memory_dir: Path, repo_root: Path, inputs: dict,
     else:
         L.append(f"{len(les_repairs)} rows: " + ", ".join(f"L{r['line']}" for r in les_repairs)
                  + (". STALE: lessons.md changed since proposed; not applied below." if les_stale else "."))
+        bad = [r for r in les_repairs if not r["applies"]]
+        if bad:
+            L.append(f"DOES NOT APPLY (the named line is not the old text): {len(bad)} ("
+                     + ", ".join(f"L{r['line']}" for r in bad) + "); not applied below.")
     L += ["", "### I7 dispositions"]
     if inputs.get("i7") is None:
         L.append("input missing")
@@ -389,6 +459,8 @@ def build_report(memory_dir: Path, repo_root: Path, inputs: dict,
     L += ["", "### Lessons Section 2 rows", ""]
     L += _table(Counter((r["before"], r["after"]) for r in les), ("Before", "After"))
     L.append("")
+    if stable_entries(memory_dir, repo_root, inputs) != ents:
+        raise CorpusMoved(["(the corpus or an input changed while the report was built)"])
     return "\n".join(L), digest
 
 
@@ -429,6 +501,14 @@ def main(argv=None) -> int:
         text, digest = build_report(mem, repo, inputs)
         out = Path(args.out) if args.out else (
             repo / "output/memory-hygiene" / f"{_dt.date.today():%m%d%y}-cutover-report.md")
+        protected = [mem.resolve(), (repo / "memory").resolve()]
+        for target in (out, out.with_suffix(".entries.json")):
+            t = target.resolve()
+            if any(t == d or d in t.parents for d in protected):
+                print(json.dumps({"status": "refused",
+                                  "error": f"{target} is inside the memory folder or repo memory/; "
+                                           "the report never writes there"}))
+                return 2
         out.write_text(text, encoding="utf-8")
         side = out.with_suffix(".entries.json")
         side.write_text(json.dumps(entries(mem, repo, inputs), indent=0, sort_keys=True), encoding="utf-8")

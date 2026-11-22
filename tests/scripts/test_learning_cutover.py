@@ -351,10 +351,10 @@ def test_a_repair_is_applied_in_memory_only_when_current(world, tmp_path):
             "## 1. `feedback_bad.md`\n\n- sha256 of the current file: `" + sha + "`\n\n"
             "Current line:\n\n```yaml\ndescription: a: b\n```\n\nProposed line:\n\n```yaml\n"
             "description: 'a: b'\n```\n", encoding="utf-8")
-        return {r["file"]: r for r in lc.load_frontmatter_repairs(md, mem)}
+        return lc.load_frontmatter_repairs(md, mem)
 
     current = write(lc.file_sha(mem / "feedback_bad.md"))
-    assert current["feedback_bad.md"]["stale"] is False and current["feedback_bad.md"]["applies"] is True
+    assert current[0]["stale"] is False and current[0]["applies"] is True
     after = {r["file"]: r["after"] for r in lc.memory_transitions(mem, repo, [], current)}
     assert after["feedback_bad.md"] == "no_number"
     stale = write("0" * 64)
@@ -391,14 +391,14 @@ def test_lessons_transitions_pin_states_and_apply_a_current_repair(world, tmp_pa
     md = _lessons_props(tmp_path, lc.file_sha(repo / "memory/lessons.md"), old,
                         "| p3 | r3 | 1 | No | 2026-01-03 <!-- tail --> |", 9)
     repairs, stale = lc.load_lessons_repairs(md, repo)
-    assert stale is False and repairs == [{"line": 9, "old": old,
+    assert stale is False and repairs == [{"line": 9, "old": old, "applies": True,
                                            "new": "| p3 | r3 | 1 | No | 2026-01-03 <!-- tail --> |"}]
     rows = lc.lessons_transitions(repo, mem, repairs, stale)
-    assert rows == [{"line": 7, "before": "open", "after": "open/due"},
-                    {"line": 8, "before": "open", "after": "defect"},
-                    {"line": 9, "before": "unreadable", "after": "open/not_due"}]
+    assert rows == [{"line": 7, "before": "open", "after": "open/due", "defect_kinds": ()},
+                    {"line": 8, "before": "open", "after": "defect", "defect_kinds": ("promoted",)},
+                    {"line": 9, "before": "open", "after": "open/not_due", "defect_kinds": ()}]
     unapplied = lc.lessons_transitions(repo, mem, repairs, True)
-    assert unapplied[2] == {"line": 9, "before": "unreadable", "after": "defect: row"}
+    assert unapplied[2] == {"line": 9, "before": "open", "after": "defect: row", "defect_kinds": ("row",)}
 
 
 def test_lessons_repairs_bound_to_another_file_are_stale(world, tmp_path):
@@ -418,7 +418,8 @@ def test_closed_lesson_reads_closed_before_and_after(world):
     mem, repo, _ = world
     (repo / "memory/lessons.md").write_text(
         LESSONS.replace("| p1 | r1 | 2 | No |", "| p1 | r1 | 2 | Yes - skill |"), encoding="utf-8")
-    assert lc.lessons_transitions(repo, mem, [], None)[0] == {"line": 7, "before": "closed", "after": "closed"}
+    assert lc.lessons_transitions(repo, mem, [], None)[0] == {"line": 7, "before": "closed", "after": "closed",
+                                                              "defect_kinds": ()}
 
 
 def test_report_proposed_changes_section_pins_every_count(world, tmp_path):
@@ -516,3 +517,97 @@ def test_for_nick_counts_low_and_relative_separately(world, tmp_path):
     world[2]["reopen_at"].write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
     text, _ = _report(world, tmp_path)
     assert "3 distinct rows (2 low confidence, 1 relative, 0 both)" in text
+
+
+# ---------------------------------------------------------------- Codex B7 r1 F1-F7
+
+def test_F1_a_file_changed_during_the_scan_refuses(world, monkeypatch):
+    mem, repo, inputs = world
+    expected = _digest(world)
+    real = lc.file_sha
+    state = {"done": False}
+
+    def racing(path):
+        if Path(path).name == "feedback_beta.md" and not state["done"]:
+            state["done"] = True
+            (mem / "feedback_alpha.md").write_text("changed mid-scan\n", encoding="utf-8")
+            return real(path)
+        return real(path)
+
+    # The first pass hashed alpha before beta; alpha then changes. A single pass would
+    # still report the old digest.
+    (mem / "feedback_alpha.md").write_bytes((mem / "feedback_alpha.md").read_bytes())
+    monkeypatch.setattr(lc, "file_sha", racing)
+    ok, info = lc.verify(mem, repo, inputs, expected)
+    assert ok is False and info["moved_during_scan"] is True
+    assert info["changed"] == ["memory/feedback_alpha.md"]
+
+
+def test_F2_before_uses_todays_reader_alone(world):
+    mem, repo, _ = world
+    (repo / "memory/lessons.md").write_text(
+        LESSONS + "| p | r | 2 | Yes - x | 2026-01-01 | extra |\n| a | b | c |\n", encoding="utf-8")
+    rows = lc.lessons_transitions(repo, mem, [], None)
+    assert rows[2]["before"] == "closed" and rows[2]["after"] == "defect: row"
+    assert rows[3]["before"] == "not read (fewer than 5 cells)"
+
+
+def test_F3_every_repair_for_one_file_is_applied_in_order(world, tmp_path):
+    mem, repo, _ = world
+    bad = RULE.format(name="b", occ=3, promoted="no", gate="x").replace(
+        "description: d", "description: a: b").replace("  type: feedback", "  type: f: g")
+    (mem / "feedback_bad.md").write_text(bad, encoding="utf-8")
+    sha = lc.file_sha(mem / "feedback_bad.md")
+    md = tmp_path / "props" / "fm.md"
+    sec = ("## {n}. `feedback_bad.md`\n\n- sha256 of the current file: `" + sha + "`\n\n"
+           "Current line:\n\n```yaml\n{old}\n```\n\nProposed line:\n\n```yaml\n{new}\n```\n\n")
+    md.write_text(sec.format(n=1, old="description: a: b", new="description: 'a: b'")
+                  + sec.format(n=2, old="  type: f: g", new="  type: 'f: g'"), encoding="utf-8")
+    repairs = lc.load_frontmatter_repairs(md, mem)
+    assert len(repairs) == 2
+    row = next(r for r in lc.memory_transitions(mem, repo, [], repairs) if r["file"] == "feedback_bad.md")
+    assert row["unapplied"] == 0 and row["after"] == "no_number"
+
+
+def test_F4_report_refuses_to_write_into_the_corpus(world, capsys):
+    mem, repo, inputs = world
+    common = ["--memory-dir", str(mem), "--repo-root", str(repo), "--no-default-inputs"]
+    before = (repo / "memory/lessons.md").read_bytes()
+    assert lc.main(["report", *common, "--out", str(repo / "memory/lessons.md")]) == 2
+    assert lc.main(["report", *common, "--out", str(mem / "feedback_alpha.md")]) == 2
+    assert (repo / "memory/lessons.md").read_bytes() == before
+    assert "refused" in capsys.readouterr().out
+
+
+def test_F5_a_section_that_does_not_parse_is_an_error(world, tmp_path):
+    mem, repo, _ = world
+    md = tmp_path / "props" / "fm.md"
+    md.write_text("## 1. `feedback_alpha.md`\n\nno sha, no fences\n\n## 2. `feedback_beta.md`\n\n"
+                  "- sha256 of the current file: `" + "0" * 64 + "`\n\nCurrent line:\n\n```yaml\na\n```"
+                  "\n\nProposed line:\n\n```yaml\nb\n```\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="does not parse"):
+        lc.load_frontmatter_repairs(md, mem)
+    les = _lessons_props(tmp_path, "0" * 64, "a", "b", 7)
+    les.write_text(les.read_text(encoding="utf-8") + "\n## L8\n\nbroken\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="does not parse"):
+        lc.load_lessons_repairs(les, repo)
+
+
+def test_F6_a_lessons_repair_whose_line_differs_does_not_apply_and_is_reported(world, tmp_path):
+    mem, repo, inputs = world
+    inputs["lessons"] = _lessons_props(tmp_path, lc.file_sha(repo / "memory/lessons.md"),
+                                       "| not | the | row | No | 2026-01-01 |", "| x | y | 1 | No | 2026-01-01 |", 7)
+    repairs, _ = lc.load_lessons_repairs(inputs["lessons"], repo)
+    assert repairs[0]["applies"] is False
+    assert lc.lessons_transitions(repo, mem, repairs, False)[0]["after"] == "open/due"
+    text, _ = _report(world, tmp_path)
+    assert "DOES NOT APPLY (the named line is not the old text): 1 (L7)" in text
+
+
+def test_F7_only_promoted_defects_count_as_unknown_tokens(world, tmp_path):
+    _, repo, _ = world
+    (repo / "memory/lessons.md").write_text(
+        LESSONS.replace("| p2 | r2 | 1 | Superseded | 2026-01-02 |", "| p2 | r2 | 1 | No | not-a-date |"),
+        encoding="utf-8")
+    text, _ = _report(world, tmp_path)
+    assert "pointer token without a pointer: defect, stays open | 0 |" in text
