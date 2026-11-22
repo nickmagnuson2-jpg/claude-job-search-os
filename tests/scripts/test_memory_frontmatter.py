@@ -610,3 +610,16 @@ def test_record_fire_refuses_a_file_changed_after_the_caller_hashed_it(tmp_path,
         mf.record_fire(p, "2026-11-22 a fire", expect_sha256=seen)
     assert p.read_text(encoding="utf-8") == changed
     assert mf.record_fire(p, "2026-11-22 a fire", expect_sha256=_sha(p)) == 4
+
+
+def test_crlf_file_reads_as_before_through_the_checked_read(tmp_path, monkeypatch):
+    # Codex r3 (3324fd6b) F1: the byte read dropped read_text's newline translation, so a
+    # CRLF file became no_frontmatter for write() and record_fire().
+    monkeypatch.setenv("CLAUDECODE", "1")
+    p = tmp_path / "feedback_crlf.md"
+    p.write_bytes(RULE.replace("\n", "\r\n").encode("utf-8"))
+    mf.write(p, {"reopen_at": 3})
+    assert mf.read_file(p)[0]["reopen_at"] == 3
+    p.write_bytes(RULE.replace("\n", "\r\n").encode("utf-8"))
+    sha = __import__("hashlib").sha256(p.read_bytes()).hexdigest()
+    assert mf.record_fire(p, "2026-11-22 a fire", expect_sha256=sha) == 4

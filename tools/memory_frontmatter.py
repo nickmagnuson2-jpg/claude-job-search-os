@@ -179,7 +179,7 @@ def check_text(new_text: str, old_text: str | None = None, *, memory_dir: Path |
     return _validate(fields, keys, memory_dir, repo_root, skills_home)
 
 
-def _read_checked(path: Path, expect_sha256: str | None) -> str:
+def _read_checked(path: Path, expect_sha256: str | None, *, translate_newlines: bool = True) -> str:
     """The file's text, refusing when expect_sha256 is given and the bytes read now differ:
     a change that lands between the caller's hash and this read (a hook stamping
     last_cited, another session) must not be overwritten and reported applied (77's Codex
@@ -190,7 +190,10 @@ def _read_checked(path: Path, expect_sha256: str | None) -> str:
         if actual != expect_sha256:
             raise WriteRefused([f"{Path(path).name} has sha256 {actual}; the caller expects "
                                 f"{expect_sha256}, so the file changed since it was read"])
-    return data.decode("utf-8")
+    text = data.decode("utf-8")
+    # write() and record_fire() read with read_text() before the check existed, which turns
+    # CRLF and CR into LF; keep that (Codex learning-repair r3 F1). repair() is byte-exact.
+    return text.replace("\r\n", "\n").replace("\r", "\n") if translate_newlines else text
 
 
 def _validate(fields, keys, memory_dir, repo_root, skills_home) -> list[str]:
@@ -374,7 +377,7 @@ def repair(path: Path, *, expect_sha256: str, new_block: str, intended: dict,
     path = Path(path)
     if not expect_sha256:
         raise WriteRefused(["repair needs the proposal's sha256; it is never optional here"])
-    text = _read_checked(path, expect_sha256)  # a symlink is refused by _atomic_write
+    text = _read_checked(path, expect_sha256, translate_newlines=False)  # symlinks: _atomic_write
     m = _BLOCK.match(text)
     if not m or m.group(1) is None:
         raise WriteRefused(["frontmatter: the file has no ---/--- block to repair"])
