@@ -29,8 +29,9 @@ Subcommands (Section 2 only, the "| Pattern | Rule | Occurrences | Promoted | Da
       unless: CLAUDECODE=1 (a tripwire for sessions, as in memory_write); the file's
       sha256 is --expect-sha; line N is in the Section 2 table and equals --old byte for
       byte; --new passes the row validator; and the TEXT IS PRESERVED: --old and --new are
-      identical once every "|" and all whitespace are removed. So it may move text across
-      cell boundaries and never reword.
+      identical once every "|" becomes a space and each run of whitespace becomes one
+      space. So it may move text across cell boundaries, and never reword or join words
+      (Codex confirmation F3: removing ALL whitespace let "a b" become "ab").
 
 Cells may not contain "|" or a newline: either would break the table, and the reader
 would then see the wrong cell count.
@@ -45,7 +46,6 @@ import argparse
 import hashlib
 import json
 import os
-import re
 import stat
 import sys
 import tempfile
@@ -190,7 +190,9 @@ def append_row(path: Path, cells: list[str]) -> dict:
     return {"action": "append-row", "line": first + 1}
 
 
-_NOT_TEXT = re.compile(r"[|\s]")
+def row_text(row: str) -> str:
+    """The row's words in order: pipes count as word boundaries, whitespace runs as one."""
+    return " ".join(row.replace("|", " ").split())
 
 
 def repair_row(path: Path, line: int, expect_sha: str, old: str, new: str) -> dict:
@@ -205,7 +207,7 @@ def repair_row(path: Path, line: int, expect_sha: str, old: str, new: str) -> di
         raise Refused([f"line {line} is not a Section 2 row (rows are lines {first + 1}-{end})"])
     if lines[line - 1] != old:
         raise Refused([f"line {line} does not equal --old byte for byte"])
-    if _NOT_TEXT.sub("", old) != _NOT_TEXT.sub("", new):
+    if row_text(old) != row_text(new):
         reasons.append("--new changes the row's text; repair-row may only move cell "
                        "boundaries and whitespace")
     cells, defect = ls.parse_lessons_row(new)

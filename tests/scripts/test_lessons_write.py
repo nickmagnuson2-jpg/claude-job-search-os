@@ -299,6 +299,8 @@ def test_repair_row_moves_text_across_a_cell_boundary(broken):
 @pytest.mark.parametrize("kw,needle", [
     ({"new": FIXED.replace("Invented rule delta", "Invented rule DELTA")}, "changes the row's text"),
     ({"new": FIXED.replace("Invented pattern delta", "Invented pattern deltas")}, "changes the row's text"),
+    ({"new": FIXED.replace("Invented pattern delta", "Inventedpattern delta")}, "changes the row's text"),
+    ({"new": FIXED.replace("2nd: 2026-10-13", "2nd:2026-10-13")}, "changes the row's text"),
     ({"sha": "0" * 64}, "file changed: sha256 is"),
     ({"old": BROKEN + " "}, "does not equal --old byte for byte"),
     ({"line": 3}, "is not a Section 2 row"),
@@ -375,3 +377,9 @@ def test_set_promoted_without_expect_sha_still_writes(lessons):
     code, out, _ = run(["set-promoted", "Invented pattern alpha", "Yes"], lessons)
     assert code == 0
     assert "sha256_before" in out
+
+
+def test_repair_row_allows_whitespace_changes_at_cell_edges(broken):
+    new = FIXED.replace("| Invented rule delta |", "|  Invented rule delta   |")
+    code, out, p = repair(broken, new=new)
+    assert code == 0, p.stdout + p.stderr
