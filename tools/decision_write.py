@@ -584,9 +584,16 @@ def lean_fields(p: dict, a, labels: list) -> dict:
         rel = Path(rm.group(1)) if rm else None
         if not rm or rel.is_absolute() or ".." in rel.parts:
             raise Refusal("bad_rests_on", f"--rests-on is '<repo-relative path>:<line>', got {cite!r}")
-        f = p["main"] / rel
+        main = p["main"].resolve()
+        f = (main / rel).resolve()                 # follows symlinks: the TARGET must be inside
+        if not f.is_relative_to(main):
+            raise Refusal("bad_rests_on", f"{cite}: resolves outside the main checkout")
         n = int(rm.group(2))
-        if not f.is_file() or len(f.read_text(encoding="utf-8").splitlines()) < n:
+        try:
+            lines = f.read_text(encoding="utf-8").splitlines() if f.is_file() else []
+        except UnicodeDecodeError:
+            raise Refusal("rests_on_unreadable", f"{cite}: not a UTF-8 text file") from None
+        if len(lines) < n:
             raise Refusal("rests_on_missing", f"{cite}: no such line in the main checkout")
         rests.append(cite)
     by_date = None
@@ -672,6 +679,10 @@ def cmd_resolve(p: dict, a) -> dict:
             raise Refusal("already_resolved", f"{a.id} is already resolved")
         if question_hash(q) != q["question_hash"]:
             raise Refusal("question_changed", f"{a.id} was edited after it was asked")
+        if record_hash(q) != q.get("record_hash"):
+            # The lean_shown stamp is copied onto the resolved event below; copying a hand-edited
+            # one would seal a false blind stamp for R1 (Codex r1 F1, Build M).
+            raise Refusal("question_record_edited", f"{a.id}'s asked event was edited outside the tool")
         ruling = find_ruling(p, q)
         pred = find_prediction(p, q)
         if ruling["option"] != pred["option"]:

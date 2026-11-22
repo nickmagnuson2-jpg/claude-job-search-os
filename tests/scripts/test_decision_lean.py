@@ -255,3 +255,45 @@ def test_the_r1_stamp_is_bound_by_the_record_hash(main, capsys):
     qs.write_text(json.dumps(e) + "\n", encoding="utf-8")
     code, data, _ = run(main, capsys, "check")
     assert any("edited outside the tool" in x for x in data["problems"])
+
+
+# --- Codex r1 (Build M) ------------------------------------------------------------------------
+
+def test_resolve_refuses_an_asked_event_edited_outside_the_tool(main, capsys):
+    """F1: copying a hand-edited lean_shown onto a freshly sealed resolved event would launder it."""
+    add(main, capsys)
+    qs = main / "data" / "run-manifest" / "questions.jsonl"
+    e = json.loads(qs.read_text(encoding="utf-8").splitlines()[0])
+    e["lean_shown"] = False                         # record_hash left stale
+    qs.write_text(json.dumps(e) + "\n", encoding="utf-8")
+    p = main / "data" / "workstreams" / "alpha-work.md"
+    p.write_text(p.read_text(encoding="utf-8")
+                 + "\nRULING Q1 | option: a | reason: fine | window: aa\n", encoding="utf-8")
+    code, data, _ = run(main, capsys, "resolve", "Q1", "--same-reason")
+    assert code != 0 and data["code"] == "question_record_edited"
+    assert not [x for x in events(main) if x["type"] == "resolved"]
+
+
+def test_rests_on_refuses_a_symlink_out_of_the_main_checkout(main, capsys, tmp_path):
+    """F2: a repo-relative symlink must not cite a file outside the checkout."""
+    outside = tmp_path / "outside.md"
+    outside.write_text("one\n", encoding="utf-8")
+    (main / "data" / "link.md").symlink_to(outside)
+    lean = _without("--rests-on") + ["--rests-on", "data/link.md:1"]
+    code, data, _ = add(main, capsys, lean=lean)
+    assert code != 0 and data["code"] == "bad_rests_on"
+
+
+def test_rests_on_accepts_a_symlink_that_stays_inside(main, capsys):
+    (main / "data" / "alias.md").symlink_to(main / "data" / "facts.md")
+    lean = _without("--rests-on") + ["--rests-on", "data/alias.md:2"]
+    code, _, _ = add(main, capsys, lean=lean)
+    assert code == 0
+
+
+def test_a_non_utf8_citation_is_a_structured_refusal(main, capsys):
+    """F4: a traceback is not a refusal."""
+    (main / "data" / "binary.md").write_bytes(b"\xff\xfe\x00bad\n")
+    lean = _without("--rests-on") + ["--rests-on", "data/binary.md:1"]
+    code, data, _ = add(main, capsys, lean=lean)
+    assert code != 0 and data["code"] == "rests_on_unreadable"

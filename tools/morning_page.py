@@ -194,7 +194,9 @@ def decisions_waiting(root: Path) -> dict:
     on the page, never shown as an empty queue."""
     try:
         qs, board = decision_write.listing(decision_write.paths(decision_write.resolve_main(root)))
-    except (decision_write.Refusal, OSError, ValueError) as e:
+    # KeyError/TypeError/AttributeError: a queue line that is valid JSON but not a valid event
+    # (Codex r1 F3). The launchd job must still write the page and say the source failed.
+    except (decision_write.Refusal, OSError, ValueError, KeyError, TypeError, AttributeError) as e:
         return {"error": f"{type(e).__name__}: {e}", "board": None, "open": None}
     return {"error": None, "board": board, "open": qs}
 

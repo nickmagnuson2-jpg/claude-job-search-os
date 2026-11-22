@@ -219,3 +219,27 @@ def test_a_group_exactly_at_the_cap_has_no_more_line():
     qs = [_q(i, group="policy") for i in range(mp.MAX_ITEMS)]
     sec = _section(_page({"error": None, "board": "ok", "open": qs}), "decisions")
     assert sec.count("<li") == mp.MAX_ITEMS and "more:" not in sec
+
+
+@pytest.mark.parametrize("exc", [KeyError("id"), TypeError("bad row"), AttributeError("x")])
+def test_a_schema_damaged_queue_is_stated_not_a_crash(monkeypatch, tmp_path, exc):
+    """Codex r1 F3: {"type": "asked"} raises KeyError in listing(); the launchd job must still
+    write the page, saying the source is unavailable."""
+    def bad(p):
+        raise exc
+
+    monkeypatch.setattr(mp.decision_write, "resolve_main", lambda root: tmp_path)
+    monkeypatch.setattr(mp.decision_write, "listing", bad)
+    out = mp.decisions_waiting(tmp_path)
+    assert out["open"] is None and type(exc).__name__ in out["error"]
+
+
+def test_a_real_malformed_asked_event_is_stated(tmp_path):
+    """The same, through the real listing on a scratch main checkout."""
+    root = tmp_path / "main"
+    (root / ".git").mkdir(parents=True)
+    rm = root / "data" / "run-manifest"
+    rm.mkdir(parents=True)
+    (rm / "questions.jsonl").write_text('{"type": "asked"}\n', encoding="utf-8")
+    out = mp.decisions_waiting(root)
+    assert out["open"] is None and out["error"]
