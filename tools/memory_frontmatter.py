@@ -439,12 +439,21 @@ def _absorbed_keys(old_block: str, keys: set) -> list[str]:
 
 
 def _dropped_comments(old_block: str, new_block: str, body_note: str | None) -> list[str]:
-    """A YAML comment on a line the repair removes must appear verbatim in body_note."""
+    """A YAML comment on a line the repair removes must travel verbatim in body_note."""
     kept = set(new_block.split("\n"))
     lines = old_block.split("\n")
-    return [f"old line {ln + 1}: its YAML comment {text!r} would be dropped; carry it in body_note"
+    note = body_note or ""
+    return [f"old line {ln + 1}: its YAML comment {text!r} would be dropped; carry it in "
+            f"body_note after a colon, at the end or before a ';'"
             for ln, text in _old_comments(old_block).items()
-            if lines[ln] not in kept and text and text not in (body_note or "")]
+            if lines[ln] not in kept and text and not _carries(note, text)]
+
+
+def _carries(note: str, text: str) -> bool:
+    """The note carries a comment only as ': <text>' ending the note or followed by ';'. A
+    bare substring test let "no" or "2026" be satisfied by the note's own dated
+    boilerplate (Grok learning-repair r1 F1)."""
+    return re.search(r":\s*" + re.escape(text) + r"\s*(?:;|$)", note) is not None
 
 
 def _old_comments(block: str) -> dict[int, str]:

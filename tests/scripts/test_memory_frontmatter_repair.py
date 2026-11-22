@@ -315,3 +315,30 @@ def test_a_hash_inside_a_quoted_value_of_a_readable_block_needs_no_note(tmp_path
     p = _file(tmp_path, old)
     mf.repair(p, expect_sha256=_sha(p), new_block=new,
               intended={"promoted": "superseded by ruling 2026-11-22 (earlier value: n/a -- see PR #61)"})
+
+
+# ------------------------------------------------------------------ Grok r1 on learning-repair-1122
+
+@pytest.mark.parametrize("comment", ["no", "2026", "note"])
+def test_a_short_comment_is_not_carried_by_the_note_boilerplate(tmp_path, comment):
+    # F1: "carried" was a substring test, so "no" or "2026" matched the dated boilerplate.
+    old = f'name: x\nmetadata:\n  promoted: "no"  # {comment}\n'
+    new = "name: x\nmetadata:\n  promoted: 'no'\n"
+    p = _file(tmp_path, old)
+    before = p.read_bytes()
+    with pytest.raises(mf.WriteRefused) as e:
+        mf.repair(p, expect_sha256=_sha(p), new_block=new, intended={"promoted": "no"},
+                  body_note="> 2026-11-22 note: moved the comment on the promoted line")
+    assert "comment" in str(e.value)
+    assert p.read_bytes() == before
+    mf.repair(p, expect_sha256=_sha(p), new_block=new, intended={"promoted": "no"},
+              body_note=f"> 2026-11-22 note: moved from the comment on promoted: {comment}")
+
+
+def test_several_comments_travel_separated_by_semicolons(tmp_path):
+    old = 'name: x\nmetadata:\n  promoted: "no"  # first\n  exit_path: exit1  # second\n'
+    new = "name: x\nmetadata:\n  promoted: 'no'\n  exit_path: exit1\n"
+    p = _file(tmp_path, old)
+    mf.repair(p, expect_sha256=_sha(p), new_block=new,
+              intended={"promoted": "no", "exit_path": "exit1"},
+              body_note="> 2026-11-22 note: moved comments: first; moved: second")
