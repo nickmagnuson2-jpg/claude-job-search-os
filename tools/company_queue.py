@@ -68,9 +68,7 @@ def _empty() -> dict:
 
 
 def _load_text(text: str) -> dict:
-    if not text.strip():
-        return _empty()
-    data = json.loads(text)
+    data = json.loads(text) if text.strip() else _empty()
     if not isinstance(data, dict):
         raise ValueError("company queue top level is not an object")
     data.setdefault("pending", [])
@@ -78,6 +76,8 @@ def _load_text(text: str) -> dict:
     for k in ("pending", "decided"):
         if not isinstance(data[k], list):
             raise ValueError(f"company queue {k!r} is not a list")
+    if not isinstance(data.setdefault("scan_boards", {}), dict):
+        raise ValueError("company queue 'scan_boards' is not an object")
     return data
 
 
@@ -177,40 +177,178 @@ def read(repo_root: Path, top: int = 4) -> dict:
             "empty_boards": _empty_boards(data)}
 
 
+def _live_flag(flag) -> bool:
+    """An empty-board flag Nick has not cleared and whose board has not filled again."""
+    return (isinstance(flag, dict) and not flag.get("acked_on")
+            and not flag.get("recovered_on") and not flag.get("retired_on"))
+
+
 def _empty_boards(data: dict) -> list[dict]:
-    """Accepted companies whose board had 0 postings and that Nick has not cleared."""
+    """Boards with 0 postings that Nick has not cleared: accepted with an empty board
+    (source accept), or a scan target whose board the nightly scan found empty (source
+    scan, empty-board-drop-1121)."""
     out = []
     for e in data["decided"]:
         flag = e.get("empty_board") if isinstance(e, dict) else None
-        if isinstance(flag, dict) and not flag.get("acked_on"):
+        if _live_flag(flag):
             board = e.get("board") if isinstance(e.get("board"), dict) else {}
             out.append({"name": e.get("name"), "ats": board.get("ats"),
-                        "slug": board.get("slug"), "detected_on": flag.get("detected_on")})
+                        "slug": board.get("slug"), "detected_on": flag.get("detected_on"),
+                        "source": "accept"})
+    for rec in data.get("scan_boards", {}).values():
+        if isinstance(rec, dict) and _live_flag(rec.get("empty_board")):
+            out.append({"name": rec.get("name"), "ats": rec.get("ats"), "slug": rec.get("slug"),
+                        "detected_on": rec["empty_board"].get("detected_on"),
+                        "source": "scan", "after": rec["empty_board"].get("after")})
     return out
 
 
-def ack_empty(repo_root: Path, name: str) -> dict:
-    """Nick has seen an empty-board flag: stop naming it in read. Writes nothing else."""
+def ack_empty(repo_root: Path, name: str, board: str | None = None) -> dict:
+    """Nick has seen an empty-board flag: stop naming it in read. Writes nothing else.
+
+    Every live flag under `name` is a candidate, accept-time and scan-time alike. `board`
+    ("ats:slug") picks one. A bare name that matches more than one is refused and nothing
+    is written: clearing them all would hide a board the scan will not flag again while
+    it stays empty (Grok r1 F2, Codex r2 F1)."""
     found: dict = {}
+
+    def bid(b) -> str | None:
+        return f"{b.get('ats')}:{b.get('slug')}" if isinstance(b, dict) else None
 
     def transform(text: str) -> str:
         d = _load_text(text)
         found.clear()
+        cands = []  # (board id, the flag dict to ack, display name)
         for e in d["decided"]:
             flag = e.get("empty_board") if isinstance(e, dict) else None
-            if (isinstance(flag, dict) and not flag.get("acked_on")
-                    and exact_company(name, e.get("name", ""))):
-                flag["acked_on"] = str(datetime.now().date())
-                found["name"] = e.get("name")
-        return _dump(d) if found else text  # nothing to clear: leave the file as it was
+            if _live_flag(flag) and exact_company(name, e.get("name", "")):
+                cands.append((bid(e.get("board")), flag, e.get("name")))
+        for r in d["scan_boards"].values():
+            if (isinstance(r, dict) and _live_flag(r.get("empty_board"))
+                    and exact_company(name, r.get("name", ""))):
+                cands.append((bid(r), r["empty_board"], r.get("name")))
+        if board is not None:
+            # The /standup line prints ats/slug; ats:slug is accepted too (Grok r2 F1).
+            want_board = board.replace("/", ":", 1)
+            cands = [c for c in cands if c[0] == want_board]
+        elif len(cands) > 1:
+            found["ambiguous"] = sorted(str(c[0]) for c in cands)
+            return text
+        for _, flag, nm in cands:
+            flag["acked_on"] = str(datetime.now().date())
+            found["name"] = nm
+        return _dump(d) if found.get("name") else text  # nothing to clear: file unchanged
 
     if not queue_path(repo_root).is_file():
         return {"status": "error", "code": "not_flagged", "message": "no queue file"}
     inbox_lock.atomic_update(queue_path(repo_root), transform)
-    if not found:
+    if found.get("ambiguous"):
+        return {"status": "error", "code": "ambiguous", "boards": found["ambiguous"],
+                "message": f"{name!r} names {len(found['ambiguous'])} empty boards; nothing "
+                           "cleared. Pass --board ats:slug for the one Nick has seen"}
+    if not found.get("name"):
         return {"status": "error", "code": "not_flagged",
-                "message": f"no unacknowledged empty-board flag for {name!r}"}
+                "message": f"no unacknowledged empty-board flag for {name!r}"
+                           + (f" on board {board}" if board else "")}
     return {"status": "ok", "name": found["name"]}
+
+
+# --- scan-time empty boards (empty-board-drop-1121, Nick 2026-11-21 "4, sure") -----------
+def board_key(ats, slug) -> str:
+    """The identity of one scan target's board: never the display name, which two
+    targets can share and a rename changes (Codex r1 F1/F2, empty-board-drop-1121)."""
+    return f"board:{ats}:{slug}"
+
+
+def record_board_counts(repo_root: Path, counts: list[dict], today: str,
+                        current: set | None = None, observed_at: str | None = None) -> dict:
+    """Record the nightly scan's raw posting count per ATS board and flag a board at 0.
+
+    `counts` holds {name, ats, slug, count, observed_at} for every target whose fetch had
+    NO error: a failed fetch is left out by the scanner, so its state never moves (a
+    failure is a fetch failure, never an empty board). State lives in `scan_boards`,
+    keyed by board_key(ats, slug); `name` is the latest display name, for the line.
+    `read` names a live flag until `ack-empty` clears it.
+
+    The transition rule (Nick 2026-11-21, funnel-intake "Empty-board drop-to-0: Nick's
+    two design rulings"): a board at 0 is flagged only when the last scan of it saw
+    postings ("Only after it had postings"). A board that stays at 0 is not flagged
+    again, so an acked flag stays acked until the board fills and empties again. A board
+    with postings marks a live flag `recovered_on`, which clears the line with no ack
+    ("Clear it automatically"); a later drop flags afresh.
+
+    `current` is every board_key the scan targets, including ones whose fetch failed. A
+    record outside it is marked `retired_on` (and so is its live flag), so a removed or
+    re-slugged target is not named forever. A retired board seen again keeps its last
+    count, so it is flagged only if that count was above 0. Omitted, nothing is retired. `observed_at` is the
+    scan's start: retirement skips a record a newer scan observed (Codex r2 F3).
+
+    `observed_at` (the scan's start, ISO UTC) orders observations: one older than the
+    board's recorded observation is skipped, so an overlapping older scan that commits
+    last cannot overwrite a newer count or invent a drop (Codex r1 F3).
+    """
+    out = {"flagged": [], "recovered": [], "retired": [], "ignored": 0, "stale": 0}
+
+    def transform(text: str) -> str:
+        d = _load_text(text)
+        out.update(flagged=[], recovered=[], retired=[], ignored=0, stale=0)
+        boards = d["scan_boards"]
+        for c in counts:
+            n = c.get("count") if isinstance(c, dict) else None
+            if (not isinstance(n, int) or isinstance(n, bool) or n < 0 or not c.get("name")
+                    or not c.get("ats") or not c.get("slug")):
+                out["ignored"] += 1
+                continue
+            key = board_key(c["ats"], c["slug"])
+            prev = boards.get(key) if isinstance(boards.get(key), dict) else None
+            seen_at = c.get("observed_at")
+            if prev and seen_at and prev.get("observed_at") and seen_at < prev["observed_at"]:
+                out["stale"] += 1
+                continue
+            rec = {**(prev or {}), "name": c["name"], "ats": c["ats"], "slug": c["slug"],
+                   "last_count": n, "last_scan": today}
+            rec.pop("retired_on", None)  # targeted and read again
+            if seen_at:
+                rec["observed_at"] = seen_at
+            if n == 0:
+                # Nick 2026-11-21, ruling 1, "Only after it had postings": a 0 is flagged
+                # only when the last scan of this board saw postings. A board never seen
+                # with postings (and so one already flagged empty at accept) never is.
+                if prev is not None and (prev.get("last_count") or 0) > 0:
+                    rec["empty_board"] = {"detected_on": today, "acked_on": None,
+                                          "after": "postings"}
+                    out["flagged"].append(c["name"])
+            else:
+                if _live_flag(rec.get("empty_board")):
+                    rec["empty_board"] = {**rec["empty_board"], "recovered_on": today}
+                    out["recovered"].append(c["name"])
+                # Ruling 2 covers the accept-time line too: postings on that board clear it
+                # (Codex ruling-delta F1), so a later drop shows one line, not two.
+                for e in d["decided"]:
+                    flag = e.get("empty_board") if isinstance(e, dict) else None
+                    b = e.get("board") if isinstance(e, dict) else None
+                    if (_live_flag(flag) and isinstance(b, dict)
+                            and board_key(b.get("ats"), b.get("slug")) == key):
+                        flag["recovered_on"] = today
+                        if c["name"] not in out["recovered"]:
+                            out["recovered"].append(c["name"])
+            boards[key] = rec
+        if current is not None:
+            for key, rec in boards.items():
+                if key in current or not isinstance(rec, dict) or rec.get("retired_on"):
+                    continue
+                if observed_at and rec.get("observed_at") and rec["observed_at"] > observed_at:
+                    continue  # a newer scan observed this board after this scan's snapshot
+                rec["retired_on"] = today
+                if observed_at:
+                    rec["observed_at"] = observed_at
+                if _live_flag(rec.get("empty_board")):
+                    rec["empty_board"] = {**rec["empty_board"], "retired_on": today}
+                    out["retired"].append(rec.get("name"))
+        return _dump(d)
+
+    inbox_lock.atomic_update(queue_path(repo_root), transform)  # creates tools/ if absent
+    return out
 
 
 # --- accept-time board check (decision 1, 2026-11-06) ---------------------------------
@@ -564,6 +702,8 @@ def main(argv=None) -> int:
                    help="also delete the imported Agent-drip blocks from the inbox")
     k = sub.add_parser("ack-empty", help="clear one empty-board flag after Nick has seen it")
     k.add_argument("--name", required=True)
+    k.add_argument("--board", default=None, metavar="ATS/SLUG",
+                   help="the one board to clear when two empty boards share a name, as the /standup line prints it (ats/slug)")
     a = ap.parse_args(argv)
     root = Path(a.repo_root)
     if a.cmd == "read":
@@ -571,7 +711,7 @@ def main(argv=None) -> int:
     elif a.cmd == "decide":
         out = decide(root, a.name, "accept" if a.accept else "reject", a.reason, a.lane, a.dry_run)
     elif a.cmd == "ack-empty":
-        out = ack_empty(root, a.name)
+        out = ack_empty(root, a.name, a.board)
     else:
         out = import_inbox(root, Path(a.inbox) if a.inbox else root / "data" / "inbox.md", a.remove)
     print(json.dumps(out, indent=1, ensure_ascii=False, default=str))

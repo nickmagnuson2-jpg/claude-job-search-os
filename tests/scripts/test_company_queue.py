@@ -230,7 +230,8 @@ def test_a_queue_file_missing_its_lists_still_reads(tmp_path):
     p.parent.mkdir(parents=True)
     p.write_text("{}", encoding="utf-8")
     assert cq.read(tmp_path)["pending_companies"] == 0
-    assert cq.load(tmp_path) == {"pending": [], "decided": []}
+    # scan_boards: the scan-time empty-board state (empty-board-drop-1121).
+    assert cq.load(tmp_path) == {"pending": [], "decided": [], "scan_boards": {}}
 
 
 def test_slug_candidates_try_the_ai_suffix_for_a_bare_name():
@@ -540,7 +541,7 @@ def test_an_empty_board_flag_with_a_corrupt_board_field_still_reads(tmp_path):
         '{"pending": [], "decided": [{"name": "Acme", "empty_board": {}, "board": "bad"}]}',
         encoding="utf-8")
     assert cq.read(tmp_path)["empty_boards"] == [
-        {"name": "Acme", "ats": None, "slug": None, "detected_on": None}]
+        {"name": "Acme", "ats": None, "slug": None, "detected_on": None, "source": "accept"}]
 
 
 # --- non-ASCII names (funnel-intake next item, 2026-11-18; overnight S14 2026-11-21) -----

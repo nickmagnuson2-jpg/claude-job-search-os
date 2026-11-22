@@ -230,8 +230,23 @@ def geo_ok(location: str) -> bool:
     return location_band(location) in ROLE_LOCATION_PASS
 
 
+# The boards whose raw count is a count of postings (empty-board-drop-1121).
+RAW_COUNT_ATS = ("ashby", "greenhouse", "lever")
+
+
+def _takes_raw_counts(fetch) -> bool:
+    """Whether a fetch function accepts raw_counts. A replacement with the older
+    (target, errors, cuts) signature, as in tests, is called without it."""
+    import inspect
+    try:
+        return "raw_counts" in inspect.signature(fetch).parameters
+    except (TypeError, ValueError):
+        return False
+
+
 def fetch_company_roles(target: dict, errors: list | None = None,
-                        cuts: list | None = None) -> list[dict]:
+                        cuts: list | None = None,
+                        raw_counts: dict | None = None) -> list[dict]:
     """Fetch roles for a single company using the appropriate parser.
 
     Dispatches to the correct ATS parser based on target config.
@@ -305,6 +320,13 @@ def fetch_company_roles(target: dict, errors: list | None = None,
             for pe in parser_errors:
                 errors.append({"company": name, "ats": ats,
                                "reason": pe.get("reason", "unspecified parser failure")})
+
+    # The raw posting count, before any title or location cut, for the scan-time empty-
+    # board flag (empty-board-drop-1121). Recorded ONLY for an ATS board whose fetch
+    # reported no failure: a failed fetch is a fetch failure, never an empty board, and a
+    # generic careers page with no parsed links is not a count of postings.
+    if raw_counts is not None and ats in RAW_COUNT_ATS and not parser_errors:
+        raw_counts[f"{ats}:{slug}"] = len(roles)  # keyed by board, never display name
 
     # Override company name with display name from config
     for r in roles:
@@ -405,11 +427,15 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False, today=None) -> dict
     all_roles = []
     errors = []
     cuts = []
+    raw_counts: dict = {}
+    # The scan's start orders its board counts against an overlapping scan (Codex r1 F3).
+    observed_at = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+    extra = {"raw_counts": raw_counts} if _takes_raw_counts(fetch_company_roles) else {}
     for i, target in enumerate(targets):
         name = target.get("name", "?")
         ats = target.get("ats", "?")
         print(f"Scanning {name} ({ats})...", file=sys.stderr)
-        roles = fetch_company_roles(target, errors=errors, cuts=cuts)
+        roles = fetch_company_roles(target, errors=errors, cuts=cuts, **extra)
         if roles:
             all_roles.extend(roles)
             print(f"  Found {len(roles)} matching roles", file=sys.stderr)
@@ -482,6 +508,8 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False, today=None) -> dict
         "goals_stale": stale,
         "target_drift": drift,
         "roles": new_roles,
+        "empty_boards_flagged": [],
+        "empty_board_error": None,
     }
 
     # ORDER IS LOAD-BEARING: queue first, seen-set second. A crash between them then
@@ -498,6 +526,8 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False, today=None) -> dict
             _write_role_queue_locked(repo_root, truly_new, standing, errors, cuts, repeats,
                                      drift=drift)
             save_seen(repo_root, seen)
+        if extra:  # a fetch that cannot report raw counts observed nothing to record
+            _flag_empty_boards(repo_root, targets, raw_counts, today, summary, observed_at)
 
     # NO LONGER WRITES data/inbox.md (2026-09-02). That file is 7,000+ lines, is under
     # a standing do-not-route-here instruction, and nothing has ever read the 56
@@ -506,6 +536,36 @@ def scan_all_targets(repo_root: Path, dry_run: bool = False, today=None) -> dict
     # future caller may want the human-readable rendering.
 
     return summary
+
+
+def _flag_empty_boards(repo_root: Path, targets: list[dict], raw_counts: dict, today,
+                       summary: dict, observed_at: str) -> None:
+    """Hand the scan's raw posting counts to the company queue, which flags a board at 0
+    (Nick 2026-11-21, "4, sure"; company_queue.record_board_counts holds the rule).
+
+    After the role queue is written, and a failure here never fails the scan: the roles
+    are already safe, and the error is reported in the summary instead of swallowed."""
+    def bid(t):
+        return f"{t.get('ats')}:{t.get('slug')}"
+    counts = [{"name": t.get("name"), "ats": t.get("ats"), "slug": t.get("slug"),
+               "count": raw_counts[bid(t)], "observed_at": observed_at}
+              for t in targets if bid(t) in raw_counts]
+    try:
+        from tools import company_queue
+        # Every board this scan targets, fetched or failed: a flag on a board outside it
+        # is retired, and a failed fetch keeps its board's flag (Codex r1 F2). Computed
+        # before the early return, so a night with no successful count still retires
+        # (Grok r1 F1).
+        current = {company_queue.board_key(t.get("ats"), t.get("slug")) for t in targets
+                   if t.get("ats") in RAW_COUNT_ATS and t.get("slug")}
+        if not counts and not current:
+            return
+        out = company_queue.record_board_counts(repo_root, counts, str(today),
+                                                current=current, observed_at=observed_at)
+        summary["empty_boards_flagged"] = out["flagged"]
+    except Exception as e:  # noqa: BLE001 -- reported, never fatal to the scan
+        summary["empty_board_error"] = f"{type(e).__name__}: {e}"
+        print(f"  WARNING: empty-board flags not recorded ({e})", file=sys.stderr)
 
 
 def format_inbox_entry(roles: list[dict]) -> str:
