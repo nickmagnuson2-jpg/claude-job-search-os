@@ -137,3 +137,82 @@ def test_role_queue_read_on_an_old_queue_reports_zero_cuts(tmp_path):
     scanner.write_queue_payload(tmp_path, payload)
     out = rq.read_queue(tmp_path)
     assert out["cut_at_fetch_count"] == 0 and out["cut_at_fetch_by_reason"] == {}
+
+
+# A corrupt cut list is reported as unreadable, never as a smaller count (same class as
+# title_cut_ruling's parked P1; Codex residual note on title-cut-guard-1121, 2026-11-21).
+
+_GOOD_CUT = {"company": "A", "title": "T1", "location": "", "url": "", "rule": "title_filter",
+             "reason": "engineer title"}
+
+
+def _read_with(tmp_path, **override):
+    import tools.role_queue_read as rq
+    payload = scanner._queue_payload([], [], [], [], [_GOOD_CUT])
+    payload.update(override)
+    scanner.write_queue_payload(tmp_path, payload)
+    return rq.read_queue(tmp_path)
+
+
+def test_role_queue_read_reports_no_cut_error_on_a_sound_queue(tmp_path):
+    out = _read_with(tmp_path)
+    assert out["cut_at_fetch_error"] is None and out["cut_at_fetch_count"] == 1
+
+
+@pytest.mark.parametrize("bad", ["junk", None, 3, ["x"]])
+def test_role_queue_read_a_non_object_cut_is_an_error_not_a_lower_count(tmp_path, bad):
+    out = _read_with(tmp_path, cut_at_fetch=[_GOOD_CUT, bad], cut_at_fetch_count=2)
+    assert out["cut_at_fetch_count"] is None and out["cut_at_fetch_by_reason"] is None
+    assert "1 of 2 cut_at_fetch entries are not an object" in out["cut_at_fetch_error"]
+
+
+@pytest.mark.parametrize("bad", [{"a": 1}, "x", None, 5])
+def test_role_queue_read_a_cut_list_that_is_not_a_list_is_an_error(tmp_path, bad):
+    out = _read_with(tmp_path, cut_at_fetch=bad)
+    assert out["cut_at_fetch_count"] is None
+    assert "cut_at_fetch is not a list" in out["cut_at_fetch_error"]
+
+
+@pytest.mark.parametrize("count", [0, 2, "1", True, None])
+def test_role_queue_read_a_count_that_disagrees_is_an_error(tmp_path, count):
+    out = _read_with(tmp_path, cut_at_fetch_count=count)
+    assert out["cut_at_fetch_count"] is None and out["cut_at_fetch_by_reason"] is None
+    assert "cut_at_fetch_count" in out["cut_at_fetch_error"]
+
+
+def test_role_queue_read_an_old_queue_has_no_cut_error(tmp_path):
+    import tools.role_queue_read as rq
+    payload = scanner._queue_payload([], [], [], [])
+    del payload["cut_at_fetch_count"], payload["cut_at_fetch"]
+    scanner.write_queue_payload(tmp_path, payload)
+    assert rq.read_queue(tmp_path)["cut_at_fetch_error"] is None
+
+
+@pytest.mark.parametrize("override", [
+    {}, {"cut_at_fetch": [_GOOD_CUT, "junk"], "cut_at_fetch_count": 2},
+    {"cut_at_fetch_count": 0}, {"cut_at_fetch_count": "1"}, {"cut_at_fetch_count": False},
+    {"cut_at_fetch": {"a": 1}}, {"cut_at_fetch": None},
+])
+def test_both_cut_readers_agree_on_whether_the_list_is_corrupt(tmp_path, override):
+    # One check, two readers (title_cut_ruling for the page, role_queue_read for /standup):
+    # they must never disagree on whether a queue's cut list is usable.
+    from tools import title_cut_ruling as tcr
+    out = _read_with(tmp_path, **override)
+    loaded = tcr.load_cuts(tmp_path)
+    assert (out["cut_at_fetch_error"] is None) == (loaded["error"] is None)
+    if loaded["error"]:
+        assert out["cut_at_fetch_error"] in loaded["error"]
+
+
+def test_both_cut_readers_call_the_one_shared_check(tmp_path, monkeypatch):
+    import tools.role_queue_read as rq
+    from tools import title_cut_ruling as tcr
+    monkeypatch.setattr(rq, "cut_list_problem", lambda p: "sentinel")
+    monkeypatch.setattr(tcr, "cut_list_problem", lambda p: "sentinel")
+    out = _read_with(tmp_path)
+    assert out["cut_at_fetch_error"] == "sentinel"
+    assert tcr.load_cuts(tmp_path)["error"] == "corrupt role queue: sentinel"
+    # A non-list too: neither reader may answer it before the shared check runs.
+    out = _read_with(tmp_path, cut_at_fetch={"a": 1})
+    assert out["cut_at_fetch_error"] == "sentinel"
+    assert tcr.load_cuts(tmp_path)["error"] == "corrupt role queue: sentinel"

@@ -759,6 +759,29 @@ def _write_role_queue_locked(repo_root: Path, new_roles: list[dict],
         pending, new_roles, standing, errors, cuts, repeats, drift))
 
 
+def cut_list_problem(payload: dict) -> str | None:
+    """Why the queue's cut_at_fetch list cannot be trusted, or None when it can.
+
+    THE one check for every reader of cut_at_fetch (title_cut_ruling.load_cuts,
+    role_queue_read.read_queue). A corrupt list must read as unavailable, never as a
+    shorter list or a smaller count: silently skipping bad entries is the defect this
+    replaces (parked P1, funnel-page-1118 tip review; fixed 2026-11-21). Call only when
+    the key is present; an absent list is each reader's own policy (old queues).
+    cut_at_fetch_count is checked only when present, for queues written before it."""
+    raw = payload.get("cut_at_fetch")
+    if not isinstance(raw, list):
+        return f"cut_at_fetch is not a list ({type(raw).__name__})"
+    bad = sum(1 for c in raw if not isinstance(c, dict))
+    if bad:
+        return f"{bad} of {len(raw)} cut_at_fetch entries are not an object"
+    if "cut_at_fetch_count" in payload:
+        n = payload["cut_at_fetch_count"]
+        if not isinstance(n, int) or isinstance(n, bool):
+            return f"cut_at_fetch_count is not an integer ({n!r})"
+        if n != len(raw):
+            return f"cut_at_fetch_count is {n} but the list lists {len(raw)}"
+    return None
+
 def _queue_payload(pending: list[dict], new_roles: list[dict],
                    standing: list[dict], errors: list[dict],
                    cuts: list[dict] | None = None,

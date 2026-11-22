@@ -120,7 +120,8 @@ def test_mark_on_a_corrupt_queue_is_exit_2_and_writes_nothing(tmp_path):
     ("{not json", "unreadable role queue"),
     ([1, 2], "no cut_at_fetch list"),
     ({"scanned_at": "x"}, "no cut_at_fetch list"),
-    ({"scanned_at": "x", "cut_at_fetch": {"a": 1}}, "no cut_at_fetch list"),
+    ({"scanned_at": "x", "cut_at_fetch": {"a": 1}}, "corrupt role queue: cut_at_fetch is not a list"),
+    ({"scanned_at": "x", "cut_at_fetch": None}, "corrupt role queue: cut_at_fetch is not a list"),
 ])
 def test_load_cuts_degrades_on_a_bad_queue(tmp_path, payload, needle):
     got = tcr.load_cuts(_root(tmp_path, payload=payload if isinstance(payload, str) else payload))

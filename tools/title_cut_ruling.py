@@ -37,7 +37,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from tools.count_report import report  # noqa: E402
 from tools.career_scanner.dedup import role_key  # noqa: E402
-from tools.career_scanner.scanner import role_queue_path  # noqa: E402
+from tools.career_scanner.scanner import cut_list_problem, role_queue_path  # noqa: E402
 from tools.inbox_lock import file_lock  # noqa: E402
 
 RULINGS_REL = Path("data") / "calibration" / "title-cut-rulings.jsonl"
@@ -65,25 +65,17 @@ def load_cuts(root: Path) -> dict:
                 "scanned_at": None, "cuts": None}
     except (OSError, ValueError) as e:
         return {"error": f"unreadable role queue: {e}", "scanned_at": None, "cuts": None}
-    if not isinstance(payload, dict) or not isinstance(payload.get("cut_at_fetch"), list):
+    # An absent list is this reader's own policy; every present-but-corrupt list, including
+    # one that is not a list at all, goes through the shared check (Codex c2 F1).
+    if not isinstance(payload, dict) or "cut_at_fetch" not in payload:
         return {"error": "role queue has no cut_at_fetch list", "scanned_at": None,
                 "cuts": None}
     raw = payload["cut_at_fetch"]
     # A corrupt queue is an error, never a shorter list: a partial list reads as the whole
-    # scan on the page, and funnel_state would record it as that night's cuts (parked P1
-    # from the funnel-page-1118 tip review, Codex F1 + Grok F2; fixed 2026-11-21).
-    bad = sum(1 for c in raw if not isinstance(c, dict))
-    if bad:
-        return {"error": f"corrupt role queue: {bad} of {len(raw)} cut_at_fetch entries "
-                         "are not an object", "scanned_at": None, "cuts": None}
-    if "cut_at_fetch_count" in payload:  # absent on queues written before the count existed
-        n = payload["cut_at_fetch_count"]
-        if not isinstance(n, int) or isinstance(n, bool):
-            return {"error": "corrupt role queue: cut_at_fetch_count is not an integer "
-                             f"({n!r})", "scanned_at": None, "cuts": None}
-        if n != len(raw):
-            return {"error": f"corrupt role queue: cut_at_fetch_count is {n} but the list "
-                             f"lists {len(raw)}", "scanned_at": None, "cuts": None}
+    # scan on the page, and funnel_state would record it as that night's cuts.
+    problem = cut_list_problem(payload)
+    if problem:
+        return {"error": f"corrupt role queue: {problem}", "scanned_at": None, "cuts": None}
     cuts = []
     for c in raw:
         # A field that is not a string (null, a number) would crash role_key and the

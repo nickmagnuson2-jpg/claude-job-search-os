@@ -28,7 +28,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from tools.career_scanner.scanner import (  # noqa: E402
-    _queue_lock, read_pending, role_queue_path, read_queue_payload,
+    _queue_lock, cut_list_problem, read_pending, role_queue_path, read_queue_payload,
     write_queue_payload, PENDING_WARN_AT)
 from tools.career_scanner.dedup import role_key  # noqa: E402
 
@@ -122,7 +122,10 @@ def read_queue(repo_root: Path, top: int = 5) -> dict:
                                 r.get("published_at") or r.get("first_seen") or ""),
                  reverse=True)
 
-    cuts = [c for c in (payload.get("cut_at_fetch") or []) if isinstance(c, dict)]
+    # A corrupt cut list reads as unavailable (count None), never as a smaller count.
+    # An absent list is an old queue: 0 cuts, no error.
+    cut_error = cut_list_problem(payload) if "cut_at_fetch" in payload else None
+    cuts = None if cut_error else (payload.get("cut_at_fetch") or [])
     return {
         "exists": True,
         "scanned_at": scanned_at,
@@ -140,8 +143,10 @@ def read_queue(repo_root: Path, top: int = 5) -> dict:
         "pending_overflow": bool(payload.get("pending_overflow")),
         # Roles this scan's title filters and location gate dropped at fetch. The full
         # list, each with its reason, is in the queue file (scan-drops-1106).
-        "cut_at_fetch_count": len(cuts),
-        "cut_at_fetch_by_reason": dict(Counter(c.get("reason", "") for c in cuts)),
+        "cut_at_fetch_count": None if cuts is None else len(cuts),
+        "cut_at_fetch_by_reason": None if cuts is None else dict(
+            Counter(c.get("reason", "") for c in cuts)),
+        "cut_at_fetch_error": cut_error,
         # Exact repeats of postings Nick passed on, held back WITH their labels (Grok F6).
         "skipped_repeats": [r for r in (payload.get("skipped_repeats") or []) if isinstance(r, dict)],
         # The target-drift report and goals.md staleness from THIS scan (target-drift-1106);
