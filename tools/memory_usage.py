@@ -123,13 +123,12 @@ SEARCH_VERBS = {"grep", "rg"}
 # Each verb's option grammar (Codex r3 F2: one shared table shifted operands, and grep -r is
 # recursive while rg -r takes a replacement). Any option not listed here fails safe: the
 # segment counts nothing, which can only lower the count, never freshen a rule wrongly.
+# Options that print names, counts or matches only (-l, -L, -c, -q, -o and their long forms)
+# are deliberately absent, so they count nothing by the same rule.
 _GRAMMAR = {
     "grep": {
-        "no_content_short": set("lLcqo"),
         "value_short": set("efABCmdD"),
         "flag_short": set("abhHiInrRsuUvVwxyzZEFGPT0123456789"),
-        "no_content_long": {"--files-with-matches", "--files-without-match", "--count", "--quiet",
-                            "--silent", "--only-matching"},
         "value_long": {"--regexp", "--file", "--after-context", "--before-context", "--context",
                        "--max-count", "--directories", "--devices", "--binary-files", "--exclude",
                        "--exclude-from", "--exclude-dir", "--include", "--label", "--group-separator"},
@@ -141,11 +140,8 @@ _GRAMMAR = {
                       "--no-group-separator"},
     },
     "rg": {
-        "no_content_short": set("lcqo"),
         "value_short": set("efABCmgtTEjrMd"),
         "flag_short": set("aFHhiIInNpsSuUvVwxzPb0123456789"),
-        "no_content_long": {"--files-with-matches", "--files-without-match", "--count",
-                            "--count-matches", "--quiet", "--files", "--only-matching"},
         "value_long": {"--regexp", "--file", "--after-context", "--before-context", "--context",
                        "--max-count", "--glob", "--iglob", "--type", "--type-not", "--type-add",
                        "--type-clear", "--encoding", "--threads", "--replace", "--engine", "--sort",
@@ -189,8 +185,6 @@ def _search_file_args(segment: str) -> list[str] | None:
             break
         if t.startswith("--"):
             name, has_value = t.split("=", 1)[0], "=" in t
-            if name in g["no_content_long"]:
-                return None
             explicit_pattern |= name in PATTERN_LONG
             if name in g["value_long"]:
                 i += 0 if has_value else 1
@@ -198,8 +192,6 @@ def _search_file_args(segment: str) -> list[str] | None:
                 return None
         elif t.startswith("-") and len(t) > 1:
             for j, ch in enumerate(t[1:], 1):
-                if ch in g["no_content_short"]:
-                    return None
                 if ch in g["value_short"]:
                     explicit_pattern |= ch in PATTERN_SHORT
                     if j == len(t) - 1:

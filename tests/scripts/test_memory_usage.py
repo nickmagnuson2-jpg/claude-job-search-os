@@ -632,3 +632,8 @@ def test_env_options_do_not_hide_the_real_command(tmp_path, cmd):
     """Codex r3 F3 (P1)."""
     res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", "3:promoted: no")])
     assert _chans(res.events) == [("feedback_alpha_rule", "bash_print")]
+
+
+@pytest.mark.parametrize("seg", ["", "   ", "cat memory/a.md", "egrep x memory/a.md"])
+def test_search_file_args_is_none_for_an_empty_or_non_search_segment(seg):
+    assert mu._search_file_args(seg) is None
