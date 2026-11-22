@@ -471,3 +471,19 @@ def test_r1_F4_an_unexpected_error_is_reported_with_what_was_applied(aworld, mon
     assert res["status"] == "stopped" and res["reasons"] == ["unexpected OSError: disk"]
     assert [s["step"] for s in res["applied"]] == ["repair"]
     assert res["not_applied"][0]["step"] == "reopen_at"
+
+
+def test_r1_F1_write_refuses_a_change_after_the_pre_check(aworld, monkeypatch):
+    mem, repo, inputs, _ = aworld
+    digest, entries = approve(aworld)
+    real = mf.write
+
+    def stamp_then_write(path, updates, **k):
+        Path(path).write_text(Path(path).read_text(encoding="utf-8") + "stamp\n", encoding="utf-8")
+        return real(path, updates, **k)
+
+    monkeypatch.setattr(mf, "write", stamp_then_write)
+    res = lc.apply_cutover(mem, repo, inputs, digest, entries)
+    assert res["status"] == "stopped" and res["stopped_at"]["step"] == "reopen_at"
+    assert "the caller expects" in res["reasons"][0]
+    assert "reopen_at" not in mf.read_file(mem / "feedback_rule.md")[0]

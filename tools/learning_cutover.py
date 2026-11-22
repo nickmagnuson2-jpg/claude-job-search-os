@@ -737,7 +737,8 @@ def apply_cutover(memory_dir: Path, repo_root: Path, inputs: dict, expected_dige
                           body_note=note, memory_dir=memory_dir, repo_root=repo_root)
             elif step["step"] in ("reopen_at", "promoted"):
                 key = "reopen_at" if step["step"] == "reopen_at" else "promoted"
-                mf.write(path, {key: step["value"]}, memory_dir=memory_dir, repo_root=repo_root)
+                mf.write(path, {key: step["value"]}, memory_dir=memory_dir, repo_root=repo_root,
+                         expect_sha256=expected[label])  # the writer re-checks on its own read
             elif step["step"] == "drop-promoted":
                 raise ApplyStop(brief, ["writer gap: no sanctioned writer removes a key "
                                         "(memory_frontmatter.repair/write at this base)"])
