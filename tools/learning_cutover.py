@@ -743,7 +743,8 @@ def apply_cutover(memory_dir: Path, repo_root: Path, inputs: dict, expected_dige
                 raise ApplyStop(brief, ["writer gap: no sanctioned writer removes a key "
                                         "(memory_frontmatter.repair/write at this base)"])
             elif step["step"] == "lessons-set-promoted":
-                rc, out = _cli("lessons_write.py", ["set-promoted", step["match"], step["value"]],
+                rc, out = _cli("lessons_write.py", ["set-promoted", "--expect-sha", expected[label],
+                                                    step["match"], step["value"]],
                                {"LESSONS_PATH": str(lessons)})
                 if rc != 0:
                     raise ApplyStop(brief, [f"lessons_write set-promoted exit {rc}: {out}"])

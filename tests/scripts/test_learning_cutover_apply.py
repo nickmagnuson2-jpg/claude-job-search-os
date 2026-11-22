@@ -487,3 +487,20 @@ def test_r1_F1_write_refuses_a_change_after_the_pre_check(aworld, monkeypatch):
     assert res["status"] == "stopped" and res["stopped_at"]["step"] == "reopen_at"
     assert "the caller expects" in res["reasons"][0]
     assert "reopen_at" not in mf.read_file(mem / "feedback_rule.md")[0]
+
+
+def test_r1_F2_set_promoted_refuses_a_change_after_the_pre_check(aworld, monkeypatch):
+    mem, repo, inputs, _ = aworld
+    digest, entries = approve(aworld)
+    real = lc._cli
+
+    def stamp_then_call(script, args, env):
+        if script == "lessons_write.py":
+            p = Path(env["LESSONS_PATH"])
+            p.write_text(p.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        return real(script, args, env)
+
+    monkeypatch.setattr(lc, "_cli", stamp_then_call)
+    res = lc.apply_cutover(mem, repo, inputs, digest, entries)
+    assert res["status"] == "stopped" and res["stopped_at"]["step"] == "lessons-set-promoted"
+    assert "Superseded" in (repo / "memory/lessons.md").read_text(encoding="utf-8")
