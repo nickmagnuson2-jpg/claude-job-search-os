@@ -319,3 +319,67 @@ def test_use_gaps_are_days_between_consecutive_use_days():
     assert mu.use_gaps([date(2026, 11, 1), date(2026, 11, 5), date(2026, 11, 6)]) == [4, 1]
     assert mu.use_gaps([date(2026, 11, 1)]) == []
     assert mu.use_gaps([]) == []
+
+
+# ---------------------------------------------------------------------------- malformed input (mutation run 1)
+
+def test_records_without_timestamps_neither_crash_nor_move_the_window(tmp_path):
+    res = _scan(tmp_path, [{"type": "user", "timestamp": "2026-11-20T18:00:00Z", "message": {"content": "a"}},
+                           {"type": "user", "message": {"content": "no ts"}}])
+    assert (res.window_start, res.window_end) == (date(2026, 11, 20), date(2026, 11, 20))
+
+
+def test_records_of_other_types_do_not_move_the_window(tmp_path):
+    res = _scan(tmp_path, [{"type": "user", "timestamp": "2026-11-20T18:00:00Z", "message": {"content": "a"}},
+                           {"type": "file-history-snapshot", "timestamp": "2026-11-25T18:00:00Z"}])
+    assert res.window_end == date(2026, 11, 20)
+
+
+@pytest.mark.parametrize("rec", [
+    [1, 2],
+    {"type": "assistant", "timestamp": "2026-11-20T18:00:00Z", "message": {"content": ["plain string"]}},
+    {"type": "user", "timestamp": "2026-11-20T18:00:00Z", "message": {"content": ["plain string"]}},
+    {"type": "user", "timestamp": "2026-11-20T18:00:00Z",
+     "message": {"content": [{"type": "text", "text": "feedback_alpha_rule.md:3:looks like grep"}]}},
+])
+def test_odd_shapes_are_skipped_without_events(tmp_path, rec):
+    assert _scan(tmp_path, [rec]).events == []
+
+
+def test_a_tool_result_given_as_a_list_of_text_blocks_is_read(tmp_path):
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": f"cat {MP}feedback_alpha_rule.md"}),
+                           {"type": "user", "timestamp": "2026-11-20T18:00:01Z",
+                            "message": {"content": [{"type": "tool_result", "tool_use_id": "t1",
+                                                     "content": [{"type": "text", "text": "body"}, "junk"]}]}}])
+    assert _chans(res.events) == [("feedback_alpha_rule", "bash_print")]
+
+
+@pytest.mark.parametrize("cmd", [f"cd {MP}feedback_alpha_rule.md", "X=feedback_alpha_rule"])
+def test_a_segment_left_empty_after_cd_or_assignments_is_skipped(tmp_path, cmd):
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", "x")])
+    assert res.events == []
+
+
+def test_grep_lines_shown_by_reading_another_file_count(tmp_path):
+    res = _scan(tmp_path, [_tool_use("t1", "Read", {"file_path": "/x/output/report.md"}),
+                           _tool_result("t1", "12\tfeedback_alpha_rule.md:3:the rule text")])
+    assert _chans(res.events) == [("feedback_alpha_rule", "grep_line")]
+
+
+def test_reading_a_memory_file_counts_once_as_a_read(tmp_path):
+    res = _scan(tmp_path, [_tool_use("t1", "Read", {"file_path": MP + "feedback_alpha_rule.md"}),
+                           _tool_result("t1", "1\treference_beta_fact.md:2:cross reference text")])
+    assert _chans(res.events) == [("feedback_alpha_rule", "read")]
+
+
+def test_a_file_attachment_outside_memory_is_not_an_entry(tmp_path):
+    rec = {"type": "attachment", "timestamp": "2026-11-20T18:00:00Z",
+           "attachment": {"type": "file", "filename": "/x/output/notes.md"}}
+    assert _scan(tmp_path, [rec]).events == []
+
+
+def test_last_context_entry_is_the_latest_day_whatever_the_event_order():
+    ev = [_ev("s1", "a", date(2026, 11, 9)), _ev("s2", "a", date(2026, 11, 2)), _ev("s3", "a", date(2026, 11, 5))]
+    s = mu.summarize(ev, reconfirms=lambda n: True)["a"]
+    assert s["last_context_entry"] == date(2026, 11, 9)
+    assert s["last_entry_any_session"] == date(2026, 11, 9)

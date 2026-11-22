@@ -109,8 +109,6 @@ def classify_bash(command: str, stems: set[str]) -> tuple[set[str], set[str], in
         if not toks:
             continue
         found = _names(seg, stems)
-        if not found:
-            continue
         verb = toks[0].split("/")[-1]
         if REDIRECT_TO_RULE.search(seg) or (verb == "sed" and "-i" in toks) or verb in WRITE_VERBS:
             written |= found
@@ -199,7 +197,8 @@ def collect(project_dir: Path, stems: set[str], exclude_sessions: Iterable[str] 
                             stem = _memory_stem(inp.get("file_path", ""), stems)
                             if stem:
                                 add(session, stem, "read", day, (stem, "read", tid))
-                            continue
+                                continue
+                            # Another file read: grep-style lines it carries still count below.
                         if name == "Bash" and text.strip():
                             printed, _written, refs = classify_bash(inp.get("command", ""), stems)
                             heredoc_refs += refs
@@ -212,7 +211,7 @@ def collect(project_dir: Path, stems: set[str], exclude_sessions: Iterable[str] 
                                 add(session, stem, "bash_print", day, (stem, "bash_print", tid))
                         for stem in _grep_lines(text, stems):
                             add(session, stem, "grep_line", day, (stem, "grep_line", tid))
-                elif kind == "attachment":
+                else:  # attachment
                     att = rec.get("attachment") or {}
                     if att.get("type") == "file":
                         stem = _memory_stem(att.get("filename", ""), stems)
