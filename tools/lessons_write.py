@@ -13,10 +13,12 @@ passes learning_state.parse_lessons_row (exactly 5 cells) and learning_state.les
 
 Subcommands (Section 2 only, the "| Pattern | Rule | Occurrences | Promoted | Date |" table):
 
-  set-promoted <row-match> <value>
+  set-promoted <row-match> <value> [--expect-sha <sha256 of the file>]
       Replace the Promoted cell of the ONE Section 2 row containing <row-match>. Refused
       when <row-match> is shorter than 12 characters or matches no row or several rows,
       or when the resulting row fails validation. Nothing else in the file changes.
+      --expect-sha refuses when the file changed since the caller read it; optional by
+      hand, always passed by a scripted apply (77's apply review F2, 2026-11-22).
 
   append-row --pattern P --rule R --occurrences N --promoted V --date YYYY-MM-DD
       Add a new row at the top of the Section 2 table (newest first, the file's order).
@@ -143,9 +145,18 @@ def read_lines(path: Path) -> tuple[list[str], bool]:
     return text.split("\n"), text.endswith("\n")
 
 
-def set_promoted(path: Path, match: str, value: str) -> dict:
+def file_sha(path: Path, expect: str | None) -> str:
+    """The file's sha256; Refused when `expect` is given and differs."""
+    sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    if expect is not None and sha != expect:
+        raise Refused([f"file changed: sha256 is {sha}, expected {expect}"])
+    return sha
+
+
+def set_promoted(path: Path, match: str, value: str, expect_sha: str | None = None) -> dict:
     if len(match.strip()) < MIN_MATCH:
         raise Refused([f"row-match must be at least {MIN_MATCH} characters"])
+    sha = file_sha(path, expect_sha)
     lines, _ = read_lines(path)
     first, end = section2_bounds(lines)
     hits = [i for i in range(first, end) if match in lines[i]]
@@ -163,7 +174,8 @@ def set_promoted(path: Path, match: str, value: str) -> dict:
         raise Refused(reasons)
     lines[i] = format_row(new_cells)
     atomic_write(path, "\n".join(lines))
-    return {"action": "set-promoted", "line": i + 1, "old": old, "new": value.strip()}
+    return {"action": "set-promoted", "line": i + 1, "old": old, "new": value.strip(),
+            "sha256_before": sha}
 
 
 def append_row(path: Path, cells: list[str]) -> dict:
@@ -186,10 +198,7 @@ def repair_row(path: Path, line: int, expect_sha: str, old: str, new: str) -> di
     if os.environ.get("CLAUDECODE") != "1":
         raise Refused(["CLAUDECODE=1 is not set: repair-row applies an approved repair "
                        "from a session, not from a scheduled job"])
-    raw = path.read_bytes()
-    sha = hashlib.sha256(raw).hexdigest()
-    if sha != expect_sha:
-        raise Refused([f"file changed: sha256 is {sha}, expected {expect_sha}"])
+    sha = file_sha(path, expect_sha)
     lines, _ = read_lines(path)
     first, end = section2_bounds(lines)
     if not first <= line - 1 < end:
@@ -217,6 +226,7 @@ def main(argv: list[str] | None = None) -> int:
     ps = sub.add_parser("set-promoted")
     ps.add_argument("match")
     ps.add_argument("value")
+    ps.add_argument("--expect-sha", default=None)
     pa = sub.add_parser("append-row")
     for flag in ("--pattern", "--rule", "--occurrences", "--promoted", "--date"):
         pa.add_argument(flag, required=True)
@@ -231,7 +241,7 @@ def main(argv: list[str] | None = None) -> int:
         if not path.is_file():
             raise Refused([f"no such file: {path}"])
         if args.cmd == "set-promoted":
-            out = set_promoted(path, args.match, args.value)
+            out = set_promoted(path, args.match, args.value, args.expect_sha)
         elif args.cmd == "repair-row":
             out = repair_row(path, args.line, args.expect_sha, args.old, args.new)
         else:

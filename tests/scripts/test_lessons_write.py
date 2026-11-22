@@ -348,3 +348,30 @@ def test_a_superseded_pointer_to_a_main_only_path_is_accepted_from_a_worktree(le
     assert lessons_write.validate_cells(cells) == []
     monkeypatch.setattr(lessons_write, "POINTER_ROOT", lessons.parent / "elsewhere")
     assert lessons_write.validate_cells(cells) != []
+
+
+# ------------------------------------------------------------------ set-promoted --expect-sha
+
+def test_set_promoted_with_the_current_sha_writes(lessons):
+    sha = hashlib.sha256(lessons.read_bytes()).hexdigest()
+    code, out, p = run(["set-promoted", "Invented pattern alpha", "Yes", "--expect-sha", sha], lessons)
+    assert code == 0, p.stdout + p.stderr
+    assert out["sha256_before"] == sha
+
+
+def test_set_promoted_with_a_stale_sha_is_refused(lessons):
+    """77's apply review F2: a change between the apply's check and the write must refuse."""
+    stale = hashlib.sha256(lessons.read_bytes()).hexdigest()
+    lessons.write_text(LESSONS.replace("Invented rule beta", "Invented rule beta, edited"),
+                       encoding="utf-8")
+    changed = lessons.read_text(encoding="utf-8")
+    code, out, _ = run(["set-promoted", "Invented pattern alpha", "Yes", "--expect-sha", stale], lessons)
+    assert code == 1
+    assert out["reasons"][0].startswith("file changed: sha256 is ")
+    assert lessons.read_text(encoding="utf-8") == changed
+
+
+def test_set_promoted_without_expect_sha_still_writes(lessons):
+    code, out, _ = run(["set-promoted", "Invented pattern alpha", "Yes"], lessons)
+    assert code == 0
+    assert "sha256_before" in out

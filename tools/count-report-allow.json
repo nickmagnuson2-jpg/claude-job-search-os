@@ -134,7 +134,5 @@
   "tools/company_queue.py": "its counts describe its own queue file, which it reads whole (pending, decided, added, skipped by key); there is no wider population whose reach could be partial. import-inbox reports blocks found and entries parsed side by side, so an unparsed line is visible as the gap between them",
   "tools/merge_chain.py": "prints no counts: the flagged f-strings are ChainError messages (a merge-base count, a parent count, 'merge of <p1> and <p2>'), not a report of how many things were found, so count_report's scope and population do not apply (2026-11-19)",
   "tools/lessons_write.py": "prints a refusal reason, not a population count: the only numbers are a row-match count with its expected value (\"matches N Section 2 rows, expected 1\") and line numbers; the scope is the one file named in the same JSON object (B2, 2026-11-22)",
-  "tools/memory_write.py": "prints the result of one write to one named file (the new occurrences value after a bump, or refusal reasons); no population is counted (B2, 2026-11-22)",
-  "tools/check_memory_frontmatter_write.py": "a PreToolUse hook: its stderr lists block reasons for one tool call (a count change like 'occurrences: 2 -> 3', a row defect), not a population count; staged for install by org (B2, 2026-11-22)",
-  "tools/check_lessons_write.py": "a PreToolUse hook: its stderr lists block reasons for one tool call (a count change like 'occurrences: 2 -> 3', a row defect), not a population count; staged for install by org (B2, 2026-11-22)"
+  "tools/memory_write.py": "prints the result of one write to one named file (the new occurrences value after a bump, or refusal reasons); no population is counted (B2, 2026-11-22)"
 }
