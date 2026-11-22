@@ -452,3 +452,22 @@ def test_pending_without_a_lessons_input_needs_no_lessons_file(aworld):
     inputs["lessons"] = None
     (repo / "memory/lessons.md").unlink()
     assert {"change": "reopen_at", "file": "feedback_rule.md"} in lc.pending_changes(mem, repo, inputs)
+
+
+def test_r1_F3_set_promoted_only_when_its_output_is_the_proposed_row(aworld):
+    mem, repo, inputs, _ = aworld
+    les = inputs["lessons"]
+    les.write_text(les.read_text(encoding="utf-8").replace(
+        "| superseded by 2026-01-01 ruling | 2026-01-01 |", "|  superseded by 2026-01-01 ruling | 2026-01-01 |"),
+        encoding="utf-8")
+    assert lc.plan_apply(mem, repo, inputs)[3]["step"] == "lessons-repair-row"
+
+
+def test_r1_F4_an_unexpected_error_is_reported_with_what_was_applied(aworld, monkeypatch):
+    mem, repo, inputs, _ = aworld
+    digest, entries = approve(aworld)
+    monkeypatch.setattr(mf, "write", lambda *a, **k: (_ for _ in ()).throw(OSError("disk")))
+    res = lc.apply_cutover(mem, repo, inputs, digest, entries)
+    assert res["status"] == "stopped" and res["reasons"] == ["unexpected OSError: disk"]
+    assert [s["step"] for s in res["applied"]] == ["repair"]
+    assert res["not_applied"][0]["step"] == "reopen_at"

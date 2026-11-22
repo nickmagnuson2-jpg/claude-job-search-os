@@ -663,13 +663,21 @@ def plan_apply(memory_dir: Path, repo_root: Path, inputs: dict,
     for r in les_repairs:
         old, _ = ls.parse_lessons_row(r["old"])
         new, _ = ls.parse_lessons_row(r["new"])
+        # set-promoted rewrites the row as lessons_write.format_row(cells): route there only
+        # when that output is byte-identical to the proposed row (Codex B7b r1 F3)
         only_promoted = (old is not None and new is not None
-                         and [c for i, c in enumerate(old) if i != 3] == [c for i, c in enumerate(new) if i != 3])
+                         and _lessons_format_row(old[:3] + [new[3]] + old[4:]) == r["new"])
         steps.append({"step": "lessons-set-promoted", "line": r["line"], "match": old[0], "value": new[3]}
                      if only_promoted else
                      {"step": "lessons-repair-row", "line": r["line"], "old": r["old"], "new": r["new"]})
     steps.append({"step": "friction-kinds"})
     return steps
+
+
+def _lessons_format_row(cells: list[str]) -> str:
+    """The row lessons_write set-promoted writes: its own public format_row, not a copy."""
+    import lessons_write
+    return lessons_write.format_row(cells)
 
 
 def _cli(script: str, args: list[str], env: dict) -> tuple[int, dict | str]:
@@ -761,8 +769,10 @@ def apply_cutover(memory_dir: Path, repo_root: Path, inputs: dict, expected_dige
                     "applied": applied, "not_applied": [
                         {k: v for k, v in s.items() if k in ("step", "file", "line", "value")}
                         for s in steps[i:]]}
-        except mf.WriteRefused as e:
-            return {"status": "stopped", "stopped_at": brief, "reasons": list(e.reasons),
+        except Exception as e:  # mf.WriteRefused, or anything unexpected (Codex B7b r1 F4)
+            reasons = (list(e.reasons) if isinstance(e, mf.WriteRefused)
+                       else [f"unexpected {type(e).__name__}: {e}"])
+            return {"status": "stopped", "stopped_at": brief, "reasons": reasons,
                     "applied": applied, "not_applied": [
                         {k: v for k, v in s.items() if k in ("step", "file", "line", "value")}
                         for s in steps[i:]]}
