@@ -23,8 +23,8 @@ finding once it arrives, which lives in `framework/review-findings-protocol.md`.
 | `tools/reader_review.py` | Renders a finished document and runs `codex_verify.py` once per model on three fixed questions, or on 3 to 5 decision-maker seats | the document, its sources, a BUILD-LOG | reports, a BUILD-LOG Ship line (`--gate`) |
 | `tools/.cross-model-ledger.jsonl` | The record: every run, every finding, every disposition, every waiver | - | - |
 | `tools/finding_write.py` | The only writer of dispositions and acceptances; `list --open` is the workstream probe | the ledger | the ledger (whole-file rewrite) |
-| `tools/cross_model_gate.py` | The pre-push gate, and `summary()` for `/standup` | the ledger, the push's `--numstat` | waiver rows |
-| `tools/hooks/pre-push` | Calls the gate for the last non-deletion ref in the push, with that ref's commit time as `--since` | - | - |
+| `tools/cross_model_gate.py` | The pre-push gate, and `summary()` for `/standup` | the ledger, one ref's `--numstat`, `--tip`, `--base` | waiver rows |
+| `tools/hooks/pre-push` | Calls the gate once for every non-deletion ref in the push; a git error or an unfindable base blocks | - | - |
 | `/standup` | Prints `cross_model_gate.summary()` whenever it is non-empty | the ledger | - |
 
 The flow is one direction: a run writes a row, the gate and `/standup` read rows, and
@@ -190,13 +190,60 @@ edit the file by hand.
 
 ## `cross_model_gate.py`: the push gate
 
-`tools/hooks/pre-push` reads the ref lines git passes it and keeps only the last one that is not a
-deletion. It pipes `git diff --numstat` for that ref's range into the gate, with `--since` set to
-the commit time of that ref's head. A review recorded before that time does not count.
+`tools/hooks/pre-push` reads the ref lines git passes it and calls the gate once for **every**
+ref that is not a deletion. `git push origin a b` checks `a` and `b`, and the first ref that
+blocks stops the push. For each ref:
 
-**A push of several refs is checked on its last ref only.** On `git push origin a b`, a governed
-path or an open P0 present only on `a` never reaches the gate, and the hook can exit 0. Push one
-ref at a time.
+- **The range.** An existing remote ref is judged from its remote sha: `<remote sha>..<head>`.
+  A new ref (all-zero remote sha) is judged from `git merge-base <head> origin/main`, so a first
+  push of a branch is not treated as pushing all of history. **A new ref with no findable merge
+  base blocks.**
+- **Git errors block.** If `git merge-base`, `git log` or `git diff` fails, the hook prints
+  `BLOCKED` and exits 1. An errored diff is never read as an empty one.
+- **The arguments.** The hook pipes `git diff --numstat` for the range into the gate with `--since`
+  set to the commit time of the ref's head. It runs `cross_model_gate.py --help` once and passes
+  `--tip <head>` and `--base <base>` only when this checkout's gate lists them, because the
+  installed hook is shared by every worktree and an older gate rejects an unknown argument. A
+  failed probe passes neither. That does not fail closed: tree-keyed rows then cover nothing,
+  chain judging is off, an empty net diff is skipped, and the single-diff rule runs, which can
+  still pass a push too small to qualify or one covered by time-keyed rows.
+- **An empty net diff.** It skips the gate only when the gate does not take `--base`. With `--base`
+  the gate still runs, because a merge chain can add a file in one merge and remove it in a later
+  one.
+
+**Which reviews count** (outside a merge chain). A row that records a `tree` covers the push only
+when that tree equals the pushed tip's tree (`--tip`), whatever its time, so a commit after a review voids it unless the
+tree is unchanged. A row without `tree` predates 2026-11-16 and counts only if it was recorded at
+or after `--since`.
+
+### A push of merge commits
+
+When `base..tip` is a verified chain of merge commits (`tools/merge_chain.py`: every commit has two
+parents, the first parents chain from `base`, and each tree is git's own merge of its parents,
+except that a conflict in `tools/mutation-allow.json` may be resolved key by key),
+`check_chain` judges it instead of the single-diff rule. This is the shape
+`tools/land_branch.py --merge-push` builds. Nobody reviews a merge tree; each branch was reviewed
+at its own tip.
+
+- **Each merge on its own.** Each merge is sized by the paths it changes against its first parent,
+  with the same tier and size rules as a single push. If it qualifies, its qualifying paths must be
+  covered by rows whose `tree` is its second parent's tree (the reviewed branch tip), at the family
+  count for its tier. A merge too small to qualify needs no rows of its own. Only tree-keyed rows
+  count here, because a time-keyed row cannot say which branch it saw.
+- **The push as a whole.** Lines are summed per path across the merges. If the whole push is large
+  or broad enough to qualify, each merge's share of the qualifying paths must be covered at its
+  branch tip, at the larger of the merge's own family count and the whole push's, even when that
+  merge alone is too small to qualify.
+- **Open P0s.** An open P0 on any path any merge in the push changes blocks, including a file one
+  merge adds and a later merge removes.
+- **Not a chain.** Anything that is not a verified chain is judged as one diff by the single-diff
+  rule above, so a qualifying push of merges no row covers at the pushed tip's tree blocks. A chain
+  whose diff git cannot produce blocks.
+
+**The PII record per branch tip.** On a push to the public remote, `tools/prepush_pii_guard.py`
+needs a clean `/audit-pii` record for every pushed tree. For a verified merge chain those trees
+are the branch tips' (each merge's second parent), not the merge trees. Anything else, including
+a new branch, keeps the pushed-tip rule.
 
 ### Blast-radius tiers
 
