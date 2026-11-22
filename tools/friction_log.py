@@ -335,10 +335,13 @@ def date_cell(first: str, last: str) -> str:
 MODEL_HABIT_RUNG = "model-habit (rewrite or teach; not a hook patch)"
 
 
-def promotion_for(occurrences: int, surface: str = "") -> str:
+def promotion_for(occurrences: int, surface: str = "", kind: str = "") -> str:
     """The ladder rung for a row. A `block:<hook>` row is a hook that blocked AS DESIGNED, so
-    it rides the model-habit ladder and never demands a patch to the hook (RULING Q9)."""
-    if occurrences <= 1:
+    it rides the model-habit ladder and never demands a patch to the hook (RULING Q9).
+    A row whose kind does not count (learning_state.COUNTING_KINDS) never climbs: it keeps
+    "—" however often it fires (Codex r1 F2, 2026-11-22). A legacy row with no kind yet
+    keeps the old ladder until migrate-kinds assigns one."""
+    if not_counting(kind) or occurrences <= 1:
         return "—"
     if occurrences == 2:
         return "memory (do now)"
@@ -348,6 +351,12 @@ def promotion_for(occurrences: int, surface: str = "") -> str:
 
 
 DEFAULT_KIND = "friction"
+
+
+def not_counting(kind: str) -> bool:
+    """True for a known kind that does not count toward the ladder. An empty (legacy) or
+    unknown kind is not claimed here: the reader reports those as defects."""
+    return kind in ls.FRICTION_KINDS and not ls.counts(kind)
 
 
 def resolve_kind(surface: str, nature: str, given: str | None) -> str:
@@ -413,7 +422,7 @@ def cmd_append(args: argparse.Namespace) -> None:
             "nature": best["nature"],
             "fix": fix if args.fix else best["fix"],
             "occurrences": str(occurrences),
-            "promotion": promotion_for(occurrences, best["surface"]),
+            "promotion": promotion_for(occurrences, best["surface"], kind),
             "kind": kind,
         }
         # Drop the old matched row, re-add the updated one at the top.
@@ -427,7 +436,7 @@ def cmd_append(args: argparse.Namespace) -> None:
             "nature": nature,
             "fix": fix,
             "occurrences": "1",
-            "promotion": promotion_for(1, surface),
+            "promotion": promotion_for(1, surface, kind),
             "kind": kind,
         }
         new_rows = [format_row(new_row)] + data_rows
@@ -543,6 +552,7 @@ def cmd_list(args: argparse.Namespace) -> None:
             r for r in out
             if r["promotion"].strip() not in ("—", "-", "")
             and not is_resolved(r["fix"])
+            and not not_counting(r.get("kind", ""))
         ]
     if getattr(args, "unresolved", False):
         out = [r for r in out if not is_resolved(r["fix"])]
@@ -652,7 +662,7 @@ def cmd_dedup(args: argparse.Namespace) -> None:
             "nature": rep_nature,
             "fix": rep_fix,
             "occurrences": str(occ),
-            "promotion": promotion_for(occ, rep_surface),
+            "promotion": promotion_for(occ, rep_surface, c["kind"]),
             "kind": c["kind"],
             "_occ": occ,
             "_last": last,

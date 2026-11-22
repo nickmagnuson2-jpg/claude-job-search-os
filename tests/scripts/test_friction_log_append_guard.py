@@ -192,7 +192,8 @@ def test_a_third_block_occurrence_emits_model_habit_not_script_patch(tmp_path):
     assert out["occurrences"] == 3
     assert out["kind"] == "block-as-designed"
     assert out["promotion_action"] == "none"
-    assert "model-habit" in out["row"]
+    # The stored rung does not climb either (Codex r1 F2): a non-counting row keeps "—".
+    assert out["row"].endswith("| 3 | — | block-as-designed |")
 
 
 def test_a_third_ordinary_occurrence_still_emits_script_patch(tmp_path):

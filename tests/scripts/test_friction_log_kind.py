@@ -309,3 +309,37 @@ def test_whitespace_after_the_table_is_dropped_on_apply(ledger):
     code, out = run(ledger, "migrate-kinds", "--apply", "--expect-sha", sha(ledger))
     assert code == 0, out
     assert ledger.read_text(encoding="utf-8").endswith("misattributed: wrong surface | 2 | memory | friction |\n")
+
+
+def test_a_non_counting_row_never_stores_a_rung_and_is_not_listed_as_unpromoted(ledger):
+    """Codex r1 F2: two block-as-designed events stored 'memory (do now)' and list
+    --unpromoted returned the row as promotion work."""
+    for _ in range(2):
+        run(ledger, "append", "block:check_doohickey.py", "blocked a doohickey write")
+    row = next(r for r in rows(ledger) if "doohickey write" in r)
+    assert row.endswith("| 2 | — | block-as-designed |")
+    code, out = run(ledger, "list", "--unpromoted")
+    assert all("doohickey write" not in r["nature"] for r in out["rows"])
+
+
+def test_a_legacy_non_counting_rung_is_not_listed_as_unpromoted(ledger):
+    text = LEGACY.replace("| Promotion |\n|---|---|---|---|---|---|",
+                          "| Promotion | Kind |\n|---|---|---|---|---|---|---|")
+    text += "| 2026-06-08 | harness_probe.py | permission prompt | — | 2 | memory (do now) | harness |\n"
+    text += "| 2026-06-09 | doohickey.py | doohickey parser fails | — | 2 | memory (do now) | friction |\n"
+    ledger.write_text(text, encoding="utf-8")
+    code, out = run(ledger, "list", "--unpromoted")
+    natures = [r["nature"] for r in out["rows"]]
+    assert "doohickey parser fails" in natures
+    assert "permission prompt" not in natures
+
+
+def test_dedup_keeps_a_non_counting_cluster_off_the_ladder(ledger):
+    text = LEGACY.replace("| Promotion |\n|---|---|---|---|---|---|",
+                          "| Promotion | Kind |\n|---|---|---|---|---|---|---|")
+    text += ("| 2026-06-08 | harness_probe.py | permission prompt denied probe | — | 1 | — | harness |\n"
+             "| 2026-06-09 | harness_probe.py | permission prompt denied probe | — | 1 | — | harness |\n")
+    ledger.write_text(text, encoding="utf-8")
+    run(ledger, "dedup")
+    row = next(r for r in rows(ledger) if "permission prompt" in r)
+    assert row.endswith("| 2 | — | harness |")
