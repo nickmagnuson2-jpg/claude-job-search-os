@@ -627,6 +627,7 @@ def test_search_file_args_reads_each_verbs_own_option_grammar(seg, files):
     f"env -i grep -n promoted {MP}feedback_alpha_rule.md",
     f"env -u GREP_OPTIONS grep -n promoted {MP}feedback_alpha_rule.md",
     f"env -i X=1 cat {MP}feedback_alpha_rule.md",
+    f"time -p cat {MP}feedback_alpha_rule.md",
 ])
 def test_env_options_do_not_hide_the_real_command(tmp_path, cmd):
     """Codex r3 F3 (P1)."""

@@ -219,7 +219,7 @@ def classify_bash(command: str, stems: set[str]) -> tuple[set[str], set[str], in
     for seg in SEGMENT_SPLIT.split(text):
         toks = seg.strip().split()
         while toks and (re.match(r"^\w+=", toks[0]) or toks[0] in ("cd", "time", "env")):
-            if toks[0] == "env":   # env's own options come before the command (Codex r3 F3)
+            if toks[0] in ("env", "time"):   # their own options precede the command (Codex r3 F3)
                 toks = toks[1:]
                 while toks and toks[0].startswith("-"):
                     toks = toks[2:] if toks[0] in ("-u", "--unset", "-C", "--chdir") else toks[1:]
