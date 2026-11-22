@@ -91,10 +91,15 @@ def run(root, capsys, *argv):
     return code, (json.loads(out) if out.strip().startswith("{") else None), out
 
 
+# Rule 8 fields, required on every add since Build M (tests/scripts/test_decision_lean.py).
+LEAN = ["--lean", "a: the default", "--rests-on", "data/workstreams/alpha-work.md:1",
+        "--if-nothing", "the owner waits", "--group", "policy"]
+
+
 def add(root, capsys, question, *extra):
     return run(root, capsys, "add", "--owner", "alpha-work", "--class", "scope",
                "--question", question, "--option", "a: yes", "--option", "b: no",
-               "--acts", "the owner acts", "--predict", "a", "--predict-reason", "r", *extra)
+               "--acts", "the owner acts", "--predict", "a", "--predict-reason", "r", *LEAN, *extra)
 
 
 def topic_add(root, capsys, key, patterns, anchor, file="data/goals.md", *extra):

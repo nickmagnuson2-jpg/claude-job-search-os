@@ -18,6 +18,9 @@ sys.path.insert(0, str(TOOLS))
 import decision_write as dw  # noqa: E402
 
 SENTINEL = "SENTINEL-PREDICTION-REASON"
+# Rule 8 fields, required on every add since Build M (tests/scripts/test_decision_lean.py).
+LEAN = ["--lean", "a: the default", "--rests-on", "data/workstreams/alpha-work.md:1",
+        "--if-nothing", "the owner waits", "--group", "policy"]
 
 BOARD = """# Sessions board
 
@@ -71,7 +74,7 @@ def add(root, capsys, *extra, owner="alpha-work", cls="scope", question="Ship pa
     args = ["add", "--owner", owner, "--class", cls, "--question", question,
             "--option", "a: ship it now", "--option", "b: wait for part two",
             "--acts", "the owner cuts the branch", "--predict", predict, "--predict-reason", reason,
-            *extra]
+            *LEAN, *extra]
     return run(root, *args, capsys=capsys)
 
 
@@ -101,7 +104,7 @@ def test_T1_owner_is_required(main, capsys):
     with pytest.raises(SystemExit):
         dw.main(["--repo-root", str(main), "add", "--class", "scope", "--question", "q",
                  "--option", "a: x", "--option", "b: y", "--acts", "z", "--predict", "a",
-                 "--predict-reason", "r"])
+                 "--predict-reason", "r", *LEAN])
 
 
 def test_T2_owner_must_be_a_workstream_file_or_org(main, capsys):
@@ -153,7 +156,7 @@ def test_spend_needs_a_usd_figure_and_rejects_a_bad_one(main, capsys):
 
 def test_options_need_two_distinct_labelled_choices(main, capsys):
     base = ["add", "--owner", "alpha-work", "--class", "scope", "--question", "q", "--acts", "z",
-            "--predict", "a", "--predict-reason", "r"]
+            "--predict", "a", "--predict-reason", "r", *LEAN]
     code, data, _, _ = run(main, *base, "--option", "a: only one", capsys=capsys)
     assert code == 1 and data["code"] == "too_few_options"
     code, data, _, _ = run(main, *base, "--option", "a: x", "--option", "a: y", capsys=capsys)
@@ -173,7 +176,7 @@ def test_blank_text_is_refused(main, capsys, field):
     code, data, _, _ = add(main, capsys, *extra, **kw) if field != "acts" else run(
         main, "add", "--owner", "alpha-work", "--class", "scope", "--question", "q?",
         "--option", "a: x", "--option", "b: y", "--acts", " ", "--predict", "a",
-        "--predict-reason", "r", capsys=capsys)
+        "--predict-reason", "r", *LEAN, capsys=capsys)
     assert code == 1 and data["code"] == "blank_field"
 
 
@@ -598,7 +601,7 @@ def test_T8_concurrent_adds_get_unique_ids(main):
             dw.main(["--repo-root", str(main), "add", "--owner", "alpha-work", "--class",
                      "scope", "--question", f"question {i}?", "--option", "a: x",
                      "--option", "b: y", "--acts", "z", "--predict", "a",
-                     "--predict-reason", "r"])
+                     "--predict-reason", "r", *LEAN])
         except Exception as e:                       # noqa: BLE001
             errors.append(e)
     threads = [threading.Thread(target=one, args=(i,)) for i in range(8)]
