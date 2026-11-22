@@ -303,7 +303,7 @@ def record_fire(path: Path, evidence: str, *, today: _dt.date | None = None) -> 
         raise WriteRefused([f"frontmatter: {defect.code}: {defect.detail}"])
     occ = fields.get("occurrences")
     if type(occ) is not int or occ < 0:
-        raise WriteRefused([f"occurrences: {occ!r} is not a count to add one to"])
+        raise WriteRefused([f"occurrences: {occ!r} is not a non-negative integer to add one to"])
     n = occ + 1
     new_text = _set_keys(text, {"occurrences": n})
     _refuse_unless_consistent(fields, new_text, {"occurrences": n})

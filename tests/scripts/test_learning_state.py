@@ -434,7 +434,7 @@ def test_memory_state_names_each_defect():
     s = ls.memory_state({"promoted": "no", "occurrences": 3, "reopen_at": 0})
     assert s.due == "bad_reopen_at" and s.defects == ("reopen_at: 0 is not a positive integer",)
     s = ls.memory_state({"promoted": "no", "occurrences": "x", "reopen_at": 2})
-    assert s.due == "bad_occurrences" and s.defects == ("occurrences: 'x' is not a count",)
+    assert s.due == "bad_occurrences" and s.defects == ("occurrences: 'x' is not a non-negative integer",)
     s = ls.memory_state({"promoted": "no", "occurrences": 3})
     assert s.defects == ("reopen_at: missing; the rule can never be due",)
     s = ls.memory_state({"promoted": "no", "occurrences": 3, "reopen_at": 3})
@@ -510,7 +510,7 @@ def test_missing_count_on_a_record_is_bad_occurrences():
     # F6: a missing count defaulted to 0 and read not_due.
     s = ls.memory_state({"promoted": "no", "reopen_at": 3})
     assert s.due == "bad_occurrences"
-    assert s.defects == ("occurrences: None is not a count",)
+    assert s.defects == ("occurrences: None is not a non-negative integer",)
     assert ls.due_state(None, 3) == "bad_occurrences"
 
 

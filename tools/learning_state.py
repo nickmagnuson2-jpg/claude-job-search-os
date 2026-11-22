@@ -75,6 +75,7 @@ FRICTION_STATES = ("resolved", "not_counting", "due", "open", "defect_kind",
 
 # ---------------------------------------------------------------- lessons.md Section 2
 LESSONS_COLUMNS = ("Pattern", "Rule", "Occurrences", "Promoted", "Date")
+LESSONS_WIDTH = len(LESSONS_COLUMNS)
 
 # ---------------------------------------------------------------- kinds and freshness
 HALF_LIFE_DAYS = {"MACHINERY": 60, "FACT": 180, "LESSON": 240}
@@ -144,7 +145,7 @@ def disposition(value, *, memory_dir: Path | None = None,
     if tok in POINTER_TOKENS:
         why = _pointer_defect(tok, text, memory_dir, repo_root)
         return Disposition("defect", tok, why) if why else Disposition("closed", tok, None)
-    return Disposition("defect", tok, f"token {tok!r} in {text[:40]!r} is not one of "
+    return Disposition("defect", tok, f"token {tok!r} in {text[:40]!r} is outside the vocabulary "
                                       f"{'|'.join(PROMOTED_TOKENS)}")
 
 
@@ -287,7 +288,7 @@ def validate_fields(fields: dict, *, keys=None, memory_dir: Path | None = None,
             out.append(f"promoted: {d.defect}")
     exit_path = fields.get("exit_path", "")
     if "exit_path" in check and exit_path not in ("",) + EXIT_PATHS:
-        out.append(f"exit_path: {exit_path!r} is not one of {'|'.join(EXIT_PATHS)}")
+        out.append(f"exit_path: {exit_path!r} is outside {'|'.join(EXIT_PATHS)}")
     if exit_path == "skill" and check & {"exit_path", "skill_file", "skill_step"}:
         out.extend(_skill_defects(fields, repo_root, skills_home))
     if "reopen_at" in check and "reopen_at" in fields:
@@ -333,7 +334,7 @@ def memory_state(fields: dict, *, memory_dir: Path | None = None,
         elif due == "bad_reopen_at":
             defects.append(f"reopen_at: {fields.get('reopen_at')!r} is not a positive integer")
         elif due == "bad_occurrences":
-            defects.append(f"occurrences: {fields.get('occurrences')!r} is not a count")
+            defects.append(f"occurrences: {fields.get('occurrences')!r} is not a non-negative integer")
     return MemoryState(d, terminal, due, tuple(defects))
 
 
@@ -348,7 +349,7 @@ def counts(kind) -> bool:
     """True for a kind that counts toward occurrences and the ladder. ValueError on a kind
     outside FRICTION_KINDS."""
     if kind not in FRICTION_KINDS:
-        raise ValueError(f"friction kind {kind!r} is not one of {'|'.join(FRICTION_KINDS)}")
+        raise ValueError(f"friction kind {kind!r} is outside {'|'.join(FRICTION_KINDS)}")
     return kind in COUNTING_KINDS
 
 
@@ -383,8 +384,9 @@ def parse_lessons_row(line: str) -> tuple[list | None, str | None]:
         return None, None
     if cells and cells[0] == LESSONS_COLUMNS[0]:
         return None, None
-    if len(cells) != len(LESSONS_COLUMNS):
-        return None, (f"cell count {len(cells)}, expected {len(LESSONS_COLUMNS)} "
+    if len(cells) != LESSONS_WIDTH:
+        width = len(cells)
+        return None, (f"{width} cells, expected {LESSONS_WIDTH} "
                       f"({' | '.join(LESSONS_COLUMNS)}); a literal pipe in a cell splits it")
     return cells, None
 
@@ -401,7 +403,7 @@ def lessons_state(cells: list, *, memory_dir: Path | None = None,
         defects.append(f"promoted: {d.defect}")
     due = due_state(occ, lane="lessons-2") if in_backlog(d) else "-"
     if due == "bad_occurrences":
-        defects.append(f"occurrences: {occ!r} is not a count")
+        defects.append(f"occurrences: {occ!r} is not a non-negative integer")
     if not re.match(r"\d{4}-\d{2}-\d{2}\b", date):
         defects.append(f"date: {date!r} does not open with YYYY-MM-DD")
     return d, due, defects
@@ -435,7 +437,7 @@ def freshness_state(kind, last_entry: _dt.date | None, window_start: _dt.date,
     if kind is None:
         return "unknown_no_kind"
     if kind not in HALF_LIFE_DAYS:
-        raise ValueError(f"kind {kind!r} is not one of {'|'.join(HALF_LIFE_DAYS)}")
+        raise ValueError(f"kind {kind!r} is outside {'|'.join(HALF_LIFE_DAYS)}")
     h = HALF_LIFE_DAYS[kind]
     if last_entry is not None:
         if not window_start <= last_entry <= window_end:
