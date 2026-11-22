@@ -476,3 +476,14 @@ def test_an_empty_read_result_is_not_an_entry(tmp_path, content):
                             "message": {"content": [{"type": "tool_result", "tool_use_id": "t1",
                                                      "content": content}]}}])
     assert res.events == []
+
+
+def test_tool_calls_without_an_id_never_join_two_sessions(tmp_path):
+    mem = _mem(tmp_path)
+    for s, stem in (("s1", "feedback_alpha_rule"), ("s2", "reference_beta_fact")):
+        _write(mem.parent / f"{s}.jsonl", [
+            {"type": "assistant", "timestamp": "2026-11-20T18:00:00Z",
+             "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": "true"}}]}},
+            _tool_use(f"{s}-t", "Read", {"file_path": MP + f"{stem}.md"}), _tool_result(f"{s}-t", "x")])
+    res = mu.collect(mem.parent, mu.memory_stems(mem))
+    assert mu.session_breadth(res.events) == {"s1": 1, "s2": 1}

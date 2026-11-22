@@ -218,9 +218,7 @@ def collect(project_dir: Path, stems: set[str], exclude_sessions: Iterable[str] 
                             tid = b.get("id")
                             tools[tid] = (b.get("name"), b.get("input") or {})
                             if tid in tool_owner:
-                                a, c = root(tool_owner[tid]), root(session)
-                                if a != c:
-                                    parent[c] = a
+                                parent[root(session)] = root(tool_owner[tid])
                             elif tid:
                                 tool_owner[tid] = session
                 elif kind == "user":
