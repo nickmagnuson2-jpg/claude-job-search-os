@@ -49,7 +49,6 @@ PROMOTED_CELL = ls.LESSONS_COLUMNS.index("Promoted")
 
 class Refused(Exception):
     def __init__(self, reasons: list[str]):
-        super().__init__("; ".join(reasons))
         self.reasons = reasons
 
 
@@ -94,11 +93,9 @@ def validate_cells(cells: list[str]) -> list[str]:
             reasons.append(f"{name}: empty")
     if reasons:
         return reasons
-    row = format_row(cells)
-    parsed, defect = ls.parse_lessons_row(row)
-    if defect or parsed is None:
-        return [f"row: {defect or 'not a table row'}"]
-    _disp, _due, defects = ls.lessons_state(parsed, repo_root=REPO_ROOT)
+    # No cell holds a pipe or a newline, so format_row(cells) is exactly 5 cells and
+    # parse_lessons_row would return these cells unchanged: validate them directly.
+    _disp, _due, defects = ls.lessons_state(cells, repo_root=REPO_ROOT)
     return list(defects)
 
 

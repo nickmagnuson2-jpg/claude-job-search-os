@@ -193,3 +193,28 @@ def test_default_memory_dir_is_the_main_checkouts_live_tier():
     from vault_paths import main_checkout
     assert memory_write.default_memory_dir() == claude_project_dir(main_checkout(REPO)) / "memory"
     assert memory_write.default_memory_dir().name == "memory"
+
+
+def test_a_home_relative_path_is_expanded(mem, tmp_path):
+    home = tmp_path / "home"
+    (home / "notes").mkdir(parents=True)
+    (home / "notes" / "feedback_example_rule.md").write_text(RULE, encoding="utf-8")
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+    env.update({"CLAUDECODE": "1", "HOME": str(home), "PYTHONIOENCODING": "utf-8"})
+    p = subprocess.run([sys.executable, str(SCRIPT), "--memory-dir", str(mem), "set",
+                        "~/notes/feedback_example_rule.md", "promoted=hook, 2026-11-22"],
+                       capture_output=True, text=True, env=env, timeout=60)
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "hook, 2026-11-22" in (home / "notes" / "feedback_example_rule.md").read_text(encoding="utf-8")
+    assert text(mem) == RULE
+
+
+@pytest.mark.parametrize("pairs,reasons", [
+    (["promoted"], ["'promoted': expected key=value"]),
+    (["promoted=hook, 2026-11-22", "promoted=no"], ["promoted: given twice"]),
+])
+def test_a_bad_pair_is_never_written_even_beside_a_good_one(mem, pairs, reasons):
+    code, out, _ = run(["set", "feedback_example_rule.md", *pairs], mem)
+    assert code == 2
+    assert out["reasons"] == reasons
+    assert text(mem) == RULE

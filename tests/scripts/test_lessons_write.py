@@ -198,3 +198,27 @@ def test_set_promoted_refuses_a_matched_row_that_cannot_be_read(tmp_path):
     assert code == 1
     assert out["reasons"][0].startswith("the matched row cannot be read: ")
     assert f.read_text(encoding="utf-8") == broken
+
+
+def test_section2_without_a_table_is_refused(tmp_path):
+    f = tmp_path / "lessons.md"
+    broken = "# Lessons\n\n## Section 2 — Email\n\nno table yet\n\n## Section 3\n\n| a | b |\n|---|---|\n"
+    f.write_text(broken, encoding="utf-8")
+    code, out, _ = run(["append-row", *row_args()], f)
+    assert code == 1
+    assert out["reasons"] == ["Section 2 has no table"]
+
+
+def test_atomic_write_leaves_no_temp_file_when_replace_fails(tmp_path, monkeypatch):
+    sys.path.insert(0, str(REPO / "tools"))
+    import lessons_write
+    target = tmp_path / "lessons.md"
+    target.write_text("original\n", encoding="utf-8")
+
+    def boom(src, dst):
+        raise OSError("replace failed")
+    monkeypatch.setattr(lessons_write.os, "replace", boom)
+    with pytest.raises(OSError, match="replace failed"):
+        lessons_write.atomic_write(target, "new\n")
+    assert target.read_text(encoding="utf-8") == "original\n"
+    assert sorted(x.name for x in tmp_path.iterdir()) == ["lessons.md"]

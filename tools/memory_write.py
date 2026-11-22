@@ -83,11 +83,10 @@ def parse_assignments(pairs: list[str]) -> tuple[dict, list[str]]:
         key = key.strip()
         if not sep or not key:
             errors.append(f"{pair!r}: expected key=value")
-            continue
-        if key in updates:
+        elif key in updates:
             errors.append(f"{key}: given twice")
-            continue
-        updates[key] = value
+        else:
+            updates[key] = value
     return updates, errors
 
 

@@ -14,11 +14,24 @@ Promotion ladder:
   3rd fire  → promotion_action="script-patch" (mandatory structural fix)
 
 Usage:
-  friction_log.py append <surface> <nature> [--fix <description>]
+  friction_log.py append <surface> <nature> [--fix <description>] [--kind <kind>]
   friction_log.py resolve <surface> <nature> [--note <text>]  # close a row, no count change
   friction_log.py list [--surface <name>] [--unpromoted] [--unresolved]
   friction_log.py query <text>     # fuzzy search nature/surface
   friction_log.py dedup [--dry-run]  # collapse duplicate rows + drop FP rows
+  friction_log.py migrate-kinds --dry-run              # plan a Kind for every legacy row
+  friction_log.py migrate-kinds --apply --expect-sha H  # apply the approved plan
+
+EVENT KIND (7th column, 2026-11-22, B2 of the learning-loop build). Every row carries one
+kind from learning_state.FRICTION_KINDS. Only the kinds in learning_state.COUNTING_KINDS
+count toward the ladder; the others (a hook that blocked as designed, a harness event,
+an entry that was not a friction) keep their history and stop counting. `append` writes
+the kind into the row: --kind, else the kind its own markers state (a `block:<hook>`
+surface is block-as-designed, a `harness:<kind>` surface is harness, an "FP:" nature is
+false-positive-block; the auto-loggers write these markers), else "friction". A legacy row with an
+empty Kind cell is a defect until `migrate-kinds` assigns one; the migration applies only
+the plan whose SHA-256 the caller passes back, so the ledger cannot change between the
+report Nick approved and the write.
 
 Examples:
   friction_log.py append living_log_append.py "rejects multi-line text" \\
@@ -44,6 +57,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import friction_surface as fs  # shared surface/nature derivation (single source of truth)
+import learning_state as ls  # the closed set of event kinds (single source of truth)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LEDGER = Path(os.environ.get(
@@ -52,10 +66,12 @@ ENTRIES_MARKER = "## Entries"
 
 # A "row" is a markdown table row.
 # Schema:
-#   | Date | Surface | Nature | Fix | Occurrences | Promotion |
+#   | Date | Surface | Nature | Fix | Occurrences | Promotion | Kind |
+# Kind was added 2026-11-22. A legacy 6-cell row reads with kind "" (a defect until
+# migrate-kinds runs), and every write emits this 7-column header.
 HEADER = (
-    "| Date | Surface | Nature | Fix | Occurrences | Promotion |\n"
-    "|---|---|---|---|---|---|"
+    "| Date | Surface | Nature | Fix | Occurrences | Promotion | Kind |\n"
+    "|---|---|---|---|---|---|---|"
 )
 
 # Stopwords stripped before keyword overlap; tuned for tech-error text.
@@ -171,7 +187,9 @@ def read_ledger() -> tuple[str, str, list[str], str]:
         return pre, HEADER, [], ""
 
     # Header row + separator row + data rows
-    header_block = "\n".join(lines[header_idx:header_idx + 2])
+    # The stored header is replaced by HEADER on every write, so the first write after the
+    # Kind column was added upgrades a 6-column legacy header without touching any row.
+    header_block = HEADER
     data_rows: list[str] = []
     trailing_lines: list[str] = []
     in_data = True
@@ -196,6 +214,7 @@ def parse_row(row: str) -> dict:
         "fix": cells[3],
         "occurrences": cells[4],
         "promotion": cells[5],
+        "kind": cells[6] if len(cells) > 6 else "",
         "_raw": row,
     }
 
@@ -203,7 +222,7 @@ def parse_row(row: str) -> dict:
 def format_row(d: dict) -> str:
     return (
         f"| {d['date']} | {d['surface']} | {d['nature']} | "
-        f"{d['fix']} | {d['occurrences']} | {d['promotion']} |"
+        f"{d['fix']} | {d['occurrences']} | {d['promotion']} | {d.get('kind', '')} |"
     )
 
 
@@ -328,6 +347,29 @@ def promotion_for(occurrences: int, surface: str = "") -> str:
     return "script-patch (mandatory)"
 
 
+DEFAULT_KIND = "friction"
+
+
+def resolve_kind(surface: str, nature: str, given: str | None) -> str:
+    """The kind an appended event is stored with. An explicit `given` must be in
+    FRICTION_KINDS and wins. Otherwise the event's own markers decide, because the
+    auto-loggers (scan_transcript_failures, check_script_error_logged) never pass --kind:
+    an "FP:" nature (HOOK_AUTHORING's manual false-positive form) is false-positive-block,
+    a `block:<hook>` surface (friction_surface.derive_surface: a hook blocked) is
+    block-as-designed, a `harness:<kind>` surface is harness. Anything else is a friction."""
+    if given is not None:
+        if given not in ls.FRICTION_KINDS:
+            fail(f"--kind {given!r} is not one of {list(ls.FRICTION_KINDS)}")
+        return given
+    if nature.lstrip().upper().startswith("FP:"):
+        return "false-positive-block"
+    if surface.startswith("block:"):
+        return "block-as-designed"
+    if surface.startswith("harness:"):
+        return "harness"
+    return DEFAULT_KIND
+
+
 def cmd_append(args: argparse.Namespace) -> None:
     surface = args.surface.strip()
     nature = args.nature.strip()
@@ -336,6 +378,7 @@ def cmd_append(args: argparse.Namespace) -> None:
         fail("surface and nature required")
     if "|" in surface or "|" in nature or "|" in fix:
         fail("'|' not allowed in fields (breaks table); use '/' or ';'")
+    kind = resolve_kind(surface, nature, args.kind)
 
     # Non-friction guard (D2-H1, 2026-06-01): test-runner output and success
     # stdout get swept in by the auto-log hooks (log_tool_failure.py on a failing
@@ -352,7 +395,10 @@ def cmd_append(args: argparse.Namespace) -> None:
     parsed = [parse_row(r) for r in data_rows]
     parsed = [p for p in parsed if p]
 
-    matches = find_matches(parsed, surface, nature)
+    # A row of another kind is a different event: never merge into it. A legacy row with no
+    # kind yet takes this event's kind.
+    matches = [m for m in find_matches(parsed, surface, nature)
+               if m[1].get("kind", "") in ("", kind)]
     today = str(date.today())
 
     if matches:
@@ -368,6 +414,7 @@ def cmd_append(args: argparse.Namespace) -> None:
             "fix": fix if args.fix else best["fix"],
             "occurrences": str(occurrences),
             "promotion": promotion_for(occurrences, best["surface"]),
+            "kind": kind,
         }
         # Drop the old matched row, re-add the updated one at the top.
         new_rows = [format_row(new_row)] + [r for r in data_rows if r != best["_raw"]]
@@ -381,6 +428,7 @@ def cmd_append(args: argparse.Namespace) -> None:
             "fix": fix,
             "occurrences": "1",
             "promotion": promotion_for(1, surface),
+            "kind": kind,
         }
         new_rows = [format_row(new_row)] + data_rows
         matched_raw = []
@@ -396,7 +444,7 @@ def cmd_append(args: argparse.Namespace) -> None:
     # Same ladder as the stored Promotion cell: a block:<hook> row tops out at model-habit, so
     # the consumer is never told to patch a hook that worked (Codex r3 F2, P0, 2026-11-16).
     promotion_action = (
-        "none" if occurrences == 1
+        "none" if occurrences == 1 or not ls.counts(kind)
         else "memory" if occurrences == 2
         else "model-habit" if new_row["surface"].startswith("block:")
         else "script-patch"
@@ -404,6 +452,8 @@ def cmd_append(args: argparse.Namespace) -> None:
     ok({
         "action": "updated" if matches else "appended",
         "occurrences": occurrences,
+        "kind": kind,
+        "counts": ls.counts(kind),
         "promotion_action": promotion_action,
         "matched_rows": matched_raw,
         "row": format_row(new_row),
@@ -563,6 +613,8 @@ def cmd_dedup(args: argparse.Namespace) -> None:
         for c in clusters:
             if normalize_surface(c["surface"]) != normalize_surface(p["surface"]):
                 continue
+            if c["kind"] != p.get("kind", ""):
+                continue   # different events never merge (Kind column, 2026-11-22)
             if not p_kw or not c["kw"]:
                 continue
             jac = len(p_kw & c["kw"]) / len(p_kw | c["kw"])
@@ -571,7 +623,8 @@ def cmd_dedup(args: argparse.Namespace) -> None:
                 placed = True
                 break
         if not placed:
-            clusters.append({"rows": [p], "kw": p_kw, "surface": p["surface"]})
+            clusters.append({"rows": [p], "kw": p_kw, "surface": p["surface"],
+                             "kind": p.get("kind", "")})
 
     collapsed = []
     for c in clusters:
@@ -600,6 +653,7 @@ def cmd_dedup(args: argparse.Namespace) -> None:
             "fix": rep_fix,
             "occurrences": str(occ),
             "promotion": promotion_for(occ, rep_surface),
+            "kind": c["kind"],
             "_occ": occ,
             "_last": last,
         })
@@ -643,6 +697,110 @@ def cmd_dedup(args: argparse.Namespace) -> None:
     ok({"action": "rebuilt", **report})
 
 
+# ---------------------------------------------------------------- migrate-kinds
+
+# Rules for a legacy row with no Kind, in order; the first that matches wins. Each is named
+# in the dry-run report, so Nick approves the rule set and its counts, not row by row.
+# Source: design v4 section 3 and org 68's rulings of 2026-11-22.
+MIGRATION_RULES = (
+    ("block-surface", "block-as-designed",
+     lambda r: r["surface"].startswith("block:")),
+    ("retag-hook-blocked-as-designed", "block-as-designed",
+     lambda r: "retag 2026-11-22: hook blocked as designed" in r["fix"]),
+    ("retag-not-friction", "not-friction",
+     lambda r: "retag 2026-11-22: misattributed: not friction" in r["fix"]),
+    ("fp-nature", "false-positive-block",
+     lambda r: r["nature"].lstrip().upper().startswith("FP:")),
+)
+DEFAULT_RULE = ("default-friction", DEFAULT_KIND)
+
+
+def ledger_sha256() -> str:
+    import hashlib
+    return hashlib.sha256(LEDGER.read_bytes()).hexdigest()
+
+
+def plan_kinds(parsed: list[dict]) -> list[dict]:
+    """One entry per row: its current kind, the planned kind and the rule that chose it.
+    A row that already has a valid kind keeps it; one with an unrecognized kind is left
+    alone and reported."""
+    plan = []
+    for r in parsed:
+        current = r.get("kind", "")
+        if current in ls.FRICTION_KINDS:
+            plan.append({"row": r, "rule": "already-set", "kind": current})
+            continue
+        if current:
+            plan.append({"row": r, "rule": "unrecognized-kind", "kind": current})
+            continue
+        for name, kind, test in MIGRATION_RULES:
+            if test(r):
+                plan.append({"row": r, "rule": name, "kind": kind})
+                break
+        else:
+            plan.append({"row": r, "rule": DEFAULT_RULE[0], "kind": DEFAULT_RULE[1]})
+    return plan
+
+
+def with_kind(raw: str, kind: str) -> str:
+    """The raw row with its Kind cell set, every other byte unchanged."""
+    cells = raw.strip().strip("|").split("|")
+    body = raw.rstrip()[:-1].rstrip()       # drop the closing pipe
+    if len(cells) > 6:                      # 7-cell row: also drop its empty Kind cell
+        body = body[: body.rfind("|")].rstrip()
+    return f"{body} | {kind} |"
+
+
+def cmd_migrate_kinds(args: argparse.Namespace) -> None:
+    pre, header_block, data_rows, trailing = read_ledger()
+    parsed = [p for p in (parse_row(r) for r in data_rows) if p]
+    plan = plan_kinds(parsed)
+    counts = Counter(e["rule"] for e in plan)
+    by_kind = Counter(e["kind"] for e in plan if e["rule"] != "unrecognized-kind")
+    order = [DEFAULT_RULE[0]] + [n for n, _, _ in MIGRATION_RULES] + ["already-set",
+                                                                      "unrecognized-kind"]
+    sha = ledger_sha256()
+    report = {
+        "ledger": str(LEDGER),
+        "sha256": sha,
+        "rows": len(parsed),
+        "rules": [{"rule": n, "rows": counts.get(n, 0),
+                   "kind": (DEFAULT_RULE[1] if n == DEFAULT_RULE[0]
+                            else next((k for m, k, _ in MIGRATION_RULES if m == n), None))}
+                  for n in order],
+        "kinds_after": dict(by_kind),
+        "unrecognized": [e["row"]["_raw"][:160] for e in plan if e["rule"] == "unrecognized-kind"],
+    }
+    if args.dry_run:
+        ok({"action": "dry-run", **report})
+    if not args.expect_sha:
+        fail("--apply needs --expect-sha <sha256 from the approved dry run>")
+    if args.expect_sha != sha:
+        fail(f"ledger changed since the approved dry run: sha256 is {sha}, "
+             f"expected {args.expect_sha}; re-run --dry-run and get it approved again")
+    changes = {e["row"]["_raw"]: with_kind(e["row"]["_raw"], e["kind"])
+               for e in plan if e["rule"] not in ("already-set", "unrecognized-kind")}
+    new_rows = [changes.get(r, r) for r in data_rows]
+    # Conservation: every row keeps every field except Kind, and only rows in the plan move.
+    for old, new in zip(data_rows, new_rows):
+        if old == new:
+            continue
+        a, b = parse_row(old), parse_row(new)
+        same = all(a[k] == b[k] for k in ("date", "surface", "nature", "fix", "occurrences",
+                                           "promotion"))
+        if not same or b["kind"] not in ls.FRICTION_KINDS:
+            fail(f"refusing: rewriting a row changed more than its Kind: {old[:120]}")
+    body = pre + "\n" + header_block + "\n" + "\n".join(new_rows)
+    if trailing.strip():
+        body += "\n" + trailing
+    if not body.endswith("\n"):
+        body += "\n"
+    atomic_write(LEDGER, body)
+    # Rows, not distinct texts: the live ledger holds identical duplicate rows.
+    ok({"action": "applied", "changed": sum(o != n for o, n in zip(data_rows, new_rows)),
+        **report})
+
+
 def main(argv: list[str]) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -651,6 +809,9 @@ def main(argv: list[str]) -> None:
     pa.add_argument("surface", help="script/hook/template that fired (e.g. living_log_append.py)")
     pa.add_argument("nature", help="short description of the friction")
     pa.add_argument("--fix", default=None, help="how it was resolved this turn")
+    pa.add_argument("--kind", default=None,
+                    help=f"event kind, one of {list(ls.FRICTION_KINDS)} (default: friction; "
+                         "required for a block: surface or an FP: nature)")
     pa.set_defaults(func=cmd_append)
 
     pl = sub.add_parser("list", help="list ledger rows")
@@ -673,6 +834,14 @@ def main(argv: list[str]) -> None:
     pd = sub.add_parser("dedup", help="collapse to one row per friction; drop FP rows")
     pd.add_argument("--dry-run", action="store_true", help="report the plan without writing")
     pd.set_defaults(func=cmd_dedup)
+
+    pm = sub.add_parser("migrate-kinds", help="assign a Kind to every legacy row (hash-bound)")
+    mode = pm.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--dry-run", action="store_true", help="report the plan and the ledger hash")
+    mode.add_argument("--apply", action="store_true", help="apply the plan (needs --expect-sha)")
+    pm.add_argument("--expect-sha", default=None,
+                    help="SHA-256 of the ledger as reported by the approved dry run")
+    pm.set_defaults(func=cmd_migrate_kinds)
 
     args = p.parse_args(argv)
     args.func(args)

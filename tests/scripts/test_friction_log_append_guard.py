@@ -182,13 +182,17 @@ def test_append_records_real_friction(tmp_path):
 
 
 def test_a_third_block_occurrence_emits_model_habit_not_script_patch(tmp_path):
-    """Codex r3 F2 (P0) / Grok r3 F1: the stored rung for block:<hook> is model-habit, so the
-    emitted promotion_action must not tell the consumer to patch the hook."""
+    """Codex r3 F2 (P0) / Grok r3 F1: the emitted promotion_action must not tell the consumer
+    to patch a hook that blocked as designed. Since the Kind column (2026-11-22) such a row
+    is kind block-as-designed, which does not count toward the ladder at all, so no
+    promotion is asked for; the stored rung stays model-habit."""
     led = _ledger(tmp_path)
     for _ in range(3):
         out = _append(led, "block:check_demo.py", "[auto-stop] BLOCKED: unquoted glob in x")
     assert out["occurrences"] == 3
-    assert out["promotion_action"] == "model-habit"
+    assert out["kind"] == "block-as-designed"
+    assert out["promotion_action"] == "none"
+    assert "model-habit" in out["row"]
 
 
 def test_a_third_ordinary_occurrence_still_emits_script_patch(tmp_path):
