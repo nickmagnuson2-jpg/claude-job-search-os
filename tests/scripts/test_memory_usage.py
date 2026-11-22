@@ -638,3 +638,31 @@ def test_env_options_do_not_hide_the_real_command(tmp_path, cmd):
 @pytest.mark.parametrize("seg", ["", "   ", "cat memory/a.md", "egrep x memory/a.md"])
 def test_search_file_args_is_none_for_an_empty_or_non_search_segment(seg):
     assert mu._search_file_args(seg) is None
+
+
+# ---------------------------------------------------------------------------- Grok r3 (2026-11-22)
+
+@pytest.mark.parametrize("seg", [
+    "rg -h promoted memory/a.md",          # rg -h is --help
+    "rg -V promoted memory/a.md",          # --version
+    "rg -ih promoted memory/a.md",
+    "rg -5 promoted memory/a.md",          # rg has no -NUM context
+    "grep -V promoted memory/a.md",        # grep -V is --version
+])
+def test_help_and_version_shorts_are_outside_the_grammar(seg):
+    """Grok r3 F1 (P1): these print help or a version, not the file."""
+    assert mu._search_file_args(seg) is None
+
+
+def test_grep_h_still_counts_it_is_no_filename_there():
+    assert mu._search_file_args("grep -h promoted memory/a.md") == ["memory/a.md"]
+    assert mu._search_file_args("grep -5 promoted memory/a.md") == ["memory/a.md"]
+
+
+@pytest.mark.parametrize("cmd", [
+    f"cd -C /tmp cat {MP}feedback_alpha_rule.md",
+    f"FOO=1 -C /tmp cat {MP}feedback_alpha_rule.md",
+])
+def test_env_option_skipping_applies_only_after_env_or_time(cmd):
+    """Grok r3 F2: kills classify_bash::IF_TRUE::fcb00f22, which was wrongly allowlisted."""
+    assert mu.classify_bash(cmd, {"feedback_alpha_rule"})[0] == set()

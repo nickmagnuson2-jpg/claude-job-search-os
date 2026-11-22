@@ -122,13 +122,15 @@ def _names_in_memory(segment: str, stems: set[str]) -> set[str]:
 SEARCH_VERBS = {"grep", "rg"}
 # Each verb's option grammar (Codex r3 F2: one shared table shifted operands, and grep -r is
 # recursive while rg -r takes a replacement). Any option not listed here fails safe: the
-# segment counts nothing, which can only lower the count, never freshen a rule wrongly.
+# segment counts nothing, which can only lower the count, never freshen a rule wrongly
+# (help and version shorts are deliberately absent: they print no file). An unknown
+# --name=value is skipped instead; see _search_file_args.
 # Options that print names, counts or matches only (-l, -L, -c, -q, -o and their long forms)
 # are deliberately absent, so they count nothing by the same rule.
 _GRAMMAR = {
     "grep": {
         "value_short": set("efABCmdD"),
-        "flag_short": set("abhHiInrRsuUvVwxyzZEFGPT0123456789"),
+        "flag_short": set("abhHiInrRsuUvwxyzZEFGPT0123456789"),
         "value_long": {"--regexp", "--file", "--after-context", "--before-context", "--context",
                        "--max-count", "--directories", "--devices", "--binary-files", "--exclude",
                        "--exclude-from", "--exclude-dir", "--include", "--label", "--group-separator"},
@@ -141,7 +143,7 @@ _GRAMMAR = {
     },
     "rg": {
         "value_short": set("efABCmgtTEjrMd"),
-        "flag_short": set("aFHhiIInNpsSuUvVwxzPb0123456789"),
+        "flag_short": set("aFHiInNpsSuUvwxzPb"),
         "value_long": {"--regexp", "--file", "--after-context", "--before-context", "--context",
                        "--max-count", "--glob", "--iglob", "--type", "--type-not", "--type-add",
                        "--type-clear", "--encoding", "--threads", "--replace", "--engine", "--sort",
@@ -167,7 +169,10 @@ def _search_file_args(segment: str) -> list[str] | None:
 
     The pattern is a search for text, not a file that was read (Grok r2 F1): it is the
     first operand unless -e/-f gave it. -l, -c, -q, -o and their long forms print names,
-    counts or matches only. An option outside the verb's grammar returns None (fail safe)."""
+    counts or matches only. A short option, or a long option written without '=', that is
+    outside the verb's grammar returns None (fail safe). An unknown long option written as
+    --name=value is skipped: its value cannot become an operand, and a name the tool does not
+    know makes the command fail, and failed commands count only with the file's name: line."""
     try:
         toks = shlex.split(segment)
     except ValueError:
