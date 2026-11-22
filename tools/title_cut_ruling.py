@@ -37,7 +37,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from tools.count_report import report  # noqa: E402
 from tools.career_scanner.dedup import role_key  # noqa: E402
-from tools.career_scanner.scanner import role_queue_path  # noqa: E402
+from tools.career_scanner.scanner import cut_list_problem, role_queue_path  # noqa: E402
 from tools.inbox_lock import file_lock  # noqa: E402
 
 RULINGS_REL = Path("data") / "calibration" / "title-cut-rulings.jsonl"
@@ -65,17 +65,24 @@ def load_cuts(root: Path) -> dict:
                 "scanned_at": None, "cuts": None}
     except (OSError, ValueError) as e:
         return {"error": f"unreadable role queue: {e}", "scanned_at": None, "cuts": None}
-    if not isinstance(payload, dict) or not isinstance(payload.get("cut_at_fetch"), list):
+    # An absent list is this reader's own policy; every present-but-corrupt list, including
+    # one that is not a list at all, goes through the shared check (Codex c2 F1).
+    if not isinstance(payload, dict) or "cut_at_fetch" not in payload:
         return {"error": "role queue has no cut_at_fetch list", "scanned_at": None,
                 "cuts": None}
+    raw = payload["cut_at_fetch"]
+    # A corrupt queue is an error, never a shorter list: a partial list reads as the whole
+    # scan on the page, and funnel_state would record it as that night's cuts.
+    problem = cut_list_problem(payload)
+    if problem:
+        return {"error": f"corrupt role queue: {problem}", "scanned_at": None, "cuts": None}
     cuts = []
-    for c in payload["cut_at_fetch"]:
-        if isinstance(c, dict):
-            # A field that is not a string (null, a number) would crash role_key and the
-            # page; it is read as text instead (Grok F2, 2026-11-18).
-            c = {**c, **{f: "" if c.get(f) is None else str(c[f])
-                         for f in ("company", "title", "location", "url", "rule", "reason")}}
-            cuts.append({**c, "key": cut_key(c), "role_key": role_key(c)})
+    for c in raw:
+        # A field that is not a string (null, a number) would crash role_key and the
+        # page; it is read as text instead (Grok F2, 2026-11-18).
+        c = {**c, **{f: "" if c.get(f) is None else str(c[f])
+                     for f in ("company", "title", "location", "url", "rule", "reason")}}
+        cuts.append({**c, "key": cut_key(c), "role_key": role_key(c)})
     ff = payload.get("fetch_failures")
     return {"error": None, "scanned_at": payload.get("scanned_at"), "cuts": cuts,
             "fetch_failures": ff if isinstance(ff, int) and not isinstance(ff, bool) else 0}
