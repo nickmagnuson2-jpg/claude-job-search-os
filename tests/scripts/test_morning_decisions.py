@@ -200,3 +200,22 @@ def test_a_question_at_the_cap_is_not_cut():
     q = _q(1, group="policy", question="y" * mp.QUESTION_CHARS)
     sec = _section(_page({"error": None, "board": "ok", "open": [q]}), "decisions")
     assert "y" * mp.QUESTION_CHARS in sec and "\u2026" not in sec
+
+
+def test_a_question_asked_over_a_prior_ruling_names_the_override():
+    q = _q(1, group="policy", not_answered={"topics": ["topic-a", "topic-b"],
+                                             "reason": "the ruling predates the change"})
+    sec = _section(_page({"error": None, "board": "ok", "open": [q]}), "decisions")
+    assert "overrides topic-a, topic-b: the ruling predates the change" in sec
+
+
+def test_no_override_line_without_not_answered():
+    sec = _section(_page({"error": None, "board": "ok", "open": [_q(1, group="policy")]}),
+                   "decisions")
+    assert "overrides" not in sec
+
+
+def test_a_group_exactly_at_the_cap_has_no_more_line():
+    qs = [_q(i, group="policy") for i in range(mp.MAX_ITEMS)]
+    sec = _section(_page({"error": None, "board": "ok", "open": qs}), "decisions")
+    assert sec.count("<li") == mp.MAX_ITEMS and "more:" not in sec
