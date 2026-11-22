@@ -541,3 +541,174 @@ def test_an_empty_board_flag_with_a_corrupt_board_field_still_reads(tmp_path):
         encoding="utf-8")
     assert cq.read(tmp_path)["empty_boards"] == [
         {"name": "Acme", "ats": None, "slug": None, "detected_on": None}]
+
+
+# --- non-ASCII names (funnel-intake next item, 2026-11-18; overnight S14 2026-11-21) -----
+# A company name with an A-ring produced a slug variant that kept the non-ASCII letter, and the
+# two ASCII variants DROPPED it ("cme..." instead of "acme..."), so the most likely board slug
+# was never probed. The fetchers have percent-encoded slugs since 35a0ff0f, so the variant no
+# longer raises; what is left is the missed board. Names below are invented.
+
+def test_slug_candidates_are_ascii_for_accented_names():
+    for name in ("Åcme Studio", "Café Exämple", "Acmeña Labs", "Brødr Acme", "Straße AI"):
+        for slug in cq.slug_candidates(name):
+            assert slug.isascii(), (name, slug)
+
+
+def test_slug_candidates_fold_accented_letters_instead_of_dropping_them():
+    s = cq.slug_candidates("Åcme Studio")
+    assert "acmestudio" in s and "acme-studio" in s
+    assert "cmestudio" not in s
+    assert "cafeexample" in cq.slug_candidates("Café Exämple")
+    assert "acmena" in cq.slug_candidates("Acmeña Labs")
+
+
+def test_slug_candidates_fold_letters_nfkd_cannot_decompose():
+    assert "brodracme" in cq.slug_candidates("Brødr Acme")
+    assert "strasse" in cq.slug_candidates("Straße AI")
+    assert "aeroskobing" in cq.slug_candidates("Ærøskøbing")
+
+
+def test_slug_candidates_unchanged_for_ascii_names():
+    assert cq.slug_candidates("Northwind") == ["northwind", "northwindai"]
+    assert cq.slug_candidates("Acme AI")[:3] == ["acmeai", "acme-ai", "acme"]
+
+
+def test_detect_board_with_no_ascii_slug_is_indeterminate_not_absent():
+    """A name that folds to nothing gives no slug to probe. "No board" would be a claim
+    nothing checked, so the company must stay queued (BoardCheckIndeterminate)."""
+    calls = []
+
+    def fetch(slug, errors):
+        calls.append(slug)
+        return []
+
+    assert cq.slug_candidates("株式会社") == []
+    with pytest.raises(cq.BoardCheckIndeterminate):
+        cq.detect_board("株式会社", fetchers={"ashby": fetch})
+    assert calls == []
+
+
+def test_slug_candidates_fold_letters_that_appear_only_after_decomposition():
+    # NFKD turns o-slash-acute into o-slash plus a mark; the map must still see the o-slash.
+    assert "ocme" in cq.slug_candidates("Ǿcme")
+    assert "aecme" in cq.slug_candidates("Ǽcme")
+
+
+def test_slug_candidates_fold_more_latin_letters():
+    assert "hacmeworks" in cq.slug_candidates("Ħacme Works")
+    assert "ngurvik" in cq.slug_candidates("Ŋurvik")
+    assert "testas" in cq.slug_candidates("Ŧestas")
+    assert "ecme" in cq.slug_candidates("Əcme")
+
+
+def test_detect_board_is_indeterminate_when_the_fold_lost_a_letter_and_nothing_answered():
+    """A letter with no ASCII form is dropped, so the likely slug may never be probed.
+    "No board" would then rest on a guess, so the company stays queued."""
+    def nothing(slug, errors):   # every slug answers 404, as the real fetchers do
+        errors.append({"reason": "HTTP 404"})
+        return []
+
+    with pytest.raises(cq.BoardCheckIndeterminate):
+        cq.detect_board("Ꝺemo Labs", fetchers={"ashby": nothing})
+    with pytest.raises(cq.BoardCheckIndeterminate):
+        cq.detect_board("株式会社 Acme", fetchers={"ashby": nothing})
+
+
+def test_detect_board_still_returns_a_found_board_when_the_fold_lost_a_letter():
+    def found(slug, errors):
+        if slug == "emolabs":
+            return [{"title": "x"}]
+        errors.append({"reason": "HTTP 404"})
+        return []
+
+    assert cq.detect_board("Ꝺemo Labs", fetchers={"ashby": found}) == {
+        "ats": "ashby", "slug": "emolabs", "n_roles": 1}
+
+
+def test_detect_board_lossless_name_with_no_board_is_still_none():
+    def nothing(slug, errors):   # every slug answers 404, as the real fetchers do
+        errors.append({"reason": "HTTP 404"})
+        return []
+
+    assert cq.detect_board("Åcme Studio", fetchers={"ashby": nothing}) is None
+
+
+def test_detect_board_with_no_slug_and_no_letters_is_indeterminate():
+    """A blank name gives no slug and drops no letter, so only the empty-candidates guard
+    stops a "no board" verdict that no probe made (mutation r2 survivor)."""
+    calls = []
+
+    def fetch(slug, errors):
+        calls.append(slug)
+        return []
+
+    assert cq.slug_candidates("   ") == [] and not cq.fold_lost_letters("   ")
+    with pytest.raises(cq.BoardCheckIndeterminate):
+        cq.detect_board("   ", fetchers={"ashby": fetch})
+    assert calls == []
+
+
+def test_fold_lost_letters_sees_a_letter_that_decomposes_to_a_mark():
+    """U+FF9E is a letter (Lm) whose NFKD form is a combining mark. Judging categories after
+    decomposition missed it, so a mixed name passed as fully folded (Codex r2 F1)."""
+    name = "Acmeﾞ"
+    assert cq.fold_lost_letters(name)
+
+    def nothing(slug, errors):
+        errors.append({"reason": "HTTP 404"})
+        return []
+
+    with pytest.raises(cq.BoardCheckIndeterminate):
+        cq.detect_board(name, fetchers={"ashby": nothing})
+
+
+def test_fold_lost_letters_sees_a_letter_that_folds_to_whitespace_only():
+    """U+037A (Lm) decomposes to a space plus a mark: a non-empty fold that still adds no
+    slug character (Codex r3 F1). Kept means the fold contributes an ASCII letter or digit."""
+    name = "Acͺme"
+    assert cq.fold_lost_letters(name)
+
+    def nothing(slug, errors):
+        errors.append({"reason": "HTTP 404"})
+        return []
+
+    with pytest.raises(cq.BoardCheckIndeterminate):
+        cq.detect_board(name, fetchers={"ashby": nothing})
+
+
+@pytest.mark.parametrize("name, want", [
+    ("Acme–Labs", "acme-labs"),      # en dash
+    ("D’Acme Works", "d-acme-works"), # right single quotation mark
+    ("Acme Works", "acme-works"), # no-break space
+    ("Acme‐Works", "acme-works"), # Unicode hyphen
+])
+def test_slug_candidates_keep_non_ascii_separators_as_separators(name, want):
+    """The hyphenated variant used to turn any non-alphanumeric run into "-". Folding must
+    not drop a Unicode separator outright, or that variant is never probed (Grok F1)."""
+    assert want in cq.slug_candidates(name)
+    assert want.replace("-", "") in cq.slug_candidates(name)
+
+
+def test_slug_candidates_separator_names_match_the_pre_fold_behaviour():
+    # Pre-fold output for these names, recorded from main 34ee308d.
+    assert cq.slug_candidates("Acme–Labs")[:2] == ["acmelabs", "acme-labs"]
+    assert cq.slug_candidates("D’Acme Works")[:2] == ["dacmeworks", "d-acme-works"]
+
+
+def test_slug_candidates_treat_symbols_and_number_forms_as_separators():
+    """NFKD turns a trademark sign into "TM" and a superscript two into "2". Folding those
+    would glue them into the slug; the old code treated them as separators (S14 sweep)."""
+    s = cq.slug_candidates("Acme™ Works")
+    assert "acme-works" in s and "acmeworks" in s
+    assert not any("tm" in x for x in s)
+    assert "acme-works" in cq.slug_candidates("Acme² Works")
+
+
+def test_slug_candidates_keep_ascii_digits_inside_words():
+    assert "acme51-works" in cq.slug_candidates("Acme51 Works")
+
+
+def test_slug_candidates_drop_a_separately_typed_accent():
+    # "A" followed by U+030A COMBINING RING ABOVE: the mark is an accent, not a separator.
+    assert "acme-works" in cq.slug_candidates("Åcme Works")
