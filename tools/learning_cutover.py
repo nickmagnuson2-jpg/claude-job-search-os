@@ -264,9 +264,8 @@ def _after_memory(fields: dict, defect, memory_dir: Path, repo_root: Path) -> st
         return "closed"
     if ms.disposition.state == "defect":
         return "defect: promoted"
-    if (ms.due in ("no_number", "not_due") and fields.get("reopen_at") in (None, "")
-            and (ls._count(fields.get("occurrences", 0)) or 0) < 2):
-        return "not_due (below 2)"  # learning_state 231e2529 reads this as not_due
+    if ms.due in ("no_number", "not_due") and (ls._count(fields.get("occurrences", 0)) or 0) < 2:
+        return "not_due (below 2)"  # any open rule below 2 that is not due (Codex B7 r3 F2)
     return ms.due
 
 
@@ -352,11 +351,43 @@ def _code_cell(text: str) -> str:
     return f"{fence}{pad}{text}{pad}{fence}"
 
 
-def _promoted_lines(path: Path) -> list[str]:
-    """The live `promoted:` lines of a rule file's frontmatter block, verbatim and stripped."""
+def _has_yaml_comment(line: str) -> bool:
+    """True when a `key: value` line carries a YAML comment: a `#` after the closing quote of
+    a quoted value, or a ` #` in a plain value. A `#` inside quotes is part of the value."""
+    value = line.split(":", 1)[1].strip() if ":" in line else line.strip()
+    if value[:1] in ("'", '"'):
+        q, i = value[0], 1
+        while i < len(value):
+            if value[i] == q and not (q == '"' and value[i - 1] == "\\"):
+                if q == "'" and value[i + 1:i + 2] == "'":
+                    i += 2
+                    continue
+                return "#" in value[i + 1:]
+            i += 1
+        return False
+    return value.startswith("#") or " #" in value
+
+
+def _repaired_text(path: Path, repairs: list[dict]) -> str | None:
+    """The file's text with its current, applicable repairs applied in order (as
+    memory_transitions applies them), in memory only."""
     if not path.is_file():
-        return []
-    sp = mf.split(path.read_text(encoding="utf-8"))
+        return None
+    text = path.read_text(encoding="utf-8")
+    for fix in repairs:
+        if not fix["stale"] and text.count(fix["old"] + "\n") == 1:
+            text = text.replace(fix["old"] + "\n", fix["new"] + "\n", 1)
+    return text
+
+
+def _promoted_lines(path: Path, text: str | None = None) -> list[str]:
+    """The `promoted:` lines of a rule file's frontmatter block (from `text` when given,
+    else the live file), verbatim and stripped."""
+    if text is None:
+        if not path.is_file():
+            return []
+        text = path.read_text(encoding="utf-8")
+    sp = mf.split(text)
     block = sp[0] if sp else ""
     return [ln.strip() for ln in block.split("\n") if ln.strip().startswith("promoted:")]
 
@@ -452,7 +483,12 @@ def build_report_entries(memory_dir: Path, repo_root: Path, inputs: dict,
             stale = live != listed  # the input is a snapshot; the table shows the live line (r2 F3)
             if stale:
                 line += " STALE: the input listed a different line"
-            if r.get("file") in touched and not stale:
+            fixed = _promoted_lines(Path(memory_dir) / str(r.get("file")), _repaired_text(
+                Path(memory_dir) / str(r.get("file")),
+                [x for x in fm_repairs if x["file"] == r.get("file")]))
+            # covered only if the repaired line carries no YAML comment (Codex B7 r3 F1)
+            if (r.get("file") in touched and not stale and fixed
+                    and not any(_has_yaml_comment(ln) for ln in fixed)):
                 outcome = "covered: a current repair rewrites this line"
             elif not r.get("hash_is_yaml_comment") and not stale:
                 outcome = "no change needed: the # is inside the value and no proposal rewrites the line"

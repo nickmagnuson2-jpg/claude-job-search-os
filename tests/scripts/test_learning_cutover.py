@@ -826,3 +826,32 @@ def test_a_comment_line_covered_by_a_current_repair_does_not_block(world, tmp_pa
     inputs["frontmatter"] = md
     _, _, _, unresolved = lc.build_report_entries(mem, repo, inputs)
     assert unresolved == []
+
+
+def test_r3_F1_a_repair_that_keeps_the_comment_does_not_cover(world, tmp_path):
+    mem, repo, inputs = world
+    (mem / "feedback_gamma.md").write_text(RULE.format(name="g", occ=1, promoted='"no"  # note', gate="x"),
+                                           encoding="utf-8")
+    _hand(world, tmp_path, [{"file": "feedback_gamma.md", "promoted_lines_verbatim": ['  promoted: "no"  # note'],
+                             "value_as_read": "no", "hash_is_yaml_comment": True}])
+    md = tmp_path / "props" / "fm.md"
+    md.write_text(_fm_section(1, "feedback_gamma.md", lc.file_sha(mem / "feedback_gamma.md"),
+                              old='  promoted: "no"  # note', new='  promoted: "no"  # still here'), encoding="utf-8")
+    inputs["frontmatter"] = md
+    _, _, _, unresolved = lc.build_report_entries(mem, repo, inputs)
+    assert unresolved == ["feedback_gamma.md"]
+
+
+@pytest.mark.parametrize("line,expected", [
+    ('promoted: "no"  # c', True), ('promoted: "yes (PR #1)"', False), ("promoted: 'a #b'", False),
+    ("promoted: 'it''s #1'  # c", True), ("promoted: no # c", True), ("promoted: a#b", False),
+    ('promoted: "a \\" #b"', False), ("promoted: # c", True)])
+def test_r3_F1_yaml_comment_detection(line, expected):
+    assert lc._has_yaml_comment(line) is expected
+
+
+def test_r3_F2_below_2_with_a_threshold_keeps_the_label(world):
+    mem, repo, _ = world
+    rows = lc.memory_transitions(mem, repo, [{"file": "feedback_beta.md", "proposed_reopen_at": 3,
+                                              "status": "number"}], [])
+    assert {r["file"]: r["after"] for r in rows}["feedback_beta.md"] == "not_due (below 2)"
