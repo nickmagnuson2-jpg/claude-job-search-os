@@ -23,7 +23,7 @@ D = dt.date
     ("no", "open"), ("not yet", "open"), ("false", "open"),
     ("no -- REOPENED 2026-09-16", "open"), ("", "open"), (None, "open"),
     ("partial -- hook landed, test owed", "partial"),
-    ("yes -- exit1, 2026-11-21", "closed"), ("Yes (voice-reference Exemplar 8, 2026-11-19)", "closed"),
+    ("yes -- exit1, 2026-11-21", "closed"), ("Yes (framework/style.md example 3, 2026-01-02)", "closed"),
     ("Yes: encoded (framework/artifact-workflow.md)", "closed"),
     ("skill", "closed"), ("hook", "closed"), ("principle", "closed"), ("hard-rule", "closed"),
     ("framework", "closed"), ("script", "closed"), ("doc", "closed"), ("schema", "closed"),
