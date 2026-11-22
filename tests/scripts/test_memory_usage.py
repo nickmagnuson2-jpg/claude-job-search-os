@@ -370,9 +370,11 @@ def test_a_segment_left_empty_after_cd_or_assignments_is_skipped(tmp_path, cmd):
 def test_grep_like_lines_inside_another_file_read_are_not_entries(tmp_path):
     """Real data, 2026-11-22: 1,233 such lines were citations in docs (`x.md:89,269`), not
     rule text. Reverted from 35c44a3e."""
-    res = _scan(tmp_path, [_tool_use("t1", "Read", {"file_path": "/x/output/report.md"}),
-                           _tool_result("t1", "12\tfeedback_alpha_rule.md:3:the rule text")])
-    assert res.events == []
+    for text in ("12\tfeedback_alpha_rule.md:3:the rule text",
+                 "/x/proj/memory/feedback_alpha_rule.md:3:saved grep output in a report"):
+        res = _scan(tmp_path / text[:2].strip("/\t"), [
+            _tool_use("t1", "Read", {"file_path": "/x/output/report.md"}), _tool_result("t1", text)])
+        assert res.events == []
 
 
 @pytest.mark.parametrize("out", [
