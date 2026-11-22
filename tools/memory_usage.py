@@ -142,8 +142,16 @@ def _transcripts(project_dir: Path) -> list[tuple[Path, str]]:
     return out
 
 
+def sibling_dirs(project_dir: Path) -> list[Path]:
+    """Other project folders whose name contains this one's (worktrees, scratchpads)."""
+    project_dir = Path(project_dir)
+    key = project_dir.name.strip("-")
+    return sorted(d for d in project_dir.parent.iterdir()
+                  if d.is_dir() and d != project_dir and key in d.name)
+
+
 def collect(project_dir: Path, stems: set[str], exclude_sessions: Iterable[str] = (),
-            sibling_glob: str | None = None) -> ScanResult:
+            sibling_dirs: Iterable[Path] = ()) -> ScanResult:
     """Scan every transcript under project_dir for content entries of the given stems."""
     project_dir = Path(project_dir)
     excluded = set(exclude_sessions)
@@ -219,8 +227,7 @@ def collect(project_dir: Path, stems: set[str], exclude_sessions: Iterable[str] 
                             add(session, stem, "file_attachment", day,
                                 (session, stem, "file_attachment", rec.get("uuid") or line))
     gaps = {"heredoc_refs": heredoc_refs,
-            "sibling_transcripts_not_scanned": len(glob.glob(os.path.join(sibling_glob, "*.jsonl")))
-            if sibling_glob else 0}
+            "sibling_transcripts_not_scanned": sum(len(list(Path(d).rglob("*.jsonl"))) for d in sibling_dirs)}
     return ScanResult(events, first, last, gaps, transcripts=len(files))
 
 
@@ -266,3 +273,220 @@ def summarize(events: list[Event], reconfirms: Callable[[int], bool]) -> dict[st
         row["sessions"] = len(row.pop("_sessions"))
         row["use_days"] = sorted(row["use_days"])
     return out
+
+
+# ---------------------------------------------------------------------------- output
+# Every rule below (kind, half-life, breadth, state) is learning_state's; this layer only
+# applies it to the observed entries and writes the result.
+
+LIVE_MEMORY_DIR = Path.home() / ".claude" / "projects" / "-Users-mag-Documents-Obsidian-30-projects-job-search" / "memory"
+USAGE_FILE = "memory-usage.jsonl"
+CLASS_MAP_FILE = "memory-classes.jsonl"
+KIND_ORDER = ("MACHINERY", "FACT", "LESSON")
+NO_KIND = "no kind"
+MIN_GAPS_FOR_PROPOSAL = 30
+GAPS_NOTE = ("Observation has known gaps (Python heredocs that open a file, sibling-folder "
+             "transcripts), so 'unverified' means not re-confirmed and never claims a rule is unused.")
+KIND_RELIABILITY_NOTE = ("Two independent full reads agree on a file's kind about 70% of the time "
+                         "(21/31 MACHINERY re-read overlap; 26/40 against 6/12 before the merge).")
+
+
+def _iso(d: date | None) -> str | None:
+    return d.isoformat() if d else None
+
+
+def load_class_rows(path: Path) -> list[dict] | None:
+    """memory-classes.jsonl rows, or None when the file does not exist."""
+    if not Path(path).exists():
+        return None
+    rows = []
+    for line in Path(path).read_text().splitlines():
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict) and row.get("file"):
+            rows.append(row)
+    return rows
+
+
+def build_rows(summary: dict[str, dict], stems: Iterable[str], class_rows: list[dict] | None,
+               window_start: date, window_end: date) -> list[dict]:
+    """One row per rule file, entered or not, with learning_state's kind and state."""
+    import learning_state as ls
+    by_file = {r["file"]: r for r in class_rows or []}
+    rows = []
+    for stem in sorted(stems):
+        cls = by_file.get(stem)
+        kind = ls.kind_of(cls)
+        s = summary.get(stem) or {}
+        last = s.get("last_context_entry")
+        rows.append({
+            "file": stem,
+            "kind": kind,
+            "kind_source": cls.get("source") if cls else None,
+            "state": ls.freshness_state(kind, last, window_start, window_end),
+            "last_context_entry": _iso(last),
+            "last_entry_any_session": _iso(s.get("last_entry_any_session")),
+            "channels": s.get("channels", {}),
+            "sessions": s.get("sessions", 0),
+            "broad_session_entries": s.get("broad_session_entries", 0),
+        })
+    return rows
+
+
+def _p75(values: list[int]) -> int | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    return ordered[-(-3 * len(ordered) // 4) - 1]
+
+
+def build_meta(rows: Iterable[dict], scan: ScanResult, summary: dict[str, dict],
+               previous_counts: dict | None, class_map: str | None = None) -> dict:
+    """The meta row: counts by kind and state, the window, the rules used, known gaps, and
+    each kind's interval distribution with a half-life proposal for Nick (never applied)."""
+    import learning_state as ls
+    rows = list(rows)
+    counts: dict[str, Counter] = defaultdict(Counter)
+    gaps: dict[str, list[int]] = defaultdict(list)
+    for r in rows:
+        counts[r["kind"] or NO_KIND][r["state"]] += 1
+        if r["kind"]:
+            gaps[r["kind"]] += use_gaps(list((summary.get(r["file"]) or {}).get("use_days", [])))
+    window_days = (scan.window_end - scan.window_start).days
+    by_kind = {}
+    for kind, half_life in ls.HALF_LIFE_DAYS.items():
+        g = gaps.get(kind, [])
+        p75 = _p75(g)
+        eligible = len(g) >= MIN_GAPS_FOR_PROPOSAL and window_days > half_life
+        by_kind[kind] = {"n": len(g), "p75": p75, "half_life_days": half_life,
+                         "proposed_half_life_days": p75 if eligible else None,
+                         "proposal_note": (f"Data-derived p75 from {len(g)} gaps; a proposal for Nick, "
+                                           "never applied by this script.") if eligible else None}
+    return {
+        "type": "meta",
+        "generated_at": datetime.now(LOCAL_TZ).isoformat(timespec="seconds"),
+        "window_start": _iso(scan.window_start),
+        "window_end": _iso(scan.window_end),
+        "window_days": window_days,
+        "transcripts": scan.transcripts,
+        "files": len(rows),
+        "audit_breadth": ls.AUDIT_BREADTH,
+        "half_life_days": dict(ls.HALF_LIFE_DAYS),
+        "class_map": class_map,
+        "kind_reliability": KIND_RELIABILITY_NOTE,
+        "counts": {k: dict(v) for k, v in counts.items()},
+        "previous_counts": previous_counts,
+        "gaps_by_kind": by_kind,
+        "known_gaps": {**scan.gaps, "note": GAPS_NOTE},
+    }
+
+
+def _is_live(path: Path) -> bool:
+    try:
+        Path(path).resolve().relative_to(LIVE_MEMORY_DIR.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def write_usage(path: Path, rows: Iterable[dict], meta: dict) -> None:
+    """Write the meta row then one row per file, atomically. A test never writes live data."""
+    path = Path(path)
+    if os.environ.get("PYTEST_CURRENT_TEST") and _is_live(path):
+        raise RuntimeError(f"refusing to write {path}: the live memory folder, from a test")
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w") as fh:
+        fh.write(json.dumps(meta) + "\n")
+        for r in rows:
+            fh.write(json.dumps(r) + "\n")
+    os.replace(tmp, path)
+
+
+def _read_meta(path: Path) -> dict | None:
+    try:
+        with open(path) as fh:
+            meta = json.loads(fh.readline())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return meta if isinstance(meta, dict) and meta.get("type") == "meta" else None
+
+
+def read_previous_counts(path: Path) -> dict | None:
+    meta = _read_meta(path)
+    return meta.get("counts") if meta else None
+
+
+def standup_line(path: Path) -> str | None:
+    """One /standup line: current / unverified / unknown by kind, and the change since the
+    previous run. None when the file does not exist (the job has not run)."""
+    meta = _read_meta(path)
+    if meta is None:
+        return None
+    counts = meta.get("counts") or {}
+    parts = []
+    for kind in KIND_ORDER:
+        c = counts.get(kind, {})
+        parts.append(f"{kind} {c.get('current', 0)} current / {c.get('unverified', 0)} unverified / "
+                     f"{c.get('unknown_not_observed', 0)} unknown")
+    parts.append(f"{NO_KIND} {sum(counts.get(NO_KIND, {}).values())}")
+    prev = meta.get("previous_counts")
+    if prev is None:
+        change = "This is the first run"
+    else:
+        deltas = []
+        for kind in KIND_ORDER + (NO_KIND,):
+            now_c, old_c = counts.get(kind, {}), prev.get(kind, {})
+            d = [f"{st} {now_c.get(st, 0) - old_c.get(st, 0):+d}"
+                 for st in ("current", "unverified", "unknown_not_observed", "unknown_no_kind")
+                 if now_c.get(st, 0) != old_c.get(st, 0)]
+            if d:
+                deltas.append(f"{kind} " + ", ".join(d))
+        change = ("Change since last run: " + "; ".join(deltas)) if deltas else "No change since last run"
+    return (f"Memory freshness (context entry, {meta.get('window_start')} to {meta.get('window_end')}): "
+            + " · ".join(parts) + f" (unverified = not re-confirmed, not unused). {change}.")
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+    import sys
+    import learning_state as ls
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--project-dir", type=Path, default=LIVE_MEMORY_DIR.parent,
+                    help="Claude Code project folder holding the session transcripts")
+    ap.add_argument("--memory-dir", type=Path, help="default: <project-dir>/memory")
+    ap.add_argument("--class-map", type=Path, help=f"default: <memory-dir>/{CLASS_MAP_FILE}")
+    ap.add_argument("--out", type=Path, help=f"default: <memory-dir>/{USAGE_FILE}")
+    ap.add_argument("--exclude-session", action="append", default=[])
+    ap.add_argument("--dry-run", action="store_true", help="print the meta row; write nothing")
+    ap.add_argument("--standup", action="store_true", help="print the /standup line from the last run")
+    a = ap.parse_args(argv)
+    memory_dir = a.memory_dir or a.project_dir / "memory"
+    out = a.out or memory_dir / USAGE_FILE
+    if a.standup:
+        line = standup_line(out)
+        print(line or f"Memory freshness: no run yet ({out} not found).")
+        return 0
+    class_map = a.class_map or memory_dir / CLASS_MAP_FILE
+    stems = memory_stems(memory_dir)
+    scan = collect(a.project_dir, stems, a.exclude_session,
+                   sibling_dirs=sibling_dirs(a.project_dir))
+    if scan.transcripts == 0 or scan.window_start is None:
+        print(f"memory_usage: no transcripts with timestamps under {a.project_dir}", file=sys.stderr)
+        return 2
+    summary = summarize(scan.events, ls.reconfirms)
+    class_rows = load_class_rows(class_map)
+    rows = build_rows(summary, stems, class_rows, scan.window_start, scan.window_end)
+    meta = build_meta(rows, scan, summary, read_previous_counts(out),
+                      class_map=str(class_map) if class_rows is not None else None)
+    if a.dry_run:
+        print(json.dumps(meta, indent=1))
+        return 0
+    write_usage(out, rows, meta)
+    print(standup_line(out))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

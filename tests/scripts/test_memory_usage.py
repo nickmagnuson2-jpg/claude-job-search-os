@@ -274,11 +274,18 @@ def test_the_window_is_the_first_and_last_timestamp_of_any_record(tmp_path):
 
 
 def test_sibling_project_folders_are_reported_as_a_gap(tmp_path):
+    """Folders whose name embeds the project's (worktrees, scratchpads) hold transcripts
+    this scan does not read, including their subagent transcripts."""
     mem = _mem(tmp_path)
-    sib = tmp_path / "proj-worktree-x"
-    _write(sib / "z.jsonl", [{"type": "user", "timestamp": "2026-11-20T18:00:00Z", "message": {"content": "a"}}])
-    res = mu.collect(mem.parent, mu.memory_stems(mem), sibling_glob=str(tmp_path / "proj-*"))
-    assert res.gaps["sibling_transcripts_not_scanned"] == 1
+    rec = [{"type": "user", "timestamp": "2026-11-20T18:00:00Z", "message": {"content": "a"}}]
+    _write(tmp_path / "proj-worktree-x" / "z.jsonl", rec)
+    _write(tmp_path / "-tmp-scratch--proj-y" / "z.jsonl", rec)
+    _write(tmp_path / "-tmp-scratch--proj-y" / "z" / "subagents" / "a.jsonl", rec)
+    _write(tmp_path / "other" / "z.jsonl", rec)
+    assert mu.sibling_dirs(mem.parent) == sorted([tmp_path / "-tmp-scratch--proj-y", tmp_path / "proj-worktree-x"])
+    res = mu.collect(mem.parent, mu.memory_stems(mem), sibling_dirs=mu.sibling_dirs(mem.parent))
+    assert res.gaps["sibling_transcripts_not_scanned"] == 3
+    assert mu.collect(mem.parent, mu.memory_stems(mem)).gaps["sibling_transcripts_not_scanned"] == 0
 
 
 # ---------------------------------------------------------------------------- breadth
