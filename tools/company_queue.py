@@ -327,9 +327,64 @@ def record_board_counts(repo_root: Path, counts: list[dict], today: str,
 
 # --- accept-time board check (decision 1, 2026-11-06) ---------------------------------
 
+# Lowercase letters NFKD does not decompose into an ASCII base letter plus a mark. Applied
+# AFTER NFKD, because some letters only appear there ("ǿ" decomposes to "ø" + a mark).
+_FOLD_EXTRA = str.maketrans({"ø": "o", "æ": "ae", "œ": "oe", "ß": "ss", "ł": "l", "đ": "d",
+                             "ð": "d", "þ": "th", "ı": "i", "ħ": "h", "ŋ": "ng", "ŧ": "t",
+                             "ə": "e", "ĸ": "k", "ſ": "s", "ƒ": "f"})
+
+
+def _fold_letter(c: str) -> str:
+    """One non-ASCII letter as ASCII: NFKD, then _FOLD_EXTRA, marks dropped, and anything
+    still non-ASCII turned into a space. "" or a space means the letter has no ASCII form."""
+    import unicodedata
+    out = unicodedata.normalize("NFKD", c).translate(_FOLD_EXTRA)
+    return "".join(x if x.isascii() else " " for x in out if not unicodedata.combining(x))
+
+
+def _ascii_fold(text: str) -> str:
+    """Lowercase ASCII, decided per ORIGINAL character:
+      - ASCII stays as it is;
+      - a letter is folded to its base letter ("Å" -> "a", "ø" -> "o"). Folding, not
+        dropping, is the point: the ASCII variants used to drop an accented letter outright,
+        so a company's most likely board slug ("acme..." for "Åcme ...") was never probed
+        (overnight S14, 2026-11-21). A letter no rule covers becomes a space, and
+        `fold_lost_letters` reports it;
+      - a combining mark (an accent typed separately) is dropped;
+      - anything else (a Unicode dash, curly apostrophe, no-break space, "™", "²") becomes a
+        space. It is a separator, which is what the hyphenated variant always made of it;
+        folding it through NFKD would glue "tm" or "2" into the slug (Grok F1)."""
+    import unicodedata
+    out = []
+    for c in text.lower():
+        if c.isascii():
+            out.append(c)
+        elif unicodedata.category(c).startswith("L"):
+            out.append(_fold_letter(c))
+        elif not unicodedata.category(c).startswith("M"):
+            out.append(" ")
+    return "".join(out)
+
+
+def fold_lost_letters(name: str) -> bool:
+    """True when folding dropped a letter (one with no ASCII form, e.g. CJK, or a Latin
+    letter outside _FOLD_EXTRA). The slugs built from such a name may miss the company's
+    real board, so "no board found" cannot be claimed from them (Codex F1, 2026-11-21).
+    Judged per ORIGINAL character, before decomposition: some letters decompose into a
+    combining mark alone (U+FF9E), so a category check after NFKD missed them (Codex r2 F1).
+    A letter counts as kept only if its fold contributes an ASCII letter or digit: some fold
+    to a bare space (U+037A), which no slug variant keeps (Codex r3 F1)."""
+    import unicodedata
+    return any(not c.isascii() and unicodedata.category(c).startswith("L")
+               and not re.search(r"[a-z0-9]", _fold_letter(c.lower()))
+               for c in (name or ""))
+
+
 def slug_candidates(name: str) -> list[str]:
-    base = (name or "").strip()
-    low = base.lower()
+    """Board slugs to probe for a company name, most likely first. Always ASCII: every
+    variant is built from the accent-folded name, so no variant carries a character a
+    board URL cannot take. A name that folds to nothing gives no candidates."""
+    low = _ascii_fold((name or "").strip())
     stripped = re.sub(r"[\s.,-]*(ai|inc|labs|hq)$", "", low).strip()
     out = []
     for s in (low, stripped):
@@ -337,8 +392,9 @@ def slug_candidates(name: str) -> list[str]:
                   s.replace(" ", "")):
             if v and v not in out:
                 out.append(v)
-    if stripped and f"{re.sub(r'[^a-z0-9]', '', stripped)}ai" not in out:
-        out.append(f"{re.sub(r'[^a-z0-9]', '', stripped)}ai")
+    base = re.sub(r"[^a-z0-9]", "", stripped)
+    if base and f"{base}ai" not in out:   # a bare "ai" would probe a stranger's board
+        out.append(f"{base}ai")
     return out
 
 
@@ -350,7 +406,8 @@ def _default_fetchers():
 
 
 class BoardCheckIndeterminate(Exception):
-    """A probe failed (timeout, 5xx, rate limit), so "no board found" cannot be claimed."""
+    """A probe failed (timeout, 5xx, rate limit), or no slug could be built from the name,
+    so "no board found" cannot be claimed."""
 
 
 def detect_board(name: str, fetchers: dict | None = None) -> dict | None:
@@ -369,12 +426,18 @@ def detect_board(name: str, fetchers: dict | None = None) -> dict | None:
     appended to its `errors` list) makes the result indeterminate: raise
     BoardCheckIndeterminate so the caller leaves the company queued instead of recording
     it outreach-only (review 2026-11-17, Codex/Grok F1). That holds when an empty board
-    was found too: the failed probe may have been a board with postings. None means
+    was found too: the failed probe may have been a board with postings. The same holds
+    when the name has no slug, or folding dropped a letter (`fold_lost_letters`): the
+    slug that was never built may be the board with postings (2026-11-21). None means
     every probe answered and none found a board."""
     fetchers = fetchers if fetchers is not None else _default_fetchers()
+    candidates = slug_candidates(name)
+    if not candidates:
+        # Nothing was probed, so "no board" would be a claim no check made.
+        raise BoardCheckIndeterminate(f"no ASCII board slug can be built from {name!r}")
     failed = []
     empty = None
-    for slug in slug_candidates(name):
+    for slug in candidates:
         for ats, fetch in fetchers.items():
             errors: list = []
             channel = _takes_errors(fetch)
@@ -392,6 +455,9 @@ def detect_board(name: str, fetchers: dict | None = None) -> dict | None:
                        for e in errors if not _is_not_found(e)]
     if failed:
         raise BoardCheckIndeterminate("; ".join(failed[:5]))
+    if fold_lost_letters(name):
+        raise BoardCheckIndeterminate(
+            f"{name!r} has a letter with no ASCII form, so its board slug may not have been tried")
     return empty
 
 
