@@ -162,7 +162,12 @@ The weekly discovery job writes here, not to the inbox (funnel-intake decision 3
 - `exists: false` is NOT zero: say `⚠️ discovery queue unreadable: <reason>`.
 - Nick decides each one in plain words; run the decision for him, one company at a time:
   `PYTHONIOENCODING=utf-8 python3 tools/company_queue.py --repo-root . decide --name "<Name>" --accept` (or `--reject --reason "<his words>"`).
-  Accept checks for a public Ashby / Greenhouse / Lever board and adds a scan target (outreach-only when no board is found, and say so). Reject records it so the collector never proposes it again (funnel-intake decision 1).
+  Accept checks for a public Ashby / Greenhouse / Lever board, then adds a scan target. The board check has three outcomes; say which one happened:
+  - **a board was found:** scan target with `ats` and `slug` (an empty board, 0 postings, is still a scan target and shows on the empty-board line below);
+  - **every probe answered and none found a board:** outreach-only target, and say so;
+  - **the check could not conclude:** `decide` returns `"code": "board_check_failed"`, writes nothing, and the company **stays queued**. This happens when a probe failed (for example a timeout, 5xx or rate limit), when no board slug can be built from the name, or when the name has a letter with no ASCII form and no board with postings was found (the slug that was never built may be the real board). Show Nick the `message` (it carries the reason) and ask whether to retry the accept later or reject. Never record it outreach-only on his behalf, and do not add the target by hand with `act_apply.py`: that adds the scan target without moving the queue entry, which then stays pending.
+  Any other error code (for example `already_known` or `act_apply_failed`) also writes nothing to the queue and leaves the company queued: show Nick the `message` as it is, and do not describe it as one of the three outcomes above.
+  Reject records it so the collector never proposes it again (funnel-intake decision 1).
 - Reading never consumes; nothing is acknowledged. A company leaves the queue only when decided.
 - Zero pending renders nothing.
 
