@@ -541,3 +541,36 @@ def test_a_print_naming_a_rule_after_another_memory_path_does_not_count(tmp_path
     res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": "cat memory/notes.md-feedback_alpha_rule.md"}),
                            _tool_result("t1", "x")])
     assert res.events == []
+
+
+# ---------------------------------------------------------------------------- Grok r2 (2026-11-22)
+
+@pytest.mark.parametrize("cmd", [
+    "grep -rn feedback_alpha_rule output/",
+    "grep -rn 'feedback_alpha_rule' output/",
+    "grep -rl feedback_alpha_rule .",
+    "rg feedback_alpha_rule memory/",
+    "grep -rn feedback_alpha_rule.md memory/",
+    "grep -e feedback_alpha_rule -rn output/",
+    f"grep -l promoted {MP}feedback_alpha_rule.md",
+    f"grep -c promoted {MP}feedback_alpha_rule.md",
+    f"rg --files-with-matches promoted {MP}feedback_alpha_rule.md",
+    f"grep -q promoted {MP}feedback_alpha_rule.md",
+])
+def test_a_grep_for_a_rule_name_or_one_that_prints_no_content_is_not_a_print(tmp_path, cmd):
+    """Grok r2 F1 (P0): the pattern is a search for the name, not the file; -l, -c and -q
+    print names or counts, not the file's text."""
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", "output/x.md:3:hit")])
+    assert [e for e in res.events if e.channel == "bash_print"] == []
+
+
+@pytest.mark.parametrize("cmd", [
+    f"grep -n promoted {MP}feedback_alpha_rule.md",
+    f"grep -e promoted -n {MP}feedback_alpha_rule.md",
+    f"rg -n 'reopen' {MP}feedback_alpha_rule.md",
+    "cd memory && grep -n promoted feedback_alpha_rule.md",
+    f"grep -A3 -n promoted {MP}feedback_alpha_rule.md",
+])
+def test_a_grep_of_a_rule_file_with_content_output_is_a_print(tmp_path, cmd):
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", "3:promoted: no")])
+    assert _chans(res.events) == [("feedback_alpha_rule", "bash_print")]

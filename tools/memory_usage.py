@@ -31,6 +31,7 @@ import glob
 import json
 import os
 import re
+import shlex
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -118,6 +119,57 @@ def _names_in_memory(segment: str, stems: set[str]) -> set[str]:
     return found
 
 
+SEARCH_VERBS = {"grep", "rg"}
+# Flags that print file names, counts or nothing, never the file's text.
+NO_CONTENT_LONG = {"--files-with-matches", "--files-without-match", "--count", "--count-matches",
+                   "--quiet", "--files"}
+NO_CONTENT_SHORT = set("lLcq")
+# Flags whose value is the next token (or the rest of a short cluster).
+VALUE_SHORT = set("efABCmgtTM")
+VALUE_LONG = {"--regexp", "--file", "--glob", "--type", "--type-not", "--max-count", "--include",
+              "--exclude", "--context", "--after-context", "--before-context", "--max-columns"}
+PATTERN_SHORT = set("ef")
+PATTERN_LONG = {"--regexp", "--file"}
+
+
+def _search_file_args(segment: str) -> list[str] | None:
+    """The file arguments of a grep/rg segment, or None when it prints no file text.
+
+    The pattern is a search for text, not a file that was read (Grok r2 F1): it is the
+    first operand unless -e/-f gave it. -l, -c, -q and their long forms print names or
+    counts only."""
+    try:
+        toks = shlex.split(segment)
+    except ValueError:
+        toks = segment.split()
+    args, explicit_pattern, i = [], False, 1
+    while i < len(toks):
+        t = toks[i]
+        if t == "--":
+            args += toks[i + 1:]
+            break
+        if t.startswith("--"):
+            name = t.split("=", 1)[0]
+            if name in NO_CONTENT_LONG:
+                return None
+            explicit_pattern |= name in PATTERN_LONG
+            if name in VALUE_LONG and "=" not in t:
+                i += 1
+        elif t.startswith("-") and len(t) > 1:
+            for j, ch in enumerate(t[1:], 1):
+                if ch in NO_CONTENT_SHORT:
+                    return None
+                if ch in VALUE_SHORT:
+                    explicit_pattern |= ch in PATTERN_SHORT
+                    if j == len(t) - 1:
+                        i += 1
+                    break
+        else:
+            args.append(t)
+        i += 1
+    return args if explicit_pattern else args[1:]
+
+
 def classify_bash(command: str, stems: set[str]) -> tuple[set[str], set[str], int]:
     """(printed stems, written stems, heredoc references) for one Bash command.
 
@@ -135,8 +187,12 @@ def classify_bash(command: str, stems: set[str]) -> tuple[set[str], set[str], in
             toks = toks[2:] if toks[0] == "cd" else toks[1:]
         if not toks:
             continue
-        found = _names_in_memory(seg, stems)
         verb = toks[0].split("/")[-1]
+        if verb in SEARCH_VERBS:
+            files = _search_file_args(" ".join(toks))
+            found = _names_in_memory(" ".join(files), stems) if files else set()
+        else:
+            found = _names_in_memory(seg, stems)
         if REDIRECT_TO_RULE.search(seg) or (verb == "sed" and "-i" in toks) or verb in WRITE_VERBS:
             written |= found
         elif verb in PRINT_VERBS:
