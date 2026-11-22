@@ -179,6 +179,20 @@ def check_text(new_text: str, old_text: str | None = None, *, memory_dir: Path |
     return _validate(fields, keys, memory_dir, repo_root, skills_home)
 
 
+def _read_checked(path: Path, expect_sha256: str | None) -> str:
+    """The file's text, refusing when expect_sha256 is given and the bytes read now differ:
+    a change that lands between the caller's hash and this read (a hook stamping
+    last_cited, another session) must not be overwritten and reported applied (77's Codex
+    r1 on the apply step, F1 P0, 2026-11-22)."""
+    data = Path(path).read_bytes()
+    if expect_sha256 is not None:
+        actual = hashlib.sha256(data).hexdigest()
+        if actual != expect_sha256:
+            raise WriteRefused([f"{Path(path).name} has sha256 {actual}; the caller expects "
+                                f"{expect_sha256}, so the file changed since it was read"])
+    return data.decode("utf-8")
+
+
 def _validate(fields, keys, memory_dir, repo_root, skills_home) -> list[str]:
     import learning_state  # same folder; imported here so neither module loads the other at import
     return learning_state.validate_fields(fields, keys=keys, memory_dir=memory_dir,
@@ -296,7 +310,8 @@ def _atomic_write(path: Path, text: str) -> None:
         raise
 
 
-def record_fire(path: Path, evidence: str, *, today: _dt.date | None = None) -> int:
+def record_fire(path: Path, evidence: str, *, today: _dt.date | None = None,
+                expect_sha256: str | None = None) -> int:
     """Record one witnessed fire: occurrences + 1, with its evidence. Returns the new count.
 
     The ONLY code path that changes `occurrences` (org 68 ruling, 2026-11-22, flagged for
@@ -308,7 +323,8 @@ def record_fire(path: Path, evidence: str, *, today: _dt.date | None = None) -> 
     carry it too); `evidence` is blank or carries no YYYY-MM-DD date; the frontmatter has a
     defect; `occurrences` is missing or not a non-negative int. On success it rewrites only
     the occurrences line and appends one dated line to the end of the body:
-    "- Fire <n> recorded <today>: <evidence>".
+    "- Fire <n> recorded <today>: <evidence>". With expect_sha256, it also refuses when the
+    file's bytes no longer hash to it.
     """
     if os.environ.get("CLAUDECODE") != "1":
         raise WriteRefused(["record_fire runs only inside a Claude Code session (CLAUDECODE=1); "
@@ -316,7 +332,7 @@ def record_fire(path: Path, evidence: str, *, today: _dt.date | None = None) -> 
     evidence = (evidence or "").strip()
     if not evidence or not re.search(r"\b\d{4}-\d{2}-\d{2}\b", evidence):
         raise WriteRefused(["evidence must say what fired and carry its YYYY-MM-DD date"])
-    text = Path(path).read_text(encoding="utf-8")
+    text = _read_checked(path, expect_sha256)
     fields, defect = read(text)
     if defect:
         raise WriteRefused([f"frontmatter: {defect.code}: {defect.detail}"])
@@ -356,12 +372,9 @@ def repair(path: Path, *, expect_sha256: str, new_block: str, intended: dict,
     if os.environ.get("CLAUDECODE") != "1":
         raise WriteRefused(["repair runs only inside a Claude Code session (CLAUDECODE=1)"])
     path = Path(path)
-    data = path.read_bytes()  # a symlink is refused by _atomic_write, before any write
-    actual = hashlib.sha256(data).hexdigest()
-    if actual != expect_sha256:
-        raise WriteRefused([f"{path.name} has sha256 {actual}; the proposal expects "
-                            f"{expect_sha256}, so the file changed since the proposal"])
-    text = data.decode("utf-8")
+    if not expect_sha256:
+        raise WriteRefused(["repair needs the proposal's sha256; it is never optional here"])
+    text = _read_checked(path, expect_sha256)  # a symlink is refused by _atomic_write
     m = _BLOCK.match(text)
     if not m or m.group(1) is None:
         raise WriteRefused(["frontmatter: the file has no ---/--- block to repair"])
@@ -473,7 +486,8 @@ def _old_comments(block: str) -> dict[int, str]:
 
 
 def write(path: Path, updates: dict, *, memory_dir: Path | None = None,
-          repo_root: Path | None = None, skills_home: Path | None = None) -> dict:
+          repo_root: Path | None = None, skills_home: Path | None = None,
+          expect_sha256: str | None = None) -> dict:
     """Set `updates` in the frontmatter of `path`, validated, atomically. Returns the new fields.
 
     An existing key's line (and any continuation lines indented under it) is replaced in
@@ -486,7 +500,8 @@ def write(path: Path, updates: dict, *, memory_dir: Path | None = None,
     update reads back different from what was asked; any field not named in `updates`
     changed; or learning_state.validate_fields reports a defect in an updated key.
     `memory_dir` (default: the file's own folder) and `repo_root` are passed to the
-    validator to resolve pointers and paths.
+    validator to resolve pointers and paths. `expect_sha256`, when given, refuses a file
+    whose bytes changed since the caller hashed them; None keeps the unchecked behavior.
     """
     reasons = [f"{k}: never machine-written (use record_fire for a witnessed fire)"
                for k in updates if k in NEVER_MACHINE_WRITTEN]
@@ -496,7 +511,7 @@ def write(path: Path, updates: dict, *, memory_dir: Path | None = None,
         reasons.append("nothing to write")
     if reasons:
         raise WriteRefused(reasons)
-    text = Path(path).read_text(encoding="utf-8")
+    text = _read_checked(path, expect_sha256)
     fields, defect = read(text)
     if defect:
         raise WriteRefused([f"frontmatter: {defect.code}: {defect.detail}"])

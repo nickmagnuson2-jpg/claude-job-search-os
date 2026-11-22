@@ -574,3 +574,39 @@ def test_comment_check_follows_line_shifts_between_updates(tmp_path):
     p2 = _file(tmp_path, text2, "feedback_second.md")
     mf.write(p2, {"reopen_gate": "single", "promoted": "partial -- half"})
     assert "terminal: no  # judgment" in p2.read_text(encoding="utf-8")
+
+
+# ------------------------------------------------------------------ expect_sha256 (77's Codex r1 on apply, F1 P0)
+
+def _sha(p):
+    import hashlib
+    return hashlib.sha256(p.read_bytes()).hexdigest()
+
+
+def test_write_refuses_a_file_changed_after_the_caller_hashed_it(tmp_path):
+    p = _file(tmp_path)
+    seen = _sha(p)
+    changed = RULE.replace("  last_cited: 2026-11-01", "  last_cited: 2026-11-22")  # e.g. a stamp hook
+    p.write_text(changed, encoding="utf-8")
+    with pytest.raises(mf.WriteRefused) as e:
+        mf.write(p, {"reopen_at": 3}, expect_sha256=seen)
+    assert "sha256" in str(e.value)
+    assert p.read_text(encoding="utf-8") == changed
+
+
+def test_write_with_the_current_sha_proceeds(tmp_path):
+    p = _file(tmp_path)
+    mf.write(p, {"reopen_at": 3}, expect_sha256=_sha(p))
+    assert mf.read_file(p)[0]["reopen_at"] == 3
+
+
+def test_record_fire_refuses_a_file_changed_after_the_caller_hashed_it(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDECODE", "1")
+    p = _file(tmp_path)
+    seen = _sha(p)
+    changed = RULE.replace("  last_cited: 2026-11-01", "  last_cited: 2026-11-22")
+    p.write_text(changed, encoding="utf-8")
+    with pytest.raises(mf.WriteRefused):
+        mf.record_fire(p, "2026-11-22 a fire", expect_sha256=seen)
+    assert p.read_text(encoding="utf-8") == changed
+    assert mf.record_fire(p, "2026-11-22 a fire", expect_sha256=_sha(p)) == 4

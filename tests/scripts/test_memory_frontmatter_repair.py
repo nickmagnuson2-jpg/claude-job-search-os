@@ -342,3 +342,14 @@ def test_several_comments_travel_separated_by_semicolons(tmp_path):
     mf.repair(p, expect_sha256=_sha(p), new_block=new,
               intended={"promoted": "no", "exit_path": "exit1"},
               body_note="> 2026-11-22 note: moved comments: first; moved: second")
+
+
+@pytest.mark.parametrize("sha", [None, ""])
+def test_repair_requires_a_sha(tmp_path, sha):
+    # repair() shares write()'s optional check; for repair the sha is never optional.
+    p = _file(tmp_path, RAW[0])
+    before = p.read_bytes()
+    with pytest.raises(mf.WriteRefused) as e:
+        mf.repair(p, expect_sha256=sha, new_block=RAW[1], intended=RAW[2])
+    assert "sha256" in str(e.value)
+    assert p.read_bytes() == before
