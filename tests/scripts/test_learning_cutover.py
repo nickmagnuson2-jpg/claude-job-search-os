@@ -715,22 +715,69 @@ def test_G8_promoted_and_terminal_reads_terminal_before_and_after(world):
     assert (row["before"], row["after"]) == ("terminal", "terminal")
 
 
+
+def _hand(world, tmp_path, rows):
+    he = tmp_path / "props" / "hand.jsonl"
+    he.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    world[2]["hand_edit"] = he
+    return he
+
+
+def _hand_block(text):
+    return text.split("**Hand edit required (writer refuses commented line):**", 1)[1].split("**Defects", 1)[0]
+
+
 def test_hand_edit_rows_are_listed_and_bound(world, tmp_path):
     mem, repo, inputs = world
     before = _digest(world)
-    he = tmp_path / "props" / "hand.jsonl"
-    he.write_text(json.dumps({"file": "feedback_alpha.md", "promoted_lines_verbatim": ['  promoted: "no"  # note'],
-                              "value_as_read": "no", "hash_is_yaml_comment": True}) + "\n"
-                  + json.dumps({"file": "feedback_beta.md", "promoted_lines_verbatim": ['  promoted: "yes (PR #1)"'],
-                                "value_as_read": "yes (PR #1)", "hash_is_yaml_comment": False}) + "\n",
-                  encoding="utf-8")
-    inputs["hand_edit"] = he
+    (mem / "feedback_gamma.md").write_text(RULE.format(name="g", occ=1, promoted='"no"  # note', gate="x"),
+                                           encoding="utf-8")
+    (mem / "feedback_delta.md").write_text(RULE.format(name="d", occ=1, promoted='"yes (PR #1)"', gate="x"),
+                                           encoding="utf-8")
+    _hand(world, tmp_path, [
+        {"file": "feedback_gamma.md", "promoted_lines_verbatim": ['  promoted: "no"  # note'],
+         "value_as_read": "no", "hash_is_yaml_comment": True},
+        {"file": "feedback_delta.md", "promoted_lines_verbatim": ['  promoted: "yes (PR #1)"'],
+         "value_as_read": "yes (PR #1)", "hash_is_yaml_comment": False}])
     assert lc.cutover_digest(mem, repo, inputs) != before
-    text, _ = _report(world, tmp_path)
-    block = text.split("**Hand edit required (writer refuses commented line):**", 1)[1].split("**Defects", 1)[0]
+    block = _hand_block(_report(world, tmp_path)[0])
     assert "2 files." in block
-    assert "| `feedback_alpha.md` | `promoted: \"no\"  # note` | no | yes: keep beside the value or drop (your call) | no |" in block
-    assert "| `feedback_beta.md` | `promoted: \"yes (PR #1)\"` | yes (PR #1) | no | no |" in block
+    assert '| `feedback_gamma.md` | `promoted: "no"  # note` | `no` | yes: keep beside the value or drop (your call) | no |' in block
+    assert '| `feedback_delta.md` | `promoted: "yes (PR #1)"` | `yes (PR #1)` | no | no |' in block
     inputs["hand_edit"] = None
     text, _ = _report(world, tmp_path)
     assert "**Hand edit required (writer refuses commented line):**\n\ninput missing" in text
+
+
+def test_r2_F1_rewrites_only_when_a_current_repair_targets_the_promoted_line(world, tmp_path):
+    mem, _, inputs = world
+    sha = lc.file_sha(mem / "feedback_alpha.md")
+    md = tmp_path / "props" / "fm.md"
+    _hand(world, tmp_path, [{"file": "feedback_alpha.md", "promoted_lines_verbatim": ["  promoted: no"],
+                             "value_as_read": "no", "hash_is_yaml_comment": False}])
+    inputs["frontmatter"] = md
+    md.write_text(_fm_section(1, "feedback_alpha.md", sha, old="  type: feedback", new="  type: 'feedback'"),
+                  encoding="utf-8")
+    assert _hand_block(_report(world, tmp_path)[0]).rstrip().endswith("| no | no |")
+    md.write_text(_fm_section(1, "feedback_alpha.md", sha, old="  promoted: no", new="  promoted: 'no'"),
+                  encoding="utf-8")
+    assert _hand_block(_report(world, tmp_path)[0]).rstrip().endswith("| no | yes |")
+    md.write_text(_fm_section(1, "feedback_alpha.md", "0" * 64, old="  promoted: no", new="  promoted: 'no'"),
+                  encoding="utf-8")
+    assert _hand_block(_report(world, tmp_path)[0]).rstrip().endswith("| no | no |")
+
+
+def test_r2_F2_cells_keep_pipes_and_backticks(world, tmp_path):
+    assert lc._code_cell("a|b") == "`a\\|b`"
+    assert lc._code_cell("x `y` z") == "``x `y` z``"
+    assert lc._code_cell("`edge`") == "`` `edge` ``"
+
+
+def test_r2_F3_the_current_line_is_read_from_the_live_file(world, tmp_path):
+    _hand(world, tmp_path, [{"file": "feedback_alpha.md", "promoted_lines_verbatim": ['  promoted: "old"'],
+                             "value_as_read": "old", "hash_is_yaml_comment": False}])
+    block = _hand_block(_report(world, tmp_path)[0])
+    assert "`promoted: no STALE: the input listed a different line`" in block
+    _hand(world, tmp_path, [{"file": "feedback_gone.md", "promoted_lines_verbatim": ["  promoted: no"],
+                             "value_as_read": "no", "hash_is_yaml_comment": False}])
+    assert "(file or line not found) STALE" in _hand_block(_report(world, tmp_path)[0])

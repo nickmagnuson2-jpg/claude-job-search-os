@@ -340,6 +340,26 @@ def lessons_transitions(repo_root: Path, memory_dir: Path, repairs: list[dict],
 
 # ---------------------------------------------------------------- the report
 
+def _code_cell(text: str) -> str:
+    """Render text as a code span inside a markdown table cell, byte-faithful: pipes are
+    escaped (GFM honours \\| in a cell, code span or not) and the fence is longer than any
+    backtick run in the text (Codex B7 r2 F2)."""
+    text = str(text).replace("|", "\\|")
+    run = max((len(m) for m in re.findall(r"`+", text)), default=0)
+    fence = "`" * (run + 1)
+    pad = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{fence}{pad}{text}{pad}{fence}"
+
+
+def _promoted_lines(path: Path) -> list[str]:
+    """The live `promoted:` lines of a rule file's frontmatter block, verbatim and stripped."""
+    if not path.is_file():
+        return []
+    sp = mf.split(path.read_text(encoding="utf-8"))
+    block = sp[0] if sp else ""
+    return [ln.strip() for ln in block.split("\n") if ln.strip().startswith("promoted:")]
+
+
 def _table(counter: Counter, head: tuple[str, str]) -> list[str]:
     out = [f"| {head[0]} | {head[1]} | Count |", "|---|---|---|"]
     for (b, a), n in sorted(counter.items(), key=lambda kv: (-kv[1], kv[0])):
@@ -408,7 +428,10 @@ def build_report_entries(memory_dir: Path, repo_root: Path, inputs: dict,
           "| File | Today's reader | After |", "|---|---|---|"]
     L += [f"| `{r['file']}` | {r['before']} | {r['after']} |" for r in uncovered]
     hand = load_jsonl(inputs.get("hand_edit"))
-    touched = {r["file"] for r in fm_repairs}
+    # a proposal rewrites the promoted line only if it is current, applies, and its old
+    # text is a promoted line (Codex B7 r2 F1)
+    touched = {r["file"] for r in fm_repairs if not r["stale"] and r["applies"]
+               and any(ln.strip().startswith("promoted:") for ln in r["old"].split("\n"))}
     L += ["", "**Hand edit required (writer refuses commented line):**", ""]
     if inputs.get("hand_edit") is None:
         L.append("input missing")
@@ -420,8 +443,12 @@ def build_report_entries(memory_dir: Path, repo_root: Path, inputs: dict,
               "| File | Current line | Intended value | YAML comment | A proposal rewrites it |",
               "|---|---|---|---|---|"]
         for r in hand:
-            line = " ".join(r.get("promoted_lines_verbatim") or []).strip().replace("|", "/")
-            L.append(f"| `{r.get('file')}` | `{line}` | {str(r.get('value_as_read')).replace('|', '/')} | "
+            listed = [ln.strip() for ln in (r.get("promoted_lines_verbatim") or [])]
+            live = _promoted_lines(Path(memory_dir) / str(r.get("file")))
+            line = " ".join(live) if live else "(file or line not found)"
+            if live != listed:  # the input is a snapshot; the table shows the live line (r2 F3)
+                line += " STALE: the input listed a different line"
+            L.append(f"| {_code_cell(r.get('file'))} | {_code_cell(line)} | {_code_cell(r.get('value_as_read'))} | "
                      f"{'yes: keep beside the value or drop (your call)' if r.get('hash_is_yaml_comment') else 'no'} | "
                      f"{'yes' if r.get('file') in touched else 'no'} |")
     L += ["", "**Defects (known migration items):**", ""]
