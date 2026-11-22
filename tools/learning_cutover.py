@@ -431,6 +431,9 @@ def build_report_entries(memory_dir: Path, repo_root: Path, inputs: dict,
     L = [f"# Learning-loop cutover report ({today.isoformat()})", "",
          f"**Cutover SHA-256:** `{digest}`", "",
          "__APPLY_STATUS__", "",
+         "Promoted repairs are applied with the proposed value. Removing a key instead "
+         "(`apply --drop-promoted FILE`) has no writer yet: apply stops there and reports a "
+         "writer gap.", "",
          "Approve by this hash. `learning_cutover.py verify --expect-sha <hash>` recomputes it "
          "and refuses if any memory rule file, memory/lessons.md or any bound input below "
          "changed. memory/friction-log.md is not bound (see Friction). This report applies nothing.", "",
@@ -565,12 +568,228 @@ def build_report_entries(memory_dir: Path, repo_root: Path, inputs: dict,
     L += ["", "### Lessons Section 2 rows", ""]
     L += _table(Counter((r["before"], r["after"]) for r in les), ("Before", "After"))
     L.append("")
+    pend = pending_changes(memory_dir, repo_root, inputs)
+    L.insert(L.index("__APPLY_STATUS__") + 1, f"**Pending changes:** {len(pend)} (frontmatter repairs, reopen_at "
+             "values and lessons rows not yet in the files; friction kinds are re-planned at apply).")
+    L.insert(L.index("__APPLY_STATUS__") + 1, "")
     L[L.index("__APPLY_STATUS__")] = (
         f"**Apply: BLOCKED.** {len(unresolved)} unresolved defect(s): " + ", ".join(f"`{u}`" for u in unresolved)
         if unresolved else "**Apply: not blocked** by any unresolved writer-refused line.")
     if stable_entries(memory_dir, repo_root, inputs) != ents:
         raise CorpusMoved(["(the corpus or an input changed while the report was built)"])
     return "\n".join(L), digest, ents, unresolved
+
+
+# ---------------------------------------------------------------- apply
+
+KEY_LINE = re.compile(r"\s*([A-Za-z_][\w-]*):")
+
+
+class ApplyStop(Exception):
+    """A step was refused. Nothing after it runs; nothing is retried."""
+
+    def __init__(self, step: dict, reasons: list[str]):
+        super().__init__("; ".join(reasons))
+        self.step, self.reasons = step, reasons
+
+
+def _promoted_value(fix: dict, text: str):
+    """The new promoted value when this repair changes exactly one promoted line of a file
+    the strict reader reads cleanly, carrying no YAML comment: a value write() can set.
+    None otherwise (a structural repair, for repair())."""
+    old, new = fix["old"].split("\n"), fix["new"].split("\n")
+    if len(old) != 1 or len(new) != 1:
+        return None
+    if not (old[0].strip().startswith("promoted:") and new[0].strip().startswith("promoted:")):
+        return None
+    if _has_yaml_comment(old[0]) or mf.read(text)[1] is not None:
+        return None
+    fields, defect = mf.read(text.replace(fix["old"] + "\n", fix["new"] + "\n", 1))
+    return None if defect is not None else fields.get("promoted")
+
+
+def _repair_args(text: str, fix: dict) -> tuple[str, dict, str | None]:
+    """(new_block, intended, body_note) for memory_frontmatter.repair(), derived from a
+    proposal's old/new text. Raises ValueError when the proposal changes the body in any
+    way repair() cannot express (it only inserts one note line after the closing ---)."""
+    new_text = text.replace(fix["old"] + "\n", fix["new"] + "\n", 1)
+    old_sp, new_sp = mf.split(text), mf.split(new_text)
+    if old_sp is None or new_sp is None:
+        raise ValueError("no ---/--- block before or after the proposal")
+    (old_block, old_body), (new_block, new_body) = old_sp, new_sp
+    note = None
+    if new_body != old_body:
+        head = new_body[:len(new_body) - len(old_body)] if new_body.endswith(old_body) else None
+        if head is None or not (head.startswith("\n") and head.endswith("\n")) or head.count("\n") != 2:
+            raise ValueError("the proposal changes the body beyond one note line after the ---")
+        note = head.strip()
+    old_lines, new_lines = old_block.split("\n"), new_block.split("\n")
+    # counted, not set, difference: a removed duplicate line equals a kept one (#8)
+    changed = list(((Counter(old_lines) - Counter(new_lines)) + (Counter(new_lines) - Counter(old_lines))).elements())
+    keys = {m.group(1) for m in (KEY_LINE.match(ln) for ln in changed) if m}
+    if not keys:
+        raise ValueError("the proposal changes no key line")
+    new_fields, defect = mf.read("---\n" + new_block + "---\n")
+    if defect is not None:
+        raise ValueError(f"the proposed block does not read: {defect[0]}")
+    return new_block, {k: new_fields.get(k) for k in sorted(keys)}, note
+
+
+def plan_apply(memory_dir: Path, repo_root: Path, inputs: dict,
+               drop_promoted: frozenset = frozenset()) -> list[dict]:
+    """Every step apply would take, in order: (1) structural repairs via repair(),
+    (2) reopen_at via write(), (3) promoted values via write(), (4) lessons rows via
+    lessons_write, (5) friction kinds via friction_log migrate-kinds. Reads only."""
+    reopen = load_reopen(inputs.get("reopen_at"))
+    fm_repairs = load_frontmatter_repairs(inputs.get("frontmatter"), memory_dir)
+    les_repairs, _ = load_lessons_repairs(inputs.get("lessons"), repo_root)
+    structural, promoted = [], []
+    for fix in fm_repairs:
+        text = (Path(memory_dir) / fix["file"]).read_text(encoding="utf-8")
+        value = _promoted_value(fix, text)
+        if value is None:
+            structural.append({"step": "repair", "file": fix["file"], "fix": fix})
+        elif fix["file"] in drop_promoted:
+            promoted.append({"step": "drop-promoted", "file": fix["file"]})
+        else:
+            promoted.append({"step": "promoted", "file": fix["file"], "value": value})
+    steps = structural
+    steps += [{"step": "reopen_at", "file": r["file"], "value": r["proposed_reopen_at"]}
+              for r in reopen if r.get("status") == "number" and isinstance(r.get("proposed_reopen_at"), int)]
+    steps += promoted
+    for r in les_repairs:
+        old, _ = ls.parse_lessons_row(r["old"])
+        new, _ = ls.parse_lessons_row(r["new"])
+        only_promoted = (old is not None and new is not None
+                         and [c for i, c in enumerate(old) if i != 3] == [c for i, c in enumerate(new) if i != 3])
+        steps.append({"step": "lessons-set-promoted", "line": r["line"], "match": old[0], "value": new[3]}
+                     if only_promoted else
+                     {"step": "lessons-repair-row", "line": r["line"], "old": r["old"], "new": r["new"]})
+    steps.append({"step": "friction-kinds"})
+    return steps
+
+
+def _cli(script: str, args: list[str], env: dict) -> tuple[int, dict | str]:
+    import os
+    import subprocess
+    r = subprocess.run([sys.executable, str(TOOLS / script), *args], capture_output=True,
+                       text=True, env={**os.environ, "PYTHONIOENCODING": "utf-8", **env})
+    try:
+        return r.returncode, json.loads(r.stdout)
+    except ValueError:
+        return r.returncode, (r.stdout + r.stderr).strip()[-400:]
+
+
+def _label(step: dict) -> str | None:
+    if "file" in step:
+        return f"memory/{step['file']}"
+    if step["step"].startswith("lessons-"):
+        return "repo/memory/lessons.md"
+    return None
+
+
+def apply_cutover(memory_dir: Path, repo_root: Path, inputs: dict, expected_digest: str,
+                  entries_path: Path, drop_promoted: frozenset = frozenset()) -> dict:
+    """Apply the approved report. Refuses unless CLAUDECODE=1 and verify passes on
+    `expected_digest` against the report's .entries.json. Before each write, the target's
+    sha must equal what the approved map (then each earlier write) left it at. Writes go
+    only through the sanctioned writers. The first refusal stops the run; the result names
+    every step applied and every step not applied. Nothing is retried."""
+    import os
+    memory_dir, repo_root = Path(memory_dir), Path(repo_root)
+    if os.environ.get("CLAUDECODE") != "1":
+        return {"status": "refused", "reasons": ["apply runs only inside a Claude Code session (CLAUDECODE=1)"],
+                "applied": [], "not_applied": []}
+    baseline = json.loads(Path(entries_path).read_text(encoding="utf-8"))
+    ok, info = verify(memory_dir, repo_root, inputs, expected_digest, baseline=baseline)
+    if not ok or digest_of(baseline) != expected_digest:
+        return {"status": "refused", "reasons": ["verify failed: the corpus or an input is not the approved state"],
+                "verify": info, "applied": [], "not_applied": []}
+    steps = plan_apply(memory_dir, repo_root, inputs, drop_promoted)
+    expected = dict(baseline)
+    applied: list[dict] = []
+    ledger = repo_root / "memory/friction-log.md"
+    lessons = repo_root / "memory/lessons.md"
+    for i, step in enumerate(steps):
+        brief = {k: v for k, v in step.items() if k in ("step", "file", "line", "value")}
+        try:
+            label = _label(step)
+            path = (memory_dir / step["file"]) if "file" in step else lessons
+            if label is not None and file_sha(path) != expected.get(label):
+                raise ApplyStop(brief, [f"{label} changed since the approved state (or an earlier step)"])
+            if step["step"] == "repair":
+                try:
+                    block, intended, note = _repair_args(path.read_text(encoding="utf-8"), step["fix"])
+                except ValueError as e:
+                    raise ApplyStop(brief, [str(e)]) from None
+                mf.repair(path, expect_sha256=expected[label], new_block=block, intended=intended,
+                          body_note=note, memory_dir=memory_dir, repo_root=repo_root)
+            elif step["step"] in ("reopen_at", "promoted"):
+                key = "reopen_at" if step["step"] == "reopen_at" else "promoted"
+                mf.write(path, {key: step["value"]}, memory_dir=memory_dir, repo_root=repo_root)
+            elif step["step"] == "drop-promoted":
+                raise ApplyStop(brief, ["writer gap: no sanctioned writer removes a key "
+                                        "(memory_frontmatter.repair/write at this base)"])
+            elif step["step"] == "lessons-set-promoted":
+                rc, out = _cli("lessons_write.py", ["set-promoted", step["match"], step["value"]],
+                               {"LESSONS_PATH": str(lessons)})
+                if rc != 0:
+                    raise ApplyStop(brief, [f"lessons_write set-promoted exit {rc}: {out}"])
+            elif step["step"] == "lessons-repair-row":
+                rc, out = _cli("lessons_write.py", ["repair-row", "--line", str(step["line"]),
+                                                    "--expect-sha", expected[label],
+                                                    "--old", step["old"], "--new", step["new"]],
+                               {"LESSONS_PATH": str(lessons)})
+                if rc != 0:
+                    gap = " (writer gap: this lessons_write has no repair-row)" if rc == 2 else ""
+                    raise ApplyStop(brief, [f"lessons_write repair-row exit {rc}{gap}: {out}"])
+            else:  # friction-kinds: rule-based, re-planned on the live ledger (org 68 ruling)
+                env = {"FRICTION_LEDGER": str(ledger)}
+                rc, out = _cli("friction_log.py", ["migrate-kinds", "--dry-run"], env)
+                if rc != 0 or not isinstance(out, dict) or not out.get("sha256"):
+                    raise ApplyStop(brief, [f"friction_log migrate-kinds --dry-run exit {rc}: {out}"])
+                rc, out = _cli("friction_log.py", ["migrate-kinds", "--apply", "--expect-sha", out["sha256"]], env)
+                if rc != 0:
+                    raise ApplyStop(brief, [f"friction_log migrate-kinds --apply exit {rc}: {out}"])
+            if label is not None:
+                expected[label] = file_sha(path)
+            applied.append(brief)
+        except ApplyStop as stop:
+            return {"status": "stopped", "stopped_at": stop.step, "reasons": stop.reasons,
+                    "applied": applied, "not_applied": [
+                        {k: v for k, v in s.items() if k in ("step", "file", "line", "value")}
+                        for s in steps[i:]]}
+        except mf.WriteRefused as e:
+            return {"status": "stopped", "stopped_at": brief, "reasons": list(e.reasons),
+                    "applied": applied, "not_applied": [
+                        {k: v for k, v in s.items() if k in ("step", "file", "line", "value")}
+                        for s in steps[i:]]}
+    return {"status": "applied", "applied": applied, "not_applied": []}
+
+
+def pending_changes(memory_dir: Path, repo_root: Path, inputs: dict) -> list[dict]:
+    """Every proposed change whose end state is not in the files yet (reads only)."""
+    memory_dir, repo_root = Path(memory_dir), Path(repo_root)
+    out = []
+    for fix in load_frontmatter_repairs(inputs.get("frontmatter"), memory_dir):
+        p = memory_dir / fix["file"]
+        # applied = the old text is gone and the file reads cleanly. Not "the new text is
+        # present": a later step (reopen_at) may write inside the repaired block.
+        if (not p.is_file() or fix["old"] + "\n" in p.read_text(encoding="utf-8")
+                or mf.read_file(p)[1] is not None):
+            out.append({"change": "frontmatter repair", "file": fix["file"]})
+    for r in load_reopen(inputs.get("reopen_at")):
+        if r.get("status") == "number" and isinstance(r.get("proposed_reopen_at"), int):
+            p = memory_dir / r["file"]
+            fields = mf.read_file(p)[0] if p.is_file() else {}
+            if fields.get("reopen_at") != r["proposed_reopen_at"]:
+                out.append({"change": "reopen_at", "file": r["file"]})
+    if inputs.get("lessons") is not None:
+        lines = (repo_root / "memory/lessons.md").read_text(encoding="utf-8").split("\n")
+        for r in load_lessons_repairs(inputs.get("lessons"), repo_root)[0]:
+            if r["new"] not in lines:
+                out.append({"change": "lessons row", "line": r["line"]})
+    return out
 
 
 # ---------------------------------------------------------------- CLI
@@ -589,7 +808,7 @@ def _inputs(args) -> dict:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("report", "verify"):
+    for name in ("report", "verify", "apply"):
         p = sub.add_parser(name)
         p.add_argument("--memory-dir", required=True,
                        help="the live memory folder (~/.claude/projects/<project-slug>/memory)")
@@ -600,12 +819,25 @@ def main(argv=None) -> int:
             p.add_argument("--" + inp.replace("_", "-"), dest=inp, default=None)
         if name == "report":
             p.add_argument("--out", required=False)
+        elif name == "apply":
+            p.add_argument("--expect-sha", required=True, help="the approved report's digest")
+            p.add_argument("--entries", required=True, help="the approved report's .entries.json")
+            p.add_argument("--drop-promoted", action="append", default=[], metavar="FILE",
+                           help="for this file, remove `promoted` instead of applying its "
+                                "proposed value. NO WRITER CAN DO THIS YET (repair() and write() "
+                                "cannot remove a key): apply stops at that step and reports a "
+                                "writer gap. Without the flag, the proposal's value is applied.")
         else:
             p.add_argument("--expect-sha", required=True)
             p.add_argument("--entries", help="the report's .entries.json, to name what changed")
     args = ap.parse_args(argv)
     inputs = _inputs(args)
     mem, repo = Path(args.memory_dir), Path(args.repo_root)
+    if args.cmd == "apply":
+        res = apply_cutover(mem, repo, inputs, args.expect_sha, Path(args.entries),
+                            frozenset(args.drop_promoted))
+        print(json.dumps(res, ensure_ascii=False))
+        return 0 if res["status"] == "applied" else 1
     if args.cmd == "report":
         text, digest, hashed, unresolved = build_report_entries(mem, repo, inputs)
         out = Path(args.out) if args.out else (
