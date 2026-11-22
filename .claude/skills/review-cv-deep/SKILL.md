@@ -147,6 +147,7 @@ Read the CV AND all the source project files listed in your prompt, plus `data/c
 - **Missed high-value content** — What's in the source files that should be on the CV but isn't? Focus especially on content relevant to the target role. List specific achievements, technologies, or responsibilities that are documented in the source but absent from the CV.
 - **Certification status** — Are certifications listed accurately? Cross-reference each one against `data/certifications.md`. Flag any that are expired or renewal-pending but listed without qualification on the CV.
 - **Technology evidence gaps** — For each technology in the CV's skills table, check whether the source project files substantiate the claimed experience level and years.
+- **Professional Summary** — The summary has no source file, so a source check passes it by default. Audit it against the CV's own bullets instead: for each clause, and each number that appears only in the summary, name the bullet that backs it, or report it as unbacked. Flag a dropped scope qualifier, two backed clauses joined into a claim no bullet makes, and an AI-thesis sentence followed by proof that is not AI work.
 
 Output your findings as a structured list of factual issues and missed opportunities, each with specific references to both the CV line/section and the source file that contradicts or supplements it.
 
