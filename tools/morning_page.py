@@ -509,14 +509,17 @@ def _decision_li(q: dict) -> str:
         head += f' <span class="muted">by {_e(q["by_date"])}</span>'
     lean = (f"Lean: {_e(q['lean'])}" if q.get("lean")
             else '<span class="muted">no lean recorded</span>')
-    rests = q.get("rests_on") or []
+    # A sealed row can still carry a field of the wrong type (a hand edit that check reports
+    # later); the page shows what it can rather than aborting the launchd job (Grok r1 F1).
+    rests = q.get("rests_on") if isinstance(q.get("rests_on"), list) else []
     rests_html = (" ".join(f"<code>{_e(r)}</code>" for r in rests) if rests
                   else '<span class="muted">no data line recorded</span>')
     nothing = (f"<br>If nothing: {_e(q['if_nothing'])}" if q.get("if_nothing") else "")
-    over = q.get("not_answered") or {}
+    over = q.get("not_answered") if isinstance(q.get("not_answered"), dict) else {}
     over_html = ""
     if over:
-        topics = ", ".join(str(t) for t in (over.get("topics") or []))
+        raw = over.get("topics")
+        topics = ", ".join(str(t) for t in raw) if isinstance(raw, list) else ""
         over_html = f'<br><span class="warn">overrides {_e(topics)}: {_e(over.get("reason"))}</span>'
     return (f'<li><strong>{_e(q.get("id"))}</strong> {head}<br>{lean} &middot; {rests_html}'
             f'{nothing}{over_html}<br><span class="muted">{_e(where)}</span></li>')

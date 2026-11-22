@@ -243,3 +243,20 @@ def test_a_real_malformed_asked_event_is_stated(tmp_path):
     (rm / "questions.jsonl").write_text('{"type": "asked"}\n', encoding="utf-8")
     out = mp.decisions_waiting(root)
     assert out["open"] is None and out["error"]
+
+
+@pytest.mark.parametrize("bad", [
+    {"rests_on": 7}, {"rests_on": "data/goals.md:1"}, {"not_answered": "a string"},
+    {"not_answered": {"topics": 5, "reason": "r"}}, {"options": None, "question": None},
+])
+def test_a_wrongly_typed_field_renders_instead_of_crashing(bad):
+    """Grok r1 F1: listing() succeeded, but a field of the wrong type must not abort the page."""
+    q = _q(1, group="policy", **bad)
+    sec = _section(_page({"error": None, "board": "ok", "open": [q]}), "decisions")
+    assert "Q1" in sec
+
+
+def test_a_string_rests_on_is_not_split_into_characters():
+    q = _q(1, group="policy", rests_on="data/goals.md:1")
+    sec = _section(_page({"error": None, "board": "ok", "open": [q]}), "decisions")
+    assert "<code>d</code>" not in sec and "no data line recorded" in sec
