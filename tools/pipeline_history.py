@@ -11,7 +11,12 @@ label, never silently:
 - declined_repeat: an exact repeat of a posting he passed on (11-06).
 - declined_company (R9, Nick 2026-11-18: "Move any company that's rejected me to a skipped
   list."): any role at a company, matched by exact name only, that has a declined_you row and
-  no active row. This supersedes the 11-06 "always shows" rule for declining companies. A
+  no active row. CHANGED 2026-11-21 (company-key-1121, ruling org c0): "exact name" is now
+  the strict company key (tools/company_key.same_company): also a legal suffix ("Acme" /
+  "Acme, Inc."), a bracketed alias, or spacing. A held-back role lands on the visible
+  skipped list, so a wrong merge is seen. "ai" is not dropped, so "Acme" / "Acme AI"
+  stays a labelled possible match. The silent duplicate count (already_in_pipeline)
+  stays on exact normalize_name. This supersedes the 11-06 "always shows" rule for declining companies. A
   fuzzy possible_match is labelled, never held back. Design:
   output/funnel-intake/111826-r9-design.md (option B).
 
@@ -20,8 +25,9 @@ Before this module the two scanners defined the rule two ways and neither matche
 no reason, and the nightly scanner tagged only a relisting of the same role at an
 archived row, so a different role at a company that had declined him came back unlabelled.
 
-One company matcher (same_company / company_overlap) is used for the history, for
-/scan-jobs' possible_match mark, and for the nightly duplicate check (dedup.find_match).
+One company matcher (same_company / company_overlap, from tools/company_key.py) is used for
+the history, for /scan-jobs' possible_match mark, and for the nightly duplicate check
+(dedup.find_match).
 
 The history source is the job-pipeline.md table through pipe_read.parse_all_rows, the
 one parser for all rows. load_history is the single seam for a later source: job-search-49's
@@ -35,6 +41,8 @@ from difflib import SequenceMatcher
 from pathlib import Path
 
 from tools.name_dedup import normalize_name
+from tools.company_key import exact as exact_company, possible_duplicate
+from tools.company_key import same_company  # the one company matcher (company-key-1121)
 
 SAME_ROLE_RATIO = 0.90          # dedup.find_match's D-10 threshold, one value for both
 SHOWN_ROWS = 2
@@ -73,19 +81,16 @@ def classify(stage: str) -> str:
     return CLOSED if is_terminal_stage(stage) else IN_PIPELINE
 
 
-def same_company(a: str, b: str) -> bool:
-    """Exact after normalize_name (case, accents, punctuation, spacing). Empty never matches."""
-    na, nb = normalize_name(a), normalize_name(b)
-    return bool(na) and na == nb
-
-
 def company_overlap(a: str, b: str) -> bool:
-    """One name is a whole-word part of the other ("Acme" / "Acme AI"), not exact.
-    A substring is not enough: "Northwindtech" is not "Northwind" (613.F1)."""
+    """A possible match, labelled and never acted on: one name is a whole-word part of the
+    other ("Acme" / "Acme Health"), or the loose company key matches ("Acme" / "Acme AI").
+    Never true for a pair same_company already merges. A substring is not enough:
+    "Northwindtech" is not "Northwind" (613.F1)."""
     na, nb = normalize_name(a), normalize_name(b)
-    if not na or not nb or na == nb:
+    if not na or not nb or same_company(a, b):
         return False
-    return bool(re.search(rf"\b{re.escape(nb)}\b", na) or re.search(rf"\b{re.escape(na)}\b", nb))
+    return bool(re.search(rf"\b{re.escape(nb)}\b", na) or re.search(rf"\b{re.escape(na)}\b", nb)
+                or possible_duplicate(a, b))
 
 
 def match_company(name: str, rows: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -168,5 +173,9 @@ def history(role: dict, rows: list[dict]) -> dict:
             "declined_repeat": declined_repeat,
             "declined_company": declined_company,
             "held_back": declined_repeat or declined_company,
-            "already_in_pipeline": any(r["outcome"] in ACTIVE and same_role(role, r) for r in exact),
+            # A bare count, not a list Nick reads, so only an exact name may set it
+            # (company-key-1121 ruling: the strict key resolves only where it is visible).
+            "already_in_pipeline": any(r["outcome"] in ACTIVE and same_role(role, r)
+                                       and exact_company(role.get("company", ""), r["company"])
+                                       for r in exact),
             "possible_match": names[0] if names else ""}

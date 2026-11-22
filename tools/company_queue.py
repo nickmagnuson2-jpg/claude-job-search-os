@@ -41,6 +41,7 @@ sys.path.insert(0, str(REPO_ROOT / "tools"))
 sys.path.insert(0, str(REPO_ROOT))
 
 import inbox_lock  # noqa: E402
+from company_key import KeyIndex, exact as exact_company  # noqa: E402
 
 QUEUE_NAME = "tools/.company-queue.json"
 
@@ -50,7 +51,9 @@ def queue_path(repo_root: Path) -> Path:
 
 
 def norm(name: str) -> str:
-    """Same normalization as agent_core._norm_name, so keys agree with the collector."""
+    """Same normalization as agent_core._norm_name, so keys agree with the collector.
+    The format of every stored `key`: kept as is so stored entries stay valid. Whether
+    two companies are the same is decided by tools/company_key.py, not by this."""
     return re.sub(r"[^a-z0-9]+", " ", (name or "").lower()).strip()
 
 
@@ -98,6 +101,17 @@ def add(repo_root: Path, preset: str, entity: str, candidates: list[dict],
     def transform(text: str) -> str:
         data = _load_text(text)
         known = {e.get("key") for e in data["pending"]} | {e.get("key") for e in data["decided"]}
+        # The stored key is ASCII-only: "Møller" and "Möller" share one, while "Café" and
+        # "Cafe" do not. So it never decides company identity; it only marks a likely
+        # duplicate when two non-exact names collide on it.
+        names_by_key: dict = {}
+        for e in data["pending"] + data["decided"]:
+            if isinstance(e, dict) and e.get("entity") != "person":
+                names_by_key.setdefault(e.get("key"), []).append(e.get("name"))
+        # A company written another way ("Acme" / "Acme AI") is KEPT and tagged for Nick,
+        # never skipped: this is a discovery path (company-key-1121 ruling).
+        companies = KeyIndex([e.get("name") for e in data["pending"] + data["decided"]
+                              if isinstance(e, dict) and e.get("entity") != "person"])
         counts["added"] = counts["skipped"] = 0
         for c in candidates:
             if not isinstance(c, dict) or not c.get("name"):
@@ -105,13 +119,23 @@ def add(repo_root: Path, preset: str, entity: str, candidates: list[dict],
             row = {"entity": entity, "preset": preset, "first_seen": today,
                    "name": c.get("name"),
                    **{k: c[k] for k in ("description", "score", "geo_band", "geo_flag",
-                                        "possible_match", "url", "role", "company",
-                                        "location") if k in c}}
+                                        "possible_match", "possible_duplicate", "url",
+                                        "role", "company", "location") if k in c}}
             row["key"] = entry_key(row)
-            if row["key"] in known:
+            # People: the stored key decides, as before. Companies: exact normalize_name
+            # decides, whatever the stored keys say (Codex r1 F1 and r2 F1).
+            if (row["key"] in known if entity == "person" else companies.exact(row["name"])):
                 counts["skipped"] += 1
                 continue
             known.add(row["key"])
+            if entity != "person":
+                # A legacy-key collision that is not exact is still a likely duplicate.
+                collided = list(names_by_key.get(row["key"], []))
+                dup = companies.possible(row["name"]) or collided
+                if dup and not row.get("possible_duplicate"):
+                    row["possible_duplicate"] = dup[0]
+                companies.add(row["name"])
+                names_by_key.setdefault(row["key"], []).append(row["name"])
             data["pending"].append(row)
             counts["added"] += 1
         return _dump(data)
@@ -147,7 +171,8 @@ def read(repo_root: Path, top: int = 4) -> dict:
             "pending_companies": len(comps), "pending_people": len(people),
             "oldest_first_seen": oldest, "decided_count": len(data["decided"]),
             "companies": [{k: e.get(k) for k in ("name", "description", "score",
-                                                  "geo_band", "possible_match", "preset",
+                                                  "geo_band", "possible_match",
+                                                  "possible_duplicate", "preset",
                                                   "first_seen")} for e in comps[:top]],
             "empty_boards": _empty_boards(data)}
 
@@ -166,7 +191,6 @@ def _empty_boards(data: dict) -> list[dict]:
 
 def ack_empty(repo_root: Path, name: str) -> dict:
     """Nick has seen an empty-board flag: stop naming it in read. Writes nothing else."""
-    want = norm(name)
     found: dict = {}
 
     def transform(text: str) -> str:
@@ -175,7 +199,7 @@ def ack_empty(repo_root: Path, name: str) -> dict:
         for e in d["decided"]:
             flag = e.get("empty_board") if isinstance(e, dict) else None
             if (isinstance(flag, dict) and not flag.get("acked_on")
-                    and norm(e.get("name", "")) == want):
+                    and exact_company(name, e.get("name", ""))):
                 flag["acked_on"] = str(datetime.now().date())
                 found["name"] = e.get("name")
         return _dump(d) if found else text  # nothing to clear: leave the file as it was
@@ -362,9 +386,11 @@ def decide(repo_root: Path, name: str, decision: str, reason: str | None = None,
            lane: str | None = None, dry_run: bool = False, detector=detect_board,
            runner=_act_apply) -> dict:
     data = load(repo_root)
-    want = norm(name)
+    # Exact normalize_name, not the stored key: two different companies can share a
+    # stored key ("Møller" / "Möller"), and add() keeps both (Grok r1 F1, company-key-1121).
     match = [e for e in data["pending"]
-             if isinstance(e, dict) and e.get("entity") != "person" and norm(e.get("name", "")) == want]
+             if isinstance(e, dict) and e.get("entity") != "person"
+             and exact_company(name, e.get("name", ""))]
     if not match:
         return {"status": "error", "code": "not_found",
                 "message": f"no pending company named {name!r} in the queue"}
@@ -412,12 +438,15 @@ def decide(repo_root: Path, name: str, decision: str, reason: str | None = None,
         return {"status": "error", "code": "act_apply_failed", "act_apply": result,
                 "message": "scan-targets.yaml not changed; the company stays queued"}
 
-    key = entry["key"]
+    def same_entry(e) -> bool:
+        """The matched company row, by exact name; never another row that shares its key."""
+        return (isinstance(e, dict) and e.get("entity") != "person"
+                and exact_company(entry["name"], e.get("name", "")))
 
     def transform(text: str) -> str:
         d = _load_text(text)
-        moved = [e for e in d["pending"] if e.get("key") == key]
-        d["pending"] = [e for e in d["pending"] if e.get("key") != key]
+        moved = [e for e in d["pending"] if same_entry(e)]
+        d["pending"] = [e for e in d["pending"] if not same_entry(e)]
         for e in moved:
             row = {**e, "decision": decision, "decided_on": str(datetime.now().date()),
                    "board": board, "reason": reason}
