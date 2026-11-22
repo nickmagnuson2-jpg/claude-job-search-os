@@ -6,12 +6,14 @@ never fired for a target whose board went empty LATER. What must hold:
 
   * the nightly scan records each ATS target's raw posting count, but only when the fetch
     had no error: a failed fetch is a fetch failure, never an empty board (false-zero rule);
-  * a target at 0 is flagged on first sight, or when it had postings at the last scan;
-    a board that stays at 0 is not re-flagged, so an acked flag stays acked until the
-    board has postings and drops to 0 again;
+  * a target at 0 is flagged only when the last scan of it saw postings (Nick
+    2026-11-21, "Only after it had postings"); a board that stays at 0 is not
+    re-flagged, so an acked flag stays acked until the board has postings and drops
+    to 0 again;
   * the flag lives in the company queue, written only through company_queue's own API
     under its lock, and `read` / `ack-empty` treat it like the accept-time flag;
-  * a board that has postings again stops being named.
+  * a board that has postings again stops being named, with no ack (Nick 2026-11-21,
+    "Clear it automatically").
 
 Placeholder companies only (public repo).
 """
@@ -34,21 +36,25 @@ def _c(name, count, ats="ashby", slug=None):
             "count": count}
 
 
+def _flagged(tmp_path, counts, day, **kw):
+    """Record `counts` on `day`, after a night on which every board at 0 here had
+    postings, so the 0 is a drop and is flagged (Nick's ruling 1). Setup for tests
+    about what happens to a flag; the rule itself is pinned by the ruling tests."""
+    seed = [{k: v for k, v in c.items() if k != "observed_at"} | {"count": 3}
+            for c in counts if isinstance(c, dict) and c.get("count") == 0]
+    if seed:
+        cq.record_board_counts(tmp_path, seed, "2026-01-04")
+    return cq.record_board_counts(tmp_path, counts, day, **kw)
+
+
 def _state(tmp_path):
     return json.loads(cq.queue_path(tmp_path).read_text())
 
 
 # --- the transition rule -----------------------------------------------------------------
 
-def test_a_target_at_zero_on_first_sight_is_flagged(tmp_path):
-    out = cq.record_board_counts(tmp_path, [_c("Acme", 0), _c("Beta", 4)], DAY1)
-    assert out["flagged"] == ["Acme"]
-    names = [b["name"] for b in cq.read(tmp_path)["empty_boards"]]
-    assert names == ["Acme"]
-
-
 def test_a_board_that_stays_at_zero_is_not_flagged_again(tmp_path):
-    cq.record_board_counts(tmp_path, [_c("Acme", 0)], DAY1)
+    _flagged(tmp_path, [_c("Acme", 0)], DAY1)
     out = cq.record_board_counts(tmp_path, [_c("Acme", 0)], DAY2)
     assert out["flagged"] == []
     flag = _state(tmp_path)["scan_boards"]["board:ashby:acme"]["empty_board"]
@@ -56,7 +62,7 @@ def test_a_board_that_stays_at_zero_is_not_flagged_again(tmp_path):
 
 
 def test_an_acked_flag_stays_acked_while_the_board_stays_empty(tmp_path):
-    cq.record_board_counts(tmp_path, [_c("Acme", 0)], DAY1)
+    _flagged(tmp_path, [_c("Acme", 0)], DAY1)
     assert cq.ack_empty(tmp_path, "Acme")["status"] == "ok"
     cq.record_board_counts(tmp_path, [_c("Acme", 0)], DAY2)
     assert cq.read(tmp_path)["empty_boards"] == []
@@ -80,7 +86,7 @@ def test_a_board_that_drops_from_postings_to_zero_is_flagged(tmp_path):
 
 
 def test_a_board_with_postings_again_stops_being_named(tmp_path):
-    cq.record_board_counts(tmp_path, [_c("Acme", 0)], DAY1)
+    _flagged(tmp_path, [_c("Acme", 0)], DAY1)
     out = cq.record_board_counts(tmp_path, [_c("Acme", 2)], DAY2)
     assert out["recovered"] == ["Acme"]
     assert cq.read(tmp_path)["empty_boards"] == []
@@ -88,10 +94,10 @@ def test_a_board_with_postings_again_stops_being_named(tmp_path):
 
 
 def test_the_read_line_carries_ats_slug_and_source(tmp_path):
-    cq.record_board_counts(tmp_path, [_c("Acme Labs", 0, ats="lever", slug="acmelabs")], DAY1)
+    _flagged(tmp_path, [_c("Acme Labs", 0, ats="lever", slug="acmelabs")], DAY1)
     [b] = cq.read(tmp_path)["empty_boards"]
     assert b == {"name": "Acme Labs", "ats": "lever", "slug": "acmelabs",
-                 "detected_on": DAY1, "source": "scan", "after": "first_scan"}
+                 "detected_on": DAY1, "source": "scan", "after": "postings"}
 
 
 def test_an_accept_time_flag_is_not_doubled_by_the_scan(tmp_path):
@@ -227,6 +233,7 @@ def _fetch_acme_empty_beta_fails(target, errors=None, cuts=None, raw_counts=None
 
 
 def test_the_scan_flags_an_empty_target_and_skips_a_failed_one(tmp_path, monkeypatch):
+    cq.record_board_counts(tmp_path, [_c("Acme", 3)], DAY0)  # Acme had postings
     s = _scan(tmp_path, monkeypatch, _fetch_acme_empty_beta_fails)
     assert s["empty_boards_flagged"] == ["Acme"] and s["empty_board_error"] is None
     assert [b["name"] for b in cq.read(tmp_path)["empty_boards"]] == ["Acme"]
@@ -270,7 +277,7 @@ def test_a_failing_flag_write_is_said_on_stderr(tmp_path, monkeypatch, capsys):
 
 
 def test_acking_one_scan_flag_leaves_the_others_named(tmp_path):
-    cq.record_board_counts(tmp_path, [_c("Acme", 0), _c("Beta", 0)], DAY1)
+    _flagged(tmp_path, [_c("Acme", 0), _c("Beta", 0)], DAY1)
     assert cq.ack_empty(tmp_path, "Beta")["name"] == "Beta"
     assert [b["name"] for b in cq.read(tmp_path)["empty_boards"]] == ["Acme"]
 
@@ -284,14 +291,14 @@ def test_a_retried_transform_reports_one_attempt_not_two(tmp_path, monkeypatch):
         transform(Path(path).read_text() if Path(path).exists() else "")
         return real(path, transform, *a, **k)
     monkeypatch.setattr(cq.inbox_lock, "atomic_update", twice)
-    out = cq.record_board_counts(tmp_path, [_c("Acme", 0), _c("Beta", "x")], DAY1)
+    out = _flagged(tmp_path, [_c("Acme", 0), _c("Beta", "x")], DAY1)
     assert out == {"flagged": ["Acme"], "recovered": [], "retired": [], "ignored": 1, "stale": 0}
 
 
 # --- identity and ordering (Codex r1 F1-F3) ----------------------------------------------
 
 def test_two_targets_with_one_display_name_keep_separate_counts(tmp_path):
-    out = cq.record_board_counts(tmp_path, [_c("Acme", 0, slug="acme-us"),
+    out = _flagged(tmp_path, [_c("Acme", 0, slug="acme-us"),
                                             _c("Acme", 7, slug="acme-eu")], DAY1)
     assert out["flagged"] == ["Acme"]
     s = _state(tmp_path)["scan_boards"]
@@ -299,13 +306,13 @@ def test_two_targets_with_one_display_name_keep_separate_counts(tmp_path):
 
 
 def test_names_that_normalize_alike_do_not_share_state(tmp_path):
-    cq.record_board_counts(tmp_path, [_c("Acme Co", 3, slug="a1"), _c("ACME-co", 0, slug="a2")], DAY1)
+    _flagged(tmp_path, [_c("Acme Co", 3, slug="a1"), _c("ACME-co", 0, slug="a2")], DAY1)
     [b] = cq.read(tmp_path)["empty_boards"]
     assert b["slug"] == "a2"
 
 
 def test_a_renamed_target_keeps_its_board_state(tmp_path):
-    cq.record_board_counts(tmp_path, [_c("Acme", 0, slug="acme")], DAY1)
+    _flagged(tmp_path, [_c("Acme", 0, slug="acme")], DAY1)
     out = cq.record_board_counts(tmp_path, [_c("Acme Labs", 0, slug="acme")], DAY2)
     assert out["flagged"] == []
     [b] = cq.read(tmp_path)["empty_boards"]
@@ -313,14 +320,14 @@ def test_a_renamed_target_keeps_its_board_state(tmp_path):
 
 
 def test_a_board_no_longer_a_target_stops_being_named(tmp_path):
-    cq.record_board_counts(tmp_path, [_c("Acme", 0)], DAY1)
+    _flagged(tmp_path, [_c("Acme", 0)], DAY1)
     out = cq.record_board_counts(tmp_path, [_c("Beta", 2)], DAY2, current={"board:ashby:beta"})
     assert out["retired"] == ["Acme"]
     assert cq.read(tmp_path)["empty_boards"] == []
 
 
 def test_a_target_whose_fetch_failed_is_still_a_target_and_keeps_its_flag(tmp_path):
-    cq.record_board_counts(tmp_path, [_c("Acme", 0)], DAY1)
+    _flagged(tmp_path, [_c("Acme", 0)], DAY1)
     out = cq.record_board_counts(tmp_path, [_c("Beta", 2)], DAY2,
                                  current={"board:ashby:beta", "board:ashby:acme"})
     assert out["retired"] == []
@@ -370,7 +377,7 @@ def test_an_accepted_company_whose_board_was_not_empty_is_flagged_by_the_scan(tm
         {"name": "Acme", "decision": "accept", "board": {"ats": "ashby", "slug": "acme"}},
         {"name": "Beta", "decision": "accept", "board": "corrupt",
          "empty_board": {"detected_on": DAY1, "acked_on": None}}]}))
-    out = cq.record_board_counts(tmp_path, [_c("Acme", 0), _c("Beta", 0)], DAY2)
+    out = _flagged(tmp_path, [_c("Acme", 0), _c("Beta", 0)], DAY2)
     assert out["flagged"] == ["Acme", "Beta"]
 
 
@@ -385,7 +392,7 @@ def test_a_count_without_an_observation_time_keeps_the_recorded_one(tmp_path):
 # --- Grok r1 F1-F4 -----------------------------------------------------------------------
 
 def test_a_night_with_no_successful_counts_still_retires_a_removed_board(tmp_path, monkeypatch):
-    cq.record_board_counts(tmp_path, [_c("Gone", 0, slug="gone")], DAY1)
+    _flagged(tmp_path, [_c("Gone", 0, slug="gone")], DAY1)
 
     def all_fail(target, errors=None, cuts=None, raw_counts=None):
         errors.append({"company": target["name"], "ats": "ashby", "reason": "HTTP 500"})
@@ -397,7 +404,7 @@ def test_a_night_with_no_successful_counts_still_retires_a_removed_board(tmp_pat
 
 
 def test_a_night_where_every_fetch_fails_retires_nothing_still_targeted(tmp_path, monkeypatch):
-    cq.record_board_counts(tmp_path, [_c("Acme", 0, slug="acme")], DAY1)
+    _flagged(tmp_path, [_c("Acme", 0, slug="acme")], DAY1)
 
     def all_fail(target, errors=None, cuts=None, raw_counts=None):
         errors.append({"company": target["name"], "ats": "ashby", "reason": "HTTP 500"})
@@ -407,27 +414,27 @@ def test_a_night_where_every_fetch_fails_retires_nothing_still_targeted(tmp_path
 
 
 def test_ack_by_a_name_two_live_boards_share_is_refused(tmp_path):
-    cq.record_board_counts(tmp_path, [_c("Acme", 0, slug="acme-us"), _c("Acme", 0, slug="acme-eu")], DAY1)
+    _flagged(tmp_path, [_c("Acme", 0, slug="acme-us"), _c("Acme", 0, slug="acme-eu")], DAY1)
     out = cq.ack_empty(tmp_path, "Acme")
     assert out["status"] == "error" and out["code"] == "ambiguous"
     assert len(cq.read(tmp_path)["empty_boards"]) == 2
 
 
 def test_ack_with_a_board_clears_only_that_board(tmp_path):
-    cq.record_board_counts(tmp_path, [_c("Acme", 0, slug="acme-us"), _c("Acme", 0, slug="acme-eu")], DAY1)
+    _flagged(tmp_path, [_c("Acme", 0, slug="acme-us"), _c("Acme", 0, slug="acme-eu")], DAY1)
     out = cq.ack_empty(tmp_path, "Acme", board="ashby:acme-eu")
     assert out["status"] == "ok"
     assert [b["slug"] for b in cq.read(tmp_path)["empty_boards"]] == ["acme-us"]
 
 
 def test_ack_with_a_board_that_does_not_match_writes_nothing(tmp_path):
-    cq.record_board_counts(tmp_path, [_c("Acme", 0)], DAY1)
+    _flagged(tmp_path, [_c("Acme", 0)], DAY1)
     out = cq.ack_empty(tmp_path, "Acme", board="ashby:other")
     assert out["status"] == "error" and len(cq.read(tmp_path)["empty_boards"]) == 1
 
 
 def test_ack_skips_a_recovered_flag_and_finds_the_live_one(tmp_path):
-    cq.record_board_counts(tmp_path, [_c("Acme", 0, slug="acme-us"), _c("Acme", 0, slug="acme-eu")], DAY1)
+    _flagged(tmp_path, [_c("Acme", 0, slug="acme-us"), _c("Acme", 0, slug="acme-eu")], DAY1)
     cq.record_board_counts(tmp_path, [_c("Acme", 3, slug="acme-us"), _c("Acme", 0, slug="acme-eu")], DAY2)
     assert cq.ack_empty(tmp_path, "Acme")["status"] == "ok"  # only one live flag left
     assert cq.read(tmp_path)["empty_boards"] == []
@@ -435,27 +442,10 @@ def test_ack_skips_a_recovered_flag_and_finds_the_live_one(tmp_path):
 
 
 def test_the_cli_passes_board_to_ack(tmp_path, capsys):
-    cq.record_board_counts(tmp_path, [_c("Acme", 0, slug="acme-us"), _c("Acme", 0, slug="acme-eu")], DAY1)
+    _flagged(tmp_path, [_c("Acme", 0, slug="acme-us"), _c("Acme", 0, slug="acme-eu")], DAY1)
     code = cq.main(["--repo-root", str(tmp_path), "ack-empty", "--name", "Acme", "--board", "ashby:acme-us"])
     assert code == 0
     assert [b["slug"] for b in cq.read(tmp_path)["empty_boards"]] == ["acme-eu"]
-
-
-def test_a_retired_board_targeted_again_at_zero_is_named_again(tmp_path):
-    cq.record_board_counts(tmp_path, [_c("Acme", 0)], DAY1)
-    cq.record_board_counts(tmp_path, [_c("Beta", 1)], DAY2, current={"board:ashby:beta"})
-    out = cq.record_board_counts(tmp_path, [_c("Acme", 0)], DAY3,
-                                 current={"board:ashby:beta", "board:ashby:acme"})
-    assert out["flagged"] == ["Acme"]
-    [b] = cq.read(tmp_path)["empty_boards"]
-    assert b["detected_on"] == DAY3
-
-
-def test_the_flag_says_whether_the_board_was_empty_from_the_start_or_dropped(tmp_path):
-    cq.record_board_counts(tmp_path, [_c("Acme", 0), _c("Beta", 5)], DAY1)
-    cq.record_board_counts(tmp_path, [_c("Acme", 0), _c("Beta", 0)], DAY2)
-    after = {b["name"]: b["after"] for b in cq.read(tmp_path)["empty_boards"]}
-    assert after == {"Acme": "first_scan", "Beta": "postings"}
 
 
 def test_a_scan_with_no_ats_board_never_touches_the_company_queue(tmp_path, monkeypatch):
@@ -480,7 +470,7 @@ def _with_accept_flag(tmp_path, name="Acme", slug="acme-old", acked=None):
 
 def test_a_bare_ack_matching_an_accept_flag_and_a_scan_flag_is_refused(tmp_path):
     _with_accept_flag(tmp_path)
-    cq.record_board_counts(tmp_path, [_c("Acme", 0, slug="acme-new")], DAY2)
+    _flagged(tmp_path, [_c("Acme", 0, slug="acme-new")], DAY2)
     out = cq.ack_empty(tmp_path, "Acme")
     assert out["status"] == "error" and out["code"] == "ambiguous"
     assert sorted(out["boards"]) == ["ashby:acme-new", "ashby:acme-old"]
@@ -489,7 +479,7 @@ def test_a_bare_ack_matching_an_accept_flag_and_a_scan_flag_is_refused(tmp_path)
 
 def test_ack_with_a_board_selects_an_accept_time_flag(tmp_path):
     _with_accept_flag(tmp_path)
-    cq.record_board_counts(tmp_path, [_c("Acme", 0, slug="acme-new")], DAY2)
+    _flagged(tmp_path, [_c("Acme", 0, slug="acme-new")], DAY2)
     assert cq.ack_empty(tmp_path, "Acme", board="ashby:acme-old")["status"] == "ok"
     [b] = cq.read(tmp_path)["empty_boards"]
     assert b["slug"] == "acme-new" and b["source"] == "scan"
@@ -501,18 +491,9 @@ def test_a_bare_ack_with_only_an_accept_flag_still_works(tmp_path):
     assert cq.read(tmp_path)["empty_boards"] == []
 
 
-def test_an_acked_board_removed_then_retargeted_at_zero_is_named_again(tmp_path):
-    cq.record_board_counts(tmp_path, [_c("Acme", 0)], DAY1)
-    cq.ack_empty(tmp_path, "Acme")
-    cq.record_board_counts(tmp_path, [_c("Beta", 1)], DAY2, current={"board:ashby:beta"})
-    out = cq.record_board_counts(tmp_path, [_c("Acme", 0)], DAY3,
-                                 current={"board:ashby:beta", "board:ashby:acme"})
-    assert out["flagged"] == ["Acme"]
-
-
 def test_an_older_scan_cannot_retire_what_a_newer_scan_observed(tmp_path):
     new, old = "2026-01-06T09:00:00+00:00", "2026-01-06T08:00:00+00:00"
-    cq.record_board_counts(tmp_path, [{**_c("Acme", 0), "observed_at": new}], DAY2,
+    _flagged(tmp_path, [{**_c("Acme", 0), "observed_at": new}], DAY2,
                            current={"board:ashby:acme"}, observed_at=new)
     out = cq.record_board_counts(tmp_path, [], DAY2, current={"board:ashby:beta"},
                                  observed_at=old)
@@ -540,7 +521,9 @@ def test_the_scan_passes_its_observation_time_for_retirement(tmp_path, monkeypat
 
 
 def test_a_retargeted_board_flagged_at_zero_is_not_flagged_again_the_next_night(tmp_path):
-    cq.record_board_counts(tmp_path, [_c("Acme", 0)], DAY1)
+    # Postings, then removed from the targets, then back at 0: its last count was 3, so
+    # the 0 is a drop (ruling 1); read again, the record is no longer retired.
+    cq.record_board_counts(tmp_path, [_c("Acme", 3)], DAY1)
     cq.record_board_counts(tmp_path, [], DAY2, current=set())
     both = {"board:ashby:acme"}
     assert cq.record_board_counts(tmp_path, [_c("Acme", 0)], DAY3, current=both)["flagged"] == ["Acme"]
@@ -556,7 +539,7 @@ def test_retiring_without_an_observation_time_keeps_the_recorded_one(tmp_path):
 
 
 def test_retiring_an_acked_board_reports_no_named_flag(tmp_path):
-    cq.record_board_counts(tmp_path, [_c("Acme", 0)], DAY1)
+    _flagged(tmp_path, [_c("Acme", 0)], DAY1)
     cq.ack_empty(tmp_path, "Acme")
     out = cq.record_board_counts(tmp_path, [], DAY2, current=set())
     assert out["retired"] == []
@@ -567,7 +550,7 @@ def test_retiring_an_acked_board_reports_no_named_flag(tmp_path):
 # --- Grok r2 F1 --------------------------------------------------------------------------
 
 def test_ack_accepts_the_board_as_the_standup_line_prints_it(tmp_path):
-    cq.record_board_counts(tmp_path, [_c("Acme", 0, slug="acme-us"), _c("Acme", 0, slug="acme-eu")], DAY1)
+    _flagged(tmp_path, [_c("Acme", 0, slug="acme-us"), _c("Acme", 0, slug="acme-eu")], DAY1)
     assert cq.ack_empty(tmp_path, "Acme", board="ashby/acme-eu")["status"] == "ok"
     assert [b["slug"] for b in cq.read(tmp_path)["empty_boards"]] == ["acme-us"]
 
@@ -582,8 +565,54 @@ def test_the_standup_ack_instruction_names_the_board_option():
 def test_ack_matches_scan_flags_by_exact_company_not_the_lossy_key(tmp_path):
     # norm() maps both names to "m ller labs"; company_key.exact keeps them apart, so a
     # bare ack of one is not refused as ambiguous and clears only that one.
-    cq.record_board_counts(tmp_path, [_c("Møller Labs", 0, slug="moller"),
+    _flagged(tmp_path, [_c("Møller Labs", 0, slug="moller"),
                                       _c("Möller Labs", 0, slug="moeller")], DAY1)
     out = cq.ack_empty(tmp_path, "Möller Labs")
     assert out["status"] == "ok" and out["name"] == "Möller Labs"
     assert [b["slug"] for b in cq.read(tmp_path)["empty_boards"]] == ["moller"]
+
+
+# --- Nick's rulings, 2026-11-21 (funnel-intake "Empty-board drop-to-0: Nick's two design rulings") ---
+# (1) "Only after it had postings": flag only if an earlier scan saw postings there.
+# (2) "Clear it automatically": the line goes away the first night the board has postings.
+
+DAY0 = "2026-01-04"
+
+
+def _seed(tmp_path, *names_slugs):
+    """A night on which each board had postings, so a later 0 is a drop."""
+    cq.record_board_counts(tmp_path, [_c(n, 3, slug=s) for n, s in names_slugs], DAY0)
+
+
+def test_ruling_1_a_board_at_zero_on_first_sight_is_not_flagged(tmp_path):
+    out = cq.record_board_counts(tmp_path, [_c("Acme", 0)], DAY1)
+    assert out["flagged"] == [] and cq.read(tmp_path)["empty_boards"] == []
+    assert _state(tmp_path)["scan_boards"]["board:ashby:acme"]["last_count"] == 0
+
+
+def test_ruling_1_a_board_never_seen_with_postings_stays_unflagged_however_long(tmp_path):
+    for day in (DAY1, DAY2, DAY3):
+        assert cq.record_board_counts(tmp_path, [_c("Acme", 0)], day)["flagged"] == []
+
+
+def test_ruling_1_the_first_night_at_zero_after_postings_is_flagged(tmp_path):
+    _seed(tmp_path, ("Acme", "acme"))
+    assert cq.record_board_counts(tmp_path, [_c("Acme", 0)], DAY1)["flagged"] == ["Acme"]
+    [b] = cq.read(tmp_path)["empty_boards"]
+    assert b["after"] == "postings" and b["detected_on"] == DAY1
+
+
+def test_ruling_1_a_removed_board_retargeted_at_zero_without_postings_is_not_flagged(tmp_path):
+    cq.record_board_counts(tmp_path, [_c("Acme", 0)], DAY1)
+    cq.record_board_counts(tmp_path, [], DAY2, current=set())
+    out = cq.record_board_counts(tmp_path, [_c("Acme", 0)], DAY3, current={"board:ashby:acme"})
+    assert out["flagged"] == []
+
+
+def test_ruling_2_recovery_clears_the_line_without_an_ack(tmp_path):
+    _seed(tmp_path, ("Acme", "acme"))
+    cq.record_board_counts(tmp_path, [_c("Acme", 0)], DAY1)
+    assert len(cq.read(tmp_path)["empty_boards"]) == 1
+    cq.record_board_counts(tmp_path, [_c("Acme", 1)], DAY2)
+    assert cq.read(tmp_path)["empty_boards"] == []
+    assert cq.record_board_counts(tmp_path, [_c("Acme", 0)], DAY3)["flagged"] == ["Acme"]

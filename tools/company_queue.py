@@ -271,16 +271,17 @@ def record_board_counts(repo_root: Path, counts: list[dict], today: str,
     keyed by board_key(ats, slug); `name` is the latest display name, for the line.
     `read` names a live flag until `ack-empty` clears it.
 
-    The transition rule (org c0, 2026-11-21): a board at 0 is flagged on first sight, or
-    when it had postings at the last scan. A board that stays at 0 is not flagged again,
-    so an acked flag stays acked until the board fills and empties again. A board with
-    postings marks a live flag `recovered_on`. A board whose accept-time flag already
-    says it is empty is not flagged twice.
+    The transition rule (Nick 2026-11-21, funnel-intake "Empty-board drop-to-0: Nick's
+    two design rulings"): a board at 0 is flagged only when the last scan of it saw
+    postings ("Only after it had postings"). A board that stays at 0 is not flagged
+    again, so an acked flag stays acked until the board fills and empties again. A board
+    with postings marks a live flag `recovered_on`, which clears the line with no ack
+    ("Clear it automatically"); a later drop flags afresh.
 
     `current` is every board_key the scan targets, including ones whose fetch failed. A
     record outside it is marked `retired_on` (and so is its live flag), so a removed or
-    re-slugged target is not named forever, and a retired board seen again at 0 is new
-    again, acked or not (Codex r2 F2). Omitted, nothing is retired. `observed_at` is the
+    re-slugged target is not named forever. A retired board seen again keeps its last
+    count, so it is flagged only if that count was above 0. Omitted, nothing is retired. `observed_at` is the
     scan's start: retirement skips a record a newer scan observed (Codex r2 F3).
 
     `observed_at` (the scan's start, ISO UTC) orders observations: one older than the
@@ -292,11 +293,6 @@ def record_board_counts(repo_root: Path, counts: list[dict], today: str,
     def transform(text: str) -> str:
         d = _load_text(text)
         out.update(flagged=[], recovered=[], retired=[], ignored=0, stale=0)
-        accept_flagged = set()
-        for e in d["decided"]:
-            b = e.get("board") if isinstance(e, dict) else None
-            if isinstance(b, dict) and isinstance(e.get("empty_board"), dict):
-                accept_flagged.add(board_key(b.get("ats"), b.get("slug")))
         boards = d["scan_boards"]
         for c in counts:
             n = c.get("count") if isinstance(c, dict) else None
@@ -316,16 +312,12 @@ def record_board_counts(repo_root: Path, counts: list[dict], today: str,
             if seen_at:
                 rec["observed_at"] = seen_at
             if n == 0:
-                # A retired record is a board that left the targets; back at 0, it is new
-                # again (Grok r1 F3).
-                retired = bool(prev and prev.get("retired_on"))
-                first_sight = prev is None or retired
-                had_postings = bool(prev) and not retired and (prev.get("last_count") or 0) > 0
-                if prev is None and key in accept_flagged:
-                    pass  # the accept-time flag already says this board is empty
-                elif first_sight or had_postings:
+                # Nick 2026-11-21, ruling 1, "Only after it had postings": a 0 is flagged
+                # only when the last scan of this board saw postings. A board never seen
+                # with postings (and so one already flagged empty at accept) never is.
+                if prev is not None and (prev.get("last_count") or 0) > 0:
                     rec["empty_board"] = {"detected_on": today, "acked_on": None,
-                                          "after": "postings" if had_postings else "first_scan"}
+                                          "after": "postings"}
                     out["flagged"].append(c["name"])
             elif _live_flag(rec.get("empty_board")):
                 rec["empty_board"] = {**rec["empty_board"], "recovered_on": today}
