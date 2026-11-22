@@ -438,3 +438,11 @@ def test_record_fire_refuses_when_the_count_edit_touches_another_key(tmp_path, m
     with pytest.raises(mf.WriteRefused):
         mf.record_fire(p, "2026-11-22 a fire")
     assert p.read_text(encoding="utf-8") == RULE
+
+
+def test_write_keeps_metadata_indent_when_a_top_level_key_follows(tmp_path):
+    text = "---\nmetadata:\n    type: feedback\n    promoted: no\nname: x\n---\nbody\n"
+    p = _file(tmp_path, text)
+    mf.write(p, {"reopen_at": 2})
+    assert p.read_text(encoding="utf-8") == (
+        "---\nmetadata:\n    type: feedback\n    promoted: no\n    reopen_at: 2\nname: x\n---\nbody\n")
