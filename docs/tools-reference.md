@@ -135,6 +135,44 @@ Args are passed as a **JSON object**, not a bare string — e.g. `{"planPath": "
 
 ---
 
+## Landing branches: `land_branch.py`
+
+Added 2026-11-21. Nick, 2026-11-18: no PRs; one command and one Touch ID land every ready branch
+as merge commits on GitHub main. Run from the main checkout. It never fetches, never pushes and
+never rebases; it prints the commands Nick runs with `!`.
+
+- **`land_branch.py <branch> ... [--suite] [--json]`** checks each branch and writes nothing
+  (git objects aside): its worktree is clean, its upstream is not main, it merges cleanly against
+  GitHub main (read with `gh api`), the push gate dry run passes, it has a clean `/audit-pii`
+  record, and (`--suite`) a suite record. Conflicts between two named branches are reported with a
+  merge order but do not make a branch not ready. Exit 0 when every branch is ready, 1 otherwise,
+  2 for a usage error.
+- **`land_branch.py --merge-push <branch> ...`** builds every ready branch into one chain of merge
+  commits on GitHub main's exact sha (`tools/merge_chain.py`) and prints one push. Each merge
+  message is the branch's reviewed description at `output/landing-descriptions/<branch>.md`: a
+  title of at most 72 characters, a blank line, a body, and the Claude Code footer as the last
+  line, with no em dash and no denylist hit. The only conflict it resolves is
+  `tools/mutation-allow.json`, merged key by key. A branch is held, and the rest still land, when
+  it fails a check, has any other conflict, has no valid description, or is stacked on a held
+  branch. Nothing is printed to push when GitHub main is not in the local object store (it prints
+  the SSH fetch command instead), the installed pre-push hook differs from `tools/hooks/pre-push`,
+  a push, fetch or GitHub ssh session is running, the main checkout's `tools/` is not current
+  GitHub main, the push gate preview blocks, or the full suite on the merged tree fails. A real
+  run copies the branches' review and audit rows into the main checkout's ledgers and records the
+  suite.
+- **`--merge-push --dry-run`** judges with the `tools/` next to the script (so a new gate can be
+  tried from its worktree before it lands). It writes no ledger rows and no refs, only
+  unreferenced git objects, unless `--suite` is given: that runs the full suite on the merged tree
+  and `suite_record.py` appends a row to the main checkout's `tools/.suite-ledger.jsonl` when it
+  passes.
+- **`--verify-landed BASE..TIP`** runs after the push. It checks through `gh api` that every
+  merged branch tip and the chain tip are on GitHub main, and that a key-resolved
+  `mutation-allow.json` on GitHub main holds every merged key. Then it appends a landing record
+  to `data/workstreams/orchestration.md`.
+
+How the push gates judge a merge chain: `framework/multi-model-architecture.md`, section
+"A push of merge commits".
+
 ## Environment & per-workflow recipes
 
 > Moved verbatim from `CLAUDE.md` `## Tools & Environment` on 2026-08-18 to hold that
