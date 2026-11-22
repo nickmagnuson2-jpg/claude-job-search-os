@@ -225,3 +225,59 @@ def test_standup_line_says_unverified_is_not_unused(tmp_path):
     out = tmp_path / "u.jsonl"
     mu.write_usage(out, [], _meta())
     assert "unverified = not re-confirmed, not unused" in mu.standup_line(out)
+
+
+# ---------------------------------------------------------------------------- class map, CLI (mutation run 3)
+
+def test_load_class_rows_skips_corrupt_and_fileless_lines(tmp_path):
+    p = tmp_path / "classes.jsonl"
+    p.write_text('{"file": "feedback_a", "kind": "FACT", "source": "s"}\n{bad json\n[1]\n{"kind": "FACT"}\n'
+                 '{"file": "", "kind": "FACT"}\n{"file": "feedback_b", "kind": "LESSON", "source": "s"}\n')
+    assert [r["file"] for r in mu.load_class_rows(p)] == ["feedback_a", "feedback_b"]
+    assert mu.load_class_rows(tmp_path / "missing.jsonl") is None
+    empty = tmp_path / "empty.jsonl"
+    empty.write_text("")
+    assert mu.load_class_rows(empty) == []
+
+
+def test_only_paths_inside_the_live_memory_folder_are_live(tmp_path):
+    assert mu._is_live(mu.LIVE_MEMORY_DIR / "memory-usage.jsonl") is True
+    assert mu._is_live(tmp_path / "memory-usage.jsonl") is False
+
+
+def test_the_change_part_names_only_kinds_that_changed(tmp_path):
+    out = tmp_path / "u.jsonl"
+    prev = {k: dict(v) for k, v in _meta()["counts"].items()}
+    prev["MACHINERY"] = {"current": 2, "unverified": 1}
+    mu.write_usage(out, [], _meta(previous=prev))
+    assert mu.standup_line(out).endswith("Change since last run: MACHINERY current -1, unverified +1.")
+    mu.write_usage(out, [], _meta(previous=_meta()["counts"]))
+    assert mu.standup_line(out).endswith("No change since last run.")
+
+
+def _proj(tmp_path):
+    proj = tmp_path / "proj"
+    (proj / "memory").mkdir(parents=True)
+    (proj / "memory" / "feedback_alpha_rule.md").write_text("x")
+    (proj / "s1.jsonl").write_text(json.dumps({"type": "user", "timestamp": "2026-11-20T18:00:00Z",
+                                               "message": {"content": "hi"}}) + "\n")
+    return proj
+
+
+def test_main_standup_prints_the_line_or_says_no_run_yet(tmp_path, capsys):
+    proj = _proj(tmp_path)
+    assert mu.main(["--project-dir", str(proj), "--standup"]) == 0
+    assert "no run yet" in capsys.readouterr().out
+    assert not (proj / "memory" / "memory-usage.jsonl").exists()
+    assert mu.main(["--project-dir", str(proj)]) == 0
+    assert capsys.readouterr().out.startswith("Memory freshness (context entry")
+    assert mu.main(["--project-dir", str(proj), "--standup"]) == 0
+    assert "first run" in capsys.readouterr().out
+
+
+def test_the_script_runs_from_the_command_line(tmp_path):
+    import subprocess
+    proj = _proj(tmp_path)
+    r = subprocess.run([sys.executable, str(Path(mu.__file__)), "--project-dir", str(proj), "--dry-run"],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and '"type": "meta"' in r.stdout

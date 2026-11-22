@@ -355,8 +355,7 @@ def build_meta(rows: Iterable[dict], scan: ScanResult, summary: dict[str, dict],
     gaps: dict[str, list[int]] = defaultdict(list)
     for r in rows:
         counts[r["kind"] or NO_KIND][r["state"]] += 1
-        if r["kind"]:
-            gaps[r["kind"]] += use_gaps(list((summary.get(r["file"]) or {}).get("use_days", [])))
+        gaps[r["kind"]] += use_gaps(list((summary.get(r["file"]) or {}).get("use_days", [])))
     window_days = (scan.window_end - scan.window_start).days
     by_kind = {}
     for kind, half_life in ls.HALF_LIFE_DAYS.items():
@@ -383,11 +382,7 @@ def build_meta(rows: Iterable[dict], scan: ScanResult, summary: dict[str, dict],
 
 
 def _is_live(path: Path) -> bool:
-    try:
-        Path(path).resolve().relative_to(LIVE_MEMORY_DIR.resolve())
-        return True
-    except ValueError:
-        return False
+    return Path(path).resolve().is_relative_to(LIVE_MEMORY_DIR.resolve())
 
 
 def write_usage(path: Path, rows: Iterable[dict], meta: dict) -> None:
