@@ -350,9 +350,7 @@ def repair(path: Path, *, expect_sha256: str, new_block: str, intended: dict,
     if os.environ.get("CLAUDECODE") != "1":
         raise WriteRefused(["repair runs only inside a Claude Code session (CLAUDECODE=1)"])
     path = Path(path)
-    if path.is_symlink():
-        raise WriteRefused([f"{path.name} is a symlink; repair the file it points to"])
-    data = path.read_bytes()
+    data = path.read_bytes()  # a symlink is refused by _atomic_write, before any write
     actual = hashlib.sha256(data).hexdigest()
     if actual != expect_sha256:
         raise WriteRefused([f"sha256 of {path.name} is {actual}, not the proposal's "

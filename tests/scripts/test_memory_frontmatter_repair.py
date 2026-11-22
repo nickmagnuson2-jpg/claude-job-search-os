@@ -223,3 +223,19 @@ def test_failed_replace_leaves_no_temp_file(tmp_path, monkeypatch):
         mf.repair(p, expect_sha256=_sha(p), new_block=RAW[1], intended=RAW[2])
     assert sorted(x.name for x in tmp_path.iterdir()) == ["feedback_example.md"]
     assert p.read_bytes() == before
+
+
+def test_a_comment_in_a_block_the_scanner_cannot_read_must_still_travel(tmp_path):
+    # An unterminated quote fails in the scanner itself, so the comment is found by the
+    # fallback ("#" after whitespace); dropping it still needs the note.
+    old = 'name: x\ndescription: "unterminated  # keep this text\nmetadata:\n  promoted: no\n'
+    new = "name: x\ndescription: 'unterminated'\nmetadata:\n  promoted: no\n"
+    p = _file(tmp_path, old)
+    before = p.read_bytes()
+    with pytest.raises(mf.WriteRefused) as e:
+        mf.repair(p, expect_sha256=_sha(p), new_block=new, intended={"description": "unterminated"})
+    assert "keep this text" in str(e.value)
+    assert p.read_bytes() == before
+    mf.repair(p, expect_sha256=_sha(p), new_block=new, intended={"description": "unterminated"},
+              body_note="> 2026-11-22 note: moved from a comment: keep this text")
+    assert p.read_text(encoding="utf-8").count("keep this text") == 1
