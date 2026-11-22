@@ -575,3 +575,15 @@ def test_ack_accepts_the_board_as_the_standup_line_prints_it(tmp_path):
 def test_the_standup_ack_instruction_names_the_board_option():
     text = (REPO / ".claude" / "skills" / "standup" / "SKILL.md").read_text(encoding="utf-8")
     assert 'ack-empty --name "<Name>" [--board <ats>/<slug>]' in text
+
+
+# --- merge with company-key-1121 (Grok resolution review F2) -----------------------------
+
+def test_ack_matches_scan_flags_by_exact_company_not_the_lossy_key(tmp_path):
+    # norm() maps both names to "m ller labs"; company_key.exact keeps them apart, so a
+    # bare ack of one is not refused as ambiguous and clears only that one.
+    cq.record_board_counts(tmp_path, [_c("Møller Labs", 0, slug="moller"),
+                                      _c("Möller Labs", 0, slug="moeller")], DAY1)
+    out = cq.ack_empty(tmp_path, "Möller Labs")
+    assert out["status"] == "ok" and out["name"] == "Möller Labs"
+    assert [b["slug"] for b in cq.read(tmp_path)["empty_boards"]] == ["moller"]
