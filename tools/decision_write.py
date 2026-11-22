@@ -23,6 +23,25 @@ What it holds and what it does not:
     (Touch ID on push, guarded-edit approval in the editing window) are unchanged.
     approval_payload() is the exact v2 signing payload; nothing signs it in v1.
 
+The prior-ruling gate (Build Q, 2026-11-21; Nick: "where have I answered the same question
+before", "make sure all decisions are backed in data"). `add` refuses a question Nick already
+answered and prints the answering line, unless --why-not-answered records why that ruling does not
+cover it. A lexical matcher over the ruling prose was measured on 90 real questions and rejected:
+the wide corpus flagged 30 with about 4 real, the marked-lines corpus flagged 1, wrongly. So the
+gate matches TOPICS, not prose:
+  - Curated topics, append-only in data/run-manifest/ruling-topics.jsonl: regex patterns (case-
+    insensitive; an acronym opts out with (?-i:PE)) plus a cite
+    (a file and an anchor substring found on exactly one line, resolved to its CURRENT line number
+    at match time). Made by `topic-add`, or by `resolve --topic` so the next asking of a question
+    Nick just answered is caught.
+  - Company topics, derived: every terminal row of data/job-pipeline.md (stage_vocab), matched by
+    the company's canonical name and its data/companies.yaml aliases, whole word, case-sensitive.
+    Never guessed: a company known by a name not in that file is not matched.
+The learning ladder, as data: every refusal appends a "cited" event to questions.jsonl; `check`
+lists a curated topic whose cite is outside data/goals.md as PROMOTE on its 3rd citation (a policy
+candidate for goals.md that Nick approves), and counts overrides per topic (a topic overridden
+often is too broad).
+
 Every path comes from the MAIN checkout, so a worktree never reads or writes its own copy of
 the queue, the workstream files or the board.
 
@@ -30,8 +49,12 @@ Usage:
   PYTHONIOENCODING=utf-8 python3 tools/decision_write.py add --owner <workstream|org> \
       --class <class> --question "..." --option "a: ..." --option "b: ..." --acts "..." \
       --predict a --predict-reason "..." [--usd N|unknown] [--commitment] [--by <session>]
+      [--why-not-answered "<why the cited ruling does not cover this>"]
+  PYTHONIOENCODING=utf-8 python3 tools/decision_write.py topic-add --key <slug> --pattern <regex> \
+      [--pattern ...] --file <repo-relative path> --anchor "<text on exactly one line>" [--replace]
   PYTHONIOENCODING=utf-8 python3 tools/decision_write.py list [--owner X] [--json]
-  PYTHONIOENCODING=utf-8 python3 tools/decision_write.py resolve Q12 [--same-reason|--new-reason]
+  PYTHONIOENCODING=utf-8 python3 tools/decision_write.py resolve Q12 [--same-reason|--new-reason] \
+      [--topic <slug> --pattern <regex> ...]
   PYTHONIOENCODING=utf-8 python3 tools/decision_write.py takeover --org <session>
   PYTHONIOENCODING=utf-8 python3 tools/decision_write.py check
 """
@@ -47,6 +70,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import inbox_lock  # noqa: E402
 from count_report import report  # noqa: E402
+from stage_vocab import is_terminal_stage  # noqa: E402
 from vault_paths import main_checkout  # noqa: E402
 
 # Decision classes, codified (Nick, 2026-11-07: "The decision class should be codified here").
@@ -74,6 +98,13 @@ SIGNING_NAMESPACE = "decision-approval"   # v2: approval_signing namespace for b
 
 QUESTIONS_REL = Path("data/run-manifest/questions.jsonl")
 PREDICTIONS_REL = Path("data/run-manifest/predictions.jsonl")
+TOPICS_REL = Path("data/run-manifest/ruling-topics.jsonl")
+GOALS_REL = Path("data/goals.md")
+PIPELINE_REL = Path("data/job-pipeline.md")
+COMPANIES_REL = Path("data/companies.yaml")
+PROMOTE_AT = 3                     # Build Q spec: PROMOTE on a ruling's 3rd citation
+TOPIC_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+COMPANY_PREFIX = "company:"
 WORKSTREAMS_REL = Path("data/workstreams")
 BOARD_REL = Path("output/overnight-merge-back/SESSIONS.md")
 ORG_FILE_RELS = {(WORKSTREAMS_REL / f"{n}.md").as_posix() for n in (ORG_FILE, LEGACY_ORG_FILE)}
@@ -113,7 +144,9 @@ def resolve_main(root: Path) -> Path:
 
 def paths(main: Path) -> dict:
     return {"main": main, "questions": main / QUESTIONS_REL, "predictions": main / PREDICTIONS_REL,
-            "workstreams": main / WORKSTREAMS_REL, "board": main / BOARD_REL}
+            "workstreams": main / WORKSTREAMS_REL, "board": main / BOARD_REL,
+            "topics": main / TOPICS_REL, "pipeline": main / PIPELINE_REL,
+            "companies": main / COMPANIES_REL}
 
 
 def org_file(p: dict) -> Path:
@@ -284,6 +317,139 @@ def norm(text: str) -> str:
     return " ".join(text.lower().split())
 
 
+# ---------------------------------------------------------------- prior rulings (Build Q)
+def compile_patterns(patterns: list) -> list:
+    if not patterns:
+        raise Refusal("no_pattern", "a topic needs at least one --pattern")
+    out = []
+    for pat in patterns:
+        try:
+            rx = re.compile(pat, re.IGNORECASE)   # an acronym opts out: (?-i:PE)
+        except re.error as exc:
+            raise Refusal("bad_pattern", f"{pat!r} is not a valid regex: {exc}") from None
+        if rx.search(""):
+            raise Refusal("bad_pattern", f"{pat!r} matches empty text, so it would match every question")
+        out.append(rx)
+    return out
+
+
+def cite_path(p: dict, rel: str) -> Path:
+    f = (p["main"] / rel).resolve()
+    if not f.is_relative_to(p["main"].resolve()):
+        raise Refusal("cite_outside", f"{rel} resolves outside the main checkout")
+    if not f.is_file():
+        raise Refusal("cite_missing", f"no file {rel} in the main checkout")
+    return f
+
+
+def locate(p: dict, rel: str, anchor: str) -> tuple:
+    """(line number, line text) of the ONE line holding `anchor`, read now, so a cite follows its
+    line when lines move. Zero or several lines is a refusal: a cite must never guess."""
+    lines = cite_path(p, rel).read_text(encoding="utf-8").splitlines()
+    hits = [(n, l) for n, l in enumerate(lines, 1) if anchor in l]
+    if not hits:
+        raise Refusal("anchor_not_found", f"no line in {rel} holds {anchor!r}")
+    if len(hits) > 1:
+        raise Refusal("anchor_ambiguous",
+                      f"{len(hits)} lines in {rel} hold {anchor!r} ({', '.join(str(n) for n, _ in hits)})")
+    return hits[0]
+
+
+def curated_topics(p: dict) -> dict:
+    """key -> the latest topic event for that key (a --replace supersedes, never edits)."""
+    return {e["key"]: e for e in load_events(p["topics"]) if e.get("type") == "topic"}
+
+
+def company_topics(p: dict) -> tuple[list, list]:
+    """(topics, warnings). One topic per company whose EVERY pipeline row is terminal (a company
+    with one closed role and one live role is still in play: 3 such companies on 2026-11-21).
+    Rows are grouped by canonical company through data/companies.yaml, so a live row written
+    under an alias keeps the company live. Each topic is (key, names, rel, [(line number, line
+    text) of each terminal row]); rows come from pipe_read's parser and are mapped back to their
+    lines by their company, role and stage cells. The company file is read only when some row is
+    terminal; if it cannot be loaded, companies match by their pipeline spelling only and a
+    warning says so (the same as a missing file, but visible)."""
+    if not p["pipeline"].is_file():
+        return [], []
+    from datetime import date
+    from pipe_read import parse_all_rows            # lazy: only the gate needs it
+    text = p["pipeline"].read_text(encoding="utf-8")
+    rows = parse_all_rows(text, date.today())
+    if not any(is_terminal_stage(r["stage"]) for r in rows):
+        return [], []
+    dim, warnings = None, []
+    if p["companies"].is_file():
+        import company_dim
+        try:
+            dim = company_dim.load(p["companies"])
+        except Exception as exc:                    # yaml, schema or read error: degrade, visibly
+            warnings.append(f"{COMPANIES_REL.as_posix()} unreadable ({exc}); companies matched by "
+                            "their pipeline spelling only, aliases ignored")
+    groups = {}
+    for row in rows:
+        entry = dim.resolve(row["company"]) if dim else None
+        key = entry["canonical"] if entry else row["company"]
+        g = groups.setdefault(key, {"entry": entry, "rows": []})
+        g["rows"].append(row)
+    cells_at = [(n, l, [c.strip() for c in l.strip().strip("|").split("|")])
+                for n, l in enumerate(text.splitlines(), 1) if l.startswith("|")]
+    out = []
+    for key, g in groups.items():
+        if not all(is_terminal_stage(r["stage"]) for r in g["rows"]):
+            continue
+        keys = {(r["company"], r["role"], r["stage"]) for r in g["rows"]}
+        where = [(n, l) for n, l, c in cells_at if len(c) >= 3 and (c[0], c[1], c[2]) in keys]
+        entry = g["entry"]
+        names = {r["company"] for r in g["rows"]} | (
+            {entry["canonical"], *(entry.get("aliases") or [])} if entry else set())
+        out.append((COMPANY_PREFIX + key, sorted(names), PIPELINE_REL.as_posix(), where))
+    return out, warnings
+
+
+def prior_rulings(p: dict, question: str) -> tuple[list, list]:
+    """(answers, warnings): every ruling the question repeats, with the answering line as it
+    reads now."""
+    answers = []
+    for key, t in curated_topics(p).items():
+        if not any(rx.search(question) for rx in compile_patterns(t["patterns"])):
+            continue
+        try:
+            n, text = locate(p, t["file"], t["anchor"])
+        except Refusal as r:
+            raise Refusal("topic_cite_stale", f"topic {key} matches but its cite is stale: {r.message}; "
+                          f"fix it with topic-add --replace") from None
+        answers.append({"topic": key, "file": t["file"], "line": n, "text": text})
+    companies, warnings = company_topics(p)
+    for key, names, rel, where in companies:
+        if any(re.search(rf"(?<!\w){re.escape(nm)}(?!\w)", question) for nm in names):
+            answers += [{"topic": key, "file": rel, "line": n, "text": text} for n, text in where]
+    return answers, warnings
+
+
+def topic_event(p: dict, key: str, patterns: list, rel: str, anchor: str, by: str, replace: bool,
+                existing: dict) -> dict:
+    if not TOPIC_KEY_RE.match(key or ""):
+        raise Refusal("bad_topic_key", f"a topic key is lowercase letters, digits and hyphens, got {key!r}")
+    compile_patterns(patterns)
+    n, text = locate(p, rel, anchor)
+    # Stored as the resolved repo-relative path, so data/x/../goals.md is data/goals.md
+    # everywhere a cite path is compared (Codex r1 F2).
+    rel = cite_path(p, rel).relative_to(p["main"].resolve()).as_posix()
+    if key in existing and not replace:
+        raise Refusal("topic_exists", f"topic {key} exists; pass --replace to supersede it")
+    return sealed({"type": "topic", "key": key, "at": now(), "by": by, "patterns": list(patterns),
+                   "file": rel, "anchor": anchor, "line_at_add": n,
+                   "line_hash_at_add": sha(text)})
+
+
+def cmd_topic_add(p: dict, a) -> dict:
+    with inbox_lock.file_lock(p["topics"]):
+        ev = topic_event(p, a.key, a.pattern, a.file, a.anchor, a.by, a.replace, curated_topics(p))
+        append(p["topics"], ev)
+    return {"status": "ok", "topic": {"key": ev["key"], "file": ev["file"], "line": ev["line_at_add"],
+                                      "patterns": ev["patterns"]}}
+
+
 # ---------------------------------------------------------------- commands
 def kind_of(cls: str, usd, commitment: bool) -> str:
     if CLASSES[cls] != "spend":
@@ -315,7 +481,10 @@ def cmd_add(p: dict, a) -> dict:
         raise Refusal("unknown_owner", f"no workstream file for {owner!r}; owner is a workstream or 'org'")
     if a.cls not in CLASSES:
         raise Refusal("unknown_class", f"{a.cls!r} is not a codified class: {', '.join(CLASSES)}")
-    for name, val in (("question", a.question), ("acts", a.acts), ("predict-reason", a.predict_reason)):
+    checks = [("question", a.question), ("acts", a.acts), ("predict-reason", a.predict_reason)]
+    if a.why_not_answered is not None:
+        checks.append(("why-not-answered", a.why_not_answered))
+    for name, val in checks:
         if not val.strip():
             raise Refusal("blank_field", f"--{name} is blank")
     labels = []
@@ -331,6 +500,29 @@ def cmd_add(p: dict, a) -> dict:
     if a.predict not in labels:
         raise Refusal("bad_prediction", f"--predict must be one of {labels}")
     usd = parse_usd(a.cls, a.usd)
+
+    # A corrupt queue refuses every add before anything is matched or written, the citing path
+    # included (T8; Grok r1 F1: the refusal path appended cited events past a corrupt line).
+    load_events(p["questions"])
+    answers, warnings = prior_rulings(p, a.question)
+    if answers and a.why_not_answered is None:
+        refusal = Refusal(
+            "already_answered",
+            "already answered at " + "; ".join(f"{x['file']}:{x['line']}" for x in answers)
+            + ". The ruling text is in `answers`. If it does not cover this question, re-run with "
+              "--why-not-answered \"<why>\"; the reason is recorded.",
+            answers=answers, **({"warnings": warnings} if warnings else {}))
+        if not a.dry_run:
+            with inbox_lock.file_lock(p["questions"]):
+                for x in answers:
+                    append(p["questions"], sealed({
+                        "type": "cited", "id": None, "at": now(), "by": a.by, "topic": x["topic"],
+                        "file": x["file"], "line": x["line"], "line_hash": sha(x["text"]),
+                        "question": a.question.strip()}))
+        raise refusal
+    # One entry per topic, however many rows it cites (Grok r1 F2: a two-row company counted twice).
+    not_answered = ({"topics": list(dict.fromkeys(x["topic"] for x in answers)),
+                     "reason": a.why_not_answered.strip()} if answers else None)
 
     def build(events: list, preds: list) -> tuple[dict, dict]:
         for q in open_questions(events).values():
@@ -348,16 +540,20 @@ def cmd_add(p: dict, a) -> dict:
         pred = {"id": q["id"], "at": q["at"], "option": a.predict, "reason": a.predict_reason.strip(),
                 "blind": True, "question_hash": q["question_hash"]}
         q["prediction_hash"] = prediction_hash(pred)
+        if not_answered:
+            q["not_answered"] = not_answered
         return sealed(q), pred
 
+    extra = {**({"not_answered": not_answered} if not_answered else {}),
+             **({"warnings": warnings} if warnings else {})}
     if a.dry_run:
         q, _ = build(load_events(p["questions"]), load_events(p["predictions"]))
-        return {"status": "ok", "dry_run": True, "question": public_view(q)}
+        return {"status": "ok", "dry_run": True, "question": public_view(q), **extra}
     with inbox_lock.file_lock(p["questions"]):
         q, pred = build(load_events(p["questions"]), load_events(p["predictions"]))
         append(p["predictions"], pred)          # first, so an asked event never lacks one
         append(p["questions"], q)
-    return {"status": "ok", "question": public_view(q)}
+    return {"status": "ok", "question": public_view(q), **extra}
 
 
 def listing(p: dict) -> tuple[list, str]:
@@ -416,6 +612,8 @@ def find_prediction(p: dict, q: dict) -> dict:
 
 
 def cmd_resolve(p: dict, a) -> dict:
+    if a.pattern and not a.topic:
+        raise Refusal("pattern_without_topic", "--pattern on resolve needs --topic")
     with inbox_lock.file_lock(p["questions"]):
         events = load_events(p["questions"])
         asked = {e["id"]: e for e in events if e.get("type") == "asked"}
@@ -439,6 +637,13 @@ def cmd_resolve(p: dict, a) -> dict:
         else:
             raise Refusal("reason_comparison_required",
                           "same option as predicted: pass --same-reason or --new-reason (D6)")
+        topic = None
+        if a.topic:                              # validated in full before the resolved event,
+                                                 # so a bad topic refuses with nothing written
+            anchor = f"RULING {a.id} |"
+            with inbox_lock.file_lock(p["topics"]):
+                topic = topic_event(p, a.topic, a.pattern, ruling["file"], anchor, "resolve",
+                                    False, curated_topics(p))
         payload = approval_payload(q, ruling)
         # The window is what the ruling line says; it is recorded beside the route the board gave
         # at that moment, never checked against it: a typed session name is not evidence.
@@ -447,11 +652,18 @@ def cmd_resolve(p: dict, a) -> dict:
             "reason": ruling["reason"], "window": ruling["window"], "route_at_resolve": routing(p)[0](q["owner"]),
             "file": ruling["file"], "line": ruling["line"], "line_hash": ruling["line_hash"],
             "outcome": outcome, "approval": "none", "payload_hash": sha(payload), "signature": None}))
+        if topic:
+            with inbox_lock.file_lock(p["topics"]):
+                append(p["topics"], topic)
     note = (f"routed only, not an approval: act only under the existing gate ({q['class']})"
             if q["kind"] == "big" else "design call recorded")
-    return {"status": "ok", "summary": f"{a.id} resolved: {note}", "question": public_view(q),
-            "ruling": ruling, "prediction": {"option": pred["option"], "reason": pred["reason"]},
-            "outcome": outcome, "approval": "none"}
+    out = {"status": "ok", "summary": f"{a.id} resolved: {note}", "question": public_view(q),
+           "ruling": ruling, "prediction": {"option": pred["option"], "reason": pred["reason"]},
+           "outcome": outcome, "approval": "none"}
+    if topic:
+        out["topic"] = {"key": topic["key"], "file": topic["file"], "line": topic["line_at_add"],
+                        "patterns": topic["patterns"]}
+    return out
 
 
 def org_names(first_cell: str) -> set:
@@ -505,7 +717,32 @@ def cmd_check(p: dict) -> tuple[dict, int]:
         lines = f.read_text(encoding="utf-8").splitlines() if f.is_file() else []
         if not any(l.startswith(f"RULING {e['id']} |") and sha(l) == e["line_hash"] for l in lines):
             problems.append(f"{e['id']}: ruling line changed or missing in {f}")
-    return {"status": "ok" if not problems else "problems", "problems": problems}, (1 if problems else 0)
+    topics, topic_problems = read_lines(p["topics"])
+    problems += topic_problems
+    current = {}
+    for n, t in enumerate(topics, 1):
+        if record_hash(t) != t.get("record_hash"):
+            problems.append(f"topic event {n} ({t.get('key')}): record edited outside the tool")
+        current[t.get("key")] = t       # the file holds only topic events; the latest per key wins
+    for key, t in current.items():
+        try:
+            locate(p, t["file"], t["anchor"])
+        except Refusal as r:
+            problems.append(f"topic {key}: anchor stale ({r.message})")
+    cited = {}
+    for e in events:
+        if e.get("type") == "cited":
+            cited[e["topic"]] = cited.get(e["topic"], 0) + 1
+    promote = [{"topic": k, "citations": cited[k], "file": t["file"], "anchor": t["anchor"]}
+               for k, t in sorted(current.items())
+               if cited.get(k, 0) >= PROMOTE_AT and Path(t["file"]).as_posix() != GOALS_REL.as_posix()]
+    overrides = {}
+    for e in events:
+        for k in (e.get("not_answered") or {}).get("topics", []):
+            overrides[k] = overrides.get(k, 0) + 1
+    return ({"status": "ok" if not problems else "problems", "problems": problems,
+             "promote": promote, "overrides": overrides, "citations": cited},
+            (1 if problems else 0))
 
 
 # ---------------------------------------------------------------- CLI
@@ -525,6 +762,15 @@ def parser() -> argparse.ArgumentParser:
     add.add_argument("--commitment", action="store_true", help="spend only: credits or a subscription")
     add.add_argument("--by", default="unknown", help="the session adding the question")
     add.add_argument("--dry-run", action="store_true")
+    add.add_argument("--why-not-answered", default=None,
+                     help="why the cited prior ruling does not cover this question (recorded)")
+    ta = sub.add_parser("topic-add")
+    ta.add_argument("--key", required=True)
+    ta.add_argument("--pattern", action="append", default=[])
+    ta.add_argument("--file", required=True, help="repo-relative file holding the ruling")
+    ta.add_argument("--anchor", required=True, help="text found on exactly one line of --file")
+    ta.add_argument("--replace", action="store_true")
+    ta.add_argument("--by", default="unknown")
     ls = sub.add_parser("list")
     ls.add_argument("--owner", default=None)
     ls.add_argument("--json", action="store_true")
@@ -533,6 +779,8 @@ def parser() -> argparse.ArgumentParser:
     how = res.add_mutually_exclusive_group()
     how.add_argument("--same-reason", action="store_true")
     how.add_argument("--new-reason", action="store_true")
+    res.add_argument("--topic", default=None, help="record a topic so the next asking is caught")
+    res.add_argument("--pattern", action="append", default=[])
     tk = sub.add_parser("takeover")
     tk.add_argument("--org", required=True)
     sub.add_parser("check")
@@ -549,6 +797,8 @@ def main(argv=None) -> int:
             cmd_list(p, a)
         elif a.cmd == "resolve":
             emit(cmd_resolve(p, a))
+        elif a.cmd == "topic-add":
+            emit(cmd_topic_add(p, a))
         elif a.cmd == "takeover":
             emit(cmd_takeover(p, a))
         else:
