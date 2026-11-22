@@ -221,8 +221,7 @@ def ack_empty(repo_root: Path, name: str, board: str | None = None) -> dict:
         cands = []  # (board id, the flag dict to ack, display name)
         for e in d["decided"]:
             flag = e.get("empty_board") if isinstance(e, dict) else None
-            if (isinstance(flag, dict) and not flag.get("acked_on")
-                    and exact_company(name, e.get("name", ""))):
+            if _live_flag(flag) and exact_company(name, e.get("name", "")):
                 cands.append((bid(e.get("board")), flag, e.get("name")))
         for r in d["scan_boards"].values():
             if (isinstance(r, dict) and _live_flag(r.get("empty_board"))
@@ -319,9 +318,20 @@ def record_board_counts(repo_root: Path, counts: list[dict], today: str,
                     rec["empty_board"] = {"detected_on": today, "acked_on": None,
                                           "after": "postings"}
                     out["flagged"].append(c["name"])
-            elif _live_flag(rec.get("empty_board")):
-                rec["empty_board"] = {**rec["empty_board"], "recovered_on": today}
-                out["recovered"].append(c["name"])
+            else:
+                if _live_flag(rec.get("empty_board")):
+                    rec["empty_board"] = {**rec["empty_board"], "recovered_on": today}
+                    out["recovered"].append(c["name"])
+                # Ruling 2 covers the accept-time line too: postings on that board clear it
+                # (Codex ruling-delta F1), so a later drop shows one line, not two.
+                for e in d["decided"]:
+                    flag = e.get("empty_board") if isinstance(e, dict) else None
+                    b = e.get("board") if isinstance(e, dict) else None
+                    if (_live_flag(flag) and isinstance(b, dict)
+                            and board_key(b.get("ats"), b.get("slug")) == key):
+                        flag["recovered_on"] = today
+                        if c["name"] not in out["recovered"]:
+                            out["recovered"].append(c["name"])
             boards[key] = rec
         if current is not None:
             for key, rec in boards.items():

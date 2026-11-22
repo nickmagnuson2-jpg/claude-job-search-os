@@ -616,3 +616,39 @@ def test_ruling_2_recovery_clears_the_line_without_an_ack(tmp_path):
     cq.record_board_counts(tmp_path, [_c("Acme", 1)], DAY2)
     assert cq.read(tmp_path)["empty_boards"] == []
     assert cq.record_board_counts(tmp_path, [_c("Acme", 0)], DAY3)["flagged"] == ["Acme"]
+
+
+def test_ruling_2_postings_clear_an_accept_time_line_and_a_later_drop_gives_one_line(tmp_path):
+    # Codex ruling-delta F1: recovery must clear the accept-time flag too, or the line
+    # outlives the postings and a later drop shows the board twice.
+    cq.queue_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    cq.queue_path(tmp_path).write_text(json.dumps({"pending": [], "decided": [
+        {"name": "Acme", "decision": "accept", "board": {"ats": "ashby", "slug": "acme"},
+         "empty_board": {"detected_on": DAY0, "acked_on": None}}]}))
+    assert [b["source"] for b in cq.read(tmp_path)["empty_boards"]] == ["accept"]
+    out = cq.record_board_counts(tmp_path, [_c("Acme", 2)], DAY1)
+    assert out["recovered"] == ["Acme"] and cq.read(tmp_path)["empty_boards"] == []
+    assert cq.ack_empty(tmp_path, "Acme")["code"] == "not_flagged"  # nothing live to ack
+    cq.record_board_counts(tmp_path, [_c("Acme", 0)], DAY2)
+    assert [(b["source"], b["detected_on"]) for b in cq.read(tmp_path)["empty_boards"]] == [("scan", DAY2)]
+
+
+def test_postings_on_another_board_leave_an_accept_time_line_alone(tmp_path):
+    cq.queue_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    cq.queue_path(tmp_path).write_text(json.dumps({"pending": [], "decided": [
+        {"name": "Acme", "decision": "accept", "board": {"ats": "ashby", "slug": "acme"},
+         "empty_board": {"detected_on": DAY0, "acked_on": None}}]}))
+    cq.record_board_counts(tmp_path, [_c("Acme", 2, slug="acme-other")], DAY1)
+    assert [b["source"] for b in cq.read(tmp_path)["empty_boards"]] == ["accept"]
+
+
+def test_a_board_with_both_flags_is_reported_recovered_once(tmp_path):
+    cq.queue_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    cq.queue_path(tmp_path).write_text(json.dumps({"pending": [], "decided": [
+        {"name": "Acme", "decision": "accept", "board": {"ats": "ashby", "slug": "acme"},
+         "empty_board": {"detected_on": DAY0, "acked_on": None}}],
+        "scan_boards": {"board:ashby:acme": {"name": "Acme", "ats": "ashby", "slug": "acme",
+                                             "last_count": 0, "empty_board": {
+                                                 "detected_on": DAY0, "acked_on": None}}}}))
+    out = cq.record_board_counts(tmp_path, [_c("Acme", 4)], DAY1)
+    assert out["recovered"] == ["Acme"] and cq.read(tmp_path)["empty_boards"] == []
