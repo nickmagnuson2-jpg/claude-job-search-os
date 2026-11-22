@@ -407,3 +407,47 @@ def test_lessons_date_cell_may_carry_later_fires():
     # Live convention: "2026-07-24 (6th: 2026-09-22)" records a later fire beside the first.
     _, _, defects = ls.lessons_state(["p", "r", "6", "Partial: half", "2026-07-24 (6th: 2026-09-22)"])
     assert defects == []
+
+
+# ------------------------------------------------------------------ mutation r1: messages and branches
+
+def test_pointer_defect_names_the_right_word():
+    assert "'merged into <ref>'" in ls.disposition("merged").defect
+    assert "'superseded by <ref>'" in ls.disposition("superseded").defect
+    assert "'parked by <ref>'" in ls.disposition("parked").defect
+
+
+def test_parked_by_a_path_without_date_is_a_defect():
+    assert ls.disposition("parked by framework/voice.md").state == "defect"
+
+
+def test_no_token_defect_quotes_the_value():
+    d = ls.disposition("**Yes**")
+    assert d.state == "defect" and "**Yes**" in d.defect
+
+
+def test_skill_file_missing_says_it_is_needed(tmp_path):
+    out = ls.validate_fields({"exit_path": "skill", "skill_step": "Step 5"},
+                             repo_root=tmp_path, skills_home=tmp_path)
+    assert out == ["skill_file: exit_path skill needs the skill or framework file"]
+
+
+def test_memory_state_names_each_defect():
+    s = ls.memory_state({"promoted": "no", "occurrences": 3, "reopen_at": 0})
+    assert s.due == "bad_reopen_at" and s.defects == ("reopen_at: 0 is not a positive integer",)
+    s = ls.memory_state({"promoted": "no", "occurrences": "x", "reopen_at": 2})
+    assert s.due == "bad_occurrences" and s.defects == ("occurrences: 'x' is not a count",)
+    s = ls.memory_state({"promoted": "no", "occurrences": 3})
+    assert s.defects == ("reopen_at: missing; the rule can never be due",)
+    s = ls.memory_state({"promoted": "no", "occurrences": 3, "reopen_at": 3})
+    assert s.defects == ()
+    s = ls.memory_state({"promoted": "Encoded", "occurrences": 1, "reopen_at": 3})
+    assert len(s.defects) == 1 and s.defects[0].startswith("promoted: token 'encoded'")
+
+
+def test_not_friction_kind_is_non_counting():
+    # The rows retagged "misattributed: not friction" on 2026-11-22 (org 68).
+    assert "not-friction" in ls.FRICTION_KINDS
+    assert "not-friction" not in ls.COUNTING_KINDS
+    assert not ls.counts("not-friction")
+    assert ls.friction_state("not-friction", "", 9) == "not_counting"

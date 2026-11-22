@@ -349,3 +349,91 @@ def test_record_fire_refuses_a_missing_count(tmp_path, monkeypatch):
     with pytest.raises(mf.WriteRefused):
         mf.record_fire(p, "2026-11-22 a fire")
     assert p.read_text(encoding="utf-8") == text
+
+
+# ------------------------------------------------------------------ mutation r1: branches the first tests missed
+
+def test_write_refused_message_joins_reasons():
+    assert str(mf.WriteRefused(["a: one", "b: two"])) == "a: one; b: two"
+
+
+def test_write_keeps_a_four_space_metadata_indent(tmp_path):
+    text = "---\nname: x\nmetadata:\n    type: feedback\n    promoted: no\n---\nbody\n"
+    p = _file(tmp_path, text)
+    mf.write(p, {"reopen_at": 2, "promoted": "partial -- half"})
+    out = p.read_text(encoding="utf-8")
+    assert out == ("---\nname: x\nmetadata:\n    type: feedback\n    promoted: partial -- half\n"
+                   "    reopen_at: 2\n---\nbody\n")
+
+
+def test_write_metadata_as_last_line_adds_at_default_indent(tmp_path):
+    p = _file(tmp_path, "---\nname: x\nmetadata:\n---\nbody\n")
+    mf.write(p, {"reopen_at": 2})
+    assert mf.read_file(p)[0]["reopen_at"] == 2
+
+
+def test_consistency_check_refuses_an_unreadable_result():
+    with pytest.raises(mf.WriteRefused) as e:
+        mf._refuse_unless_consistent({"name": "x"}, "---\nname: x\n  bad: [\n---\n", {})
+    assert "does not re-read" in str(e.value)
+
+
+def test_consistency_check_refuses_a_wrong_readback_and_a_side_change():
+    new_text = "---\nname: y\npromoted: no\n---\n"
+    with pytest.raises(mf.WriteRefused) as e:
+        mf._refuse_unless_consistent({"name": "x", "promoted": "no"}, new_text, {"promoted": "yes"})
+    assert sorted(e.value.reasons) == ["name: changed although not updated",
+                                       "promoted: reads back as 'no', not 'yes'"]
+
+
+def test_failed_replace_leaves_no_temp_file(tmp_path, monkeypatch):
+    p = _file(tmp_path)
+
+    def boom(src, dst):
+        raise OSError("disk full")
+    monkeypatch.setattr(mf.os, "replace", boom)
+    with pytest.raises(OSError):
+        mf.write(p, {"reopen_at": 3})
+    assert sorted(x.name for x in tmp_path.iterdir()) == ["feedback_example_rule.md"]
+    assert p.read_text(encoding="utf-8") == RULE
+
+
+def test_write_refuses_empty_updates(tmp_path):
+    p = _file(tmp_path)
+    with pytest.raises(mf.WriteRefused) as e:
+        mf.write(p, {})
+    assert e.value.reasons == ["nothing to write"]
+
+
+def test_write_refuses_a_file_without_frontmatter(tmp_path):
+    p = _file(tmp_path, "body only\n")
+    with pytest.raises(mf.WriteRefused) as e:
+        mf.write(p, {"reopen_at": 2})
+    assert "no_frontmatter" in str(e.value)
+    assert p.read_text(encoding="utf-8") == "body only\n"
+
+
+def test_record_fire_names_a_frontmatter_defect(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDECODE", "1")
+    p = _file(tmp_path, "body only\n")
+    with pytest.raises(mf.WriteRefused) as e:
+        mf.record_fire(p, "2026-11-22 a fire")
+    assert e.value.reasons[0].startswith("frontmatter: no_frontmatter")
+
+
+def test_record_fire_on_a_file_without_final_newline(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDECODE", "1")
+    p = _file(tmp_path, RULE.rstrip("\n"))
+    mf.record_fire(p, "2026-11-22 a fire", today=dt.date(2026, 11, 22))
+    assert p.read_text(encoding="utf-8").endswith(
+        "**Rule:** an example.\n- Fire 4 recorded 2026-11-22: 2026-11-22 a fire\n")
+
+
+def test_record_fire_refuses_when_the_count_edit_touches_another_key(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDECODE", "1")
+    p = _file(tmp_path)
+    real = mf._set_keys
+    monkeypatch.setattr(mf, "_set_keys", lambda t, u: real(t, u).replace("name: feedback_example_rule", "name: other"))
+    with pytest.raises(mf.WriteRefused):
+        mf.record_fire(p, "2026-11-22 a fire")
+    assert p.read_text(encoding="utf-8") == RULE

@@ -59,7 +59,9 @@ DUE_STATES = ("due", "not_due", "no_number", "bad_reopen_at", "bad_occurrences")
 
 # ---------------------------------------------------------------- friction
 RESOLVED_PREFIX = "RESOLVED"
-FRICTION_KINDS = ("friction", "block-as-designed", "harness", "false-positive-block")
+# not-friction: rows retagged "misattributed: not friction" on 2026-11-22 (org 68).
+FRICTION_KINDS = ("friction", "block-as-designed", "harness", "false-positive-block",
+                  "not-friction")
 COUNTING_KINDS = ("friction", "false-positive-block")
 FRICTION_STATES = ("resolved", "not_counting", "due", "open", "defect_kind",
                    "bad_occurrences")
@@ -124,8 +126,6 @@ def disposition(value, *, memory_dir: Path | None = None,
     if not text:
         return Disposition("open", "", None)
     tok = promoted_token(text)
-    if not tok:
-        return Disposition("defect", "", f"{text[:40]!r} opens with no token")
     if tok in OPEN_TOKENS:
         return Disposition("open", tok, None)
     if tok in PARTIAL_TOKENS:
@@ -135,7 +135,8 @@ def disposition(value, *, memory_dir: Path | None = None,
     if tok in POINTER_TOKENS:
         why = _pointer_defect(tok, text, memory_dir, repo_root)
         return Disposition("defect", tok, why) if why else Disposition("closed", tok, None)
-    return Disposition("defect", tok, f"token {tok!r} is not one of {'|'.join(PROMOTED_TOKENS)}")
+    return Disposition("defect", tok, f"token {tok!r} in {text[:40]!r} is not one of "
+                                      f"{'|'.join(PROMOTED_TOKENS)}")
 
 
 _DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")

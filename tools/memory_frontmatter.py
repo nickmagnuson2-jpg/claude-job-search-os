@@ -57,8 +57,10 @@ class WriteRefused(Exception):
     """write() refused; nothing was written. `.reasons` lists every reason."""
 
     def __init__(self, reasons: list[str]):
-        super().__init__("; ".join(reasons))
         self.reasons = reasons
+
+    def __str__(self) -> str:
+        return "; ".join(self.reasons)
 
 
 def split(text: str) -> tuple[str, str] | None:
@@ -131,9 +133,8 @@ def check_text(new_text: str, old_text: str | None = None, *, memory_dir: Path |
         return [f"frontmatter: {defect.code}: {defect.detail}"]
     keys = None
     if old_text is not None:
-        old, old_defect = read(old_text)
-        if old_defect is None:
-            keys = {k for k in set(fields) | set(old) if fields.get(k) != old.get(k)}
+        old, _ = read(old_text)  # unreadable old -> {} -> every key differs -> all checked
+        keys = {k for k in set(fields) | set(old) if fields.get(k) != old.get(k)}
     return _validate(fields, keys, memory_dir, repo_root, skills_home)
 
 
