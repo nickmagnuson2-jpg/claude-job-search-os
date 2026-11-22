@@ -19,7 +19,7 @@ Contract:
   * One value type per meaning: YAML 1.1 booleans become "yes" / "no", null becomes "",
     dates become ISO strings. So `promoted: no` and `promoted: "no"` read the same.
   * `write(path, updates)` is the only sanctioned machine writer. It edits only the lines of
-    the keys it sets, re-reads the result with `read`, refuses unless every update reads
+    the keys it sets (refusing a key whose lines carry a YAML comment, and a symlink path), re-reads the result with `read`, refuses unless every update reads
     back as written, no other field changed, and `learning_state.validate_fields` finds no
     defect in the keys that changed. It never writes `occurrences` (the state matrix: a
     count is recorded by the person who saw the fire, never by a machine).
@@ -44,6 +44,7 @@ import yaml
 _BLOCK = re.compile(r"\A---\n(.*?\n)?---(?:\n|\Z)", re.DOTALL)
 
 NEVER_MACHINE_WRITTEN = frozenset({"occurrences"})
+_COMMENT = re.compile(r"(?:^|\s)#")
 
 
 class _DuplicateKey(Exception):
@@ -217,6 +218,12 @@ def _set_keys(text: str, updates: dict) -> str:
         spans, meta_end, child_indent = _key_spans("\n".join(lines))
         if key in spans:
             a, b, indent = spans[key]
+            if any(_COMMENT.search(line) for line in lines[a:b]):
+                # A comment is invisible to read(), so the consistency check cannot see it
+                # go; refuse rather than delete it (Codex r2 F1, P0). Over-refuses a "#"
+                # inside a quoted value, which costs a hand edit, never data.
+                raise WriteRefused([f"{key}: its lines carry a YAML comment that a rewrite "
+                                    "would delete; edit this key by hand"])
             lines[a:b] = _render(key, value, indent)
         elif meta_end is not None:
             lines[meta_end:meta_end] = _render(key, value, child_indent)
@@ -240,9 +247,12 @@ def _refuse_unless_consistent(old: dict, new_text: str, updates: dict) -> dict:
 
 
 def _atomic_write(path: Path, text: str) -> None:
-    """tmp + os.replace, keeping the file's permission bits (mkstemp creates 0600; Codex r1
+    """tmp + os.replace, keeping the file's permission bits. Refuses a symlink: replacing
+    it would swap the link for a regular file and leave the target unchanged (Codex r2 F2) (mkstemp creates 0600; Codex r1
     F4). Owner and extended attributes are not copied: the writer runs as the file's owner."""
     path = Path(path)
+    if path.is_symlink():
+        raise WriteRefused([f"{path.name} is a symlink; write the file it points to"])
     mode = stat.S_IMODE(path.stat().st_mode)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:

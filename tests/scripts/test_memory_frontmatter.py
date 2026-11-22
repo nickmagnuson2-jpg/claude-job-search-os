@@ -472,3 +472,49 @@ def test_write_and_record_fire_keep_the_file_mode(tmp_path, monkeypatch):
     p.chmod(0o640)
     mf.record_fire(p, "2026-11-22 a fire")
     assert p.stat().st_mode & 0o777 == 0o640
+
+
+# ------------------------------------------------------------------ Codex r2 (final round, on 91ac7393)
+
+@pytest.mark.parametrize("block", [
+    "metadata:\n  promoted: no  # waits for the 3rd fire\n  occurrences: 2\n",
+    "metadata:\n  promoted: no\n    # rationale that must survive\n  occurrences: 2\n",
+])
+def test_write_refuses_to_replace_lines_that_carry_a_comment(tmp_path, block):
+    # F1 (P0): a comment is invisible to read(), so replacing its line deleted it silently.
+    text = "---\nname: x\n" + block + "---\nbody\n"
+    p = _file(tmp_path, text)
+    with pytest.raises(mf.WriteRefused) as e:
+        mf.write(p, {"promoted": "partial -- half"})
+    assert "comment" in str(e.value) and "promoted" in str(e.value)
+    assert p.read_text(encoding="utf-8") == text
+
+
+def test_record_fire_refuses_a_commented_count(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDECODE", "1")
+    text = RULE.replace("  occurrences: 3", "  occurrences: 3  # two in drafts, one in a brief")
+    p = _file(tmp_path, text)
+    with pytest.raises(mf.WriteRefused):
+        mf.record_fire(p, "2026-11-22 a fire")
+    assert p.read_text(encoding="utf-8") == text
+
+
+def test_a_comment_on_another_key_does_not_block(tmp_path):
+    text = RULE.replace("  last_cited: 2026-11-01", "  last_cited: 2026-11-01  # telemetry only")
+    p = _file(tmp_path, text)
+    mf.write(p, {"promoted": "partial -- half"})
+    assert "  last_cited: 2026-11-01  # telemetry only" in p.read_text(encoding="utf-8")
+
+
+def test_writers_refuse_a_symlink(tmp_path, monkeypatch):
+    # F2: os.replace on the link swapped it for a regular file and left the target unchanged.
+    monkeypatch.setenv("CLAUDECODE", "1")
+    target = _file(tmp_path)
+    alias = tmp_path / "alias.md"
+    alias.symlink_to(target)
+    with pytest.raises(mf.WriteRefused) as e:
+        mf.write(alias, {"reopen_at": 3})
+    assert "symlink" in str(e.value)
+    with pytest.raises(mf.WriteRefused):
+        mf.record_fire(alias, "2026-11-22 a fire")
+    assert alias.is_symlink() and target.read_text(encoding="utf-8") == RULE
