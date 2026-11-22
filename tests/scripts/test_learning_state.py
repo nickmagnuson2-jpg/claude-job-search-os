@@ -451,3 +451,18 @@ def test_not_friction_kind_is_non_counting():
     assert "not-friction" not in ls.COUNTING_KINDS
     assert not ls.counts("not-friction")
     assert ls.friction_state("not-friction", "", 9) == "not_counting"
+
+
+# ------------------------------------------------------------------ Codex r1
+
+def test_superseded_path_must_stay_inside_its_root(tmp_path):
+    # F3: an existing file outside the root closed the record.
+    root = tmp_path / "repo"
+    (root / "framework").mkdir(parents=True)
+    (tmp_path / "outside.md").write_text("x", encoding="utf-8")
+    assert ls.disposition("superseded by ../outside.md", repo_root=root).state == "defect"
+    assert ls.disposition("superseded by framework/../../outside.md", repo_root=root).state == "defect"
+    (root / "framework" / "link.md").symlink_to(tmp_path / "outside.md")
+    assert ls.disposition("superseded by framework/link.md", repo_root=root).state == "defect"
+    (root / "framework" / "in.md").write_text("x", encoding="utf-8")
+    assert ls.disposition("superseded by framework/in.md", repo_root=root).state == "closed"

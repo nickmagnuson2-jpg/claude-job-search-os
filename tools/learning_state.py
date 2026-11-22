@@ -169,10 +169,16 @@ def _pointer_defect(tok: str, text: str, memory_dir: Path | None,
     pm = _PATH.search(ref)
     if not pm:
         return f"superseded pointer {ref!r} names neither a dated ruling nor a path"
-    roots = [Path(r) for r in (repo_root, memory_dir) if r is not None]
-    if roots and not any((r / pm.group(0)).exists() for r in roots):
-        return f"superseded pointer {pm.group(0)} does not exist"
+    roots = [Path(r).resolve() for r in (repo_root, memory_dir) if r is not None]
+    if roots and not any(_inside(r, pm.group(0)) for r in roots):
+        return f"superseded pointer {pm.group(0)} does not exist under the repo or memory folder"
     return None
+
+
+def _inside(root: Path, rel: str) -> bool:
+    """rel exists and, with every .. and symlink resolved, stays under root (Codex r1 F3)."""
+    target = (root / rel).resolve()
+    return target.exists() and target.is_relative_to(root)
 
 
 def in_backlog(d: Disposition) -> bool:

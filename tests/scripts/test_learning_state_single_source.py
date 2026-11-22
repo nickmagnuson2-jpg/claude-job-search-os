@@ -71,15 +71,19 @@ ALLOWLIST = {
 }
 
 
-def _flatten(node) -> str | None:
+def _flatten(node, consts: dict | None = None) -> str | None:
     """The literal text of a string expression, with HOLE for each non-literal part; None
-    when the expression is not a string literal, an f-string or a + of them."""
+    when the expression is not a string literal, an f-string, a + of them, or a name bound
+    to a string literal in the same file (`SEP = "---"`)."""
+    consts = consts or {}
+    if isinstance(node, ast.Name) and node.id in consts:
+        return consts[node.id]
     if isinstance(node, ast.Constant):
         return node.value if isinstance(node.value, str) else None
     if isinstance(node, ast.JoinedStr):
         return "".join(v.value if isinstance(v, ast.Constant) else HOLE for v in node.values)
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        left, right = _flatten(node.left), _flatten(node.right)
+        left, right = _flatten(node.left, consts), _flatten(node.right, consts)
         if left is None and right is None:
             return None
         return (HOLE if left is None else left) + (HOLE if right is None else right)
@@ -90,15 +94,58 @@ def _str_consts(elts) -> set:
     return {e.value for e in elts if isinstance(e, ast.Constant) and isinstance(e.value, str)}
 
 
+def _bindings(tree) -> tuple[set, dict, dict]:
+    """(names bound to the re module, {alias: re function}, {name: str literal it is bound to})."""
+    re_mods, re_funcs, consts = set(), {}, {}
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Import):
+            re_mods |= {a.asname or a.name for a in n.names if a.name == "re"}
+        elif isinstance(n, ast.ImportFrom) and n.module == "re":
+            re_funcs.update({a.asname or a.name: a.name for a in n.names if a.name in RE_FUNCS})
+        elif (isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name)
+              and isinstance(n.value, ast.Constant) and isinstance(n.value.value, str)):
+            consts[n.targets[0].id] = n.value.value
+    return re_mods, re_funcs, consts
+
+
+def _colon_parser_lines(scope) -> list[int]:
+    """Lines of `x.split(":", ...)` / `x.partition(":")` in a scope that also compares a
+    value with a state key literal: a hand-rolled key: value parser."""
+    splits, compares_key = [], False
+    for n in ast.walk(scope):
+        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                and n.func.attr in ("split", "partition", "rsplit") and n.args
+                and isinstance(n.args[0], ast.Constant) and n.args[0].value == ":"):
+            splits.append(n.lineno)
+        elif isinstance(n, ast.Compare):
+            for side in [n.left] + n.comparators:
+                if isinstance(side, ast.Constant) and side.value in STATE_KEYS:
+                    compares_key = True
+    return splits if compares_key else []
+
+
 def findings_in_source(src: str) -> list[tuple[int, str]]:
     """(line, signature) for every state-parsing or state-defining site in `src`."""
     out = []
-    for n in ast.walk(ast.parse(src)):
-        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.args:
-            attr = n.func.attr
-            arg = _flatten(n.args[0])
-            is_re = isinstance(n.func.value, ast.Name) and n.func.value.id == "re"
-            if is_re and attr in RE_FUNCS and arg is not None:
+    tree = ast.parse(src)
+    re_mods, re_funcs, consts = _bindings(tree)
+    defs = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+    module_level = ast.Module(body=[st for st in tree.body if not isinstance(st, defs)], type_ignores=[])
+    for scope in [module_level] + [n for n in ast.walk(tree)
+                                   if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
+        out += [(line, "key_scrape") for line in _colon_parser_lines(scope)]
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call) and n.args:
+            arg = _flatten(n.args[0], consts)
+            if isinstance(n.func, ast.Attribute):
+                attr = n.func.attr
+                is_re = (isinstance(n.func.value, ast.Name) and n.func.value.id in re_mods
+                         and attr in RE_FUNCS)
+            elif isinstance(n.func, ast.Name) and n.func.id in re_funcs:
+                attr, is_re = re_funcs[n.func.id], True
+            else:
+                continue
+            if is_re and arg is not None:
                 if _KEY_AT_LINE_START.search(arg):
                     out.append((n.lineno, "key_scrape"))
                 if _ANCHORED_DASHES.search(arg):
@@ -110,6 +157,8 @@ def findings_in_source(src: str) -> list[tuple[int, str]]:
                 out.append((n.lineno, "frontmatter_split"))
             if attr == "startswith" and arg is not None and arg.lower() in ("yes", "partial", "promoted"):
                 out.append((n.lineno, "promoted_predicate"))
+            if attr == "startswith" and arg is not None and arg.strip().lower() == "resolved":
+                out.append((n.lineno, "resolved_prefix"))
         elif isinstance(n, (ast.Tuple, ast.List, ast.Set)):
             vals = _str_consts(n.elts)
             if len(vals & TOKENS) >= 3 and vals & {"yes", "partial"} and vals & TIERS:
@@ -119,8 +168,11 @@ def findings_in_source(src: str) -> list[tuple[int, str]]:
             if "block-as-designed" in vals:
                 out.append((n.lineno, "friction_kinds"))
         elif isinstance(n, ast.Dict):
-            if "MACHINERY" in _str_consts([k for k in n.keys if k is not None]):
+            keys = _str_consts([k for k in n.keys if k is not None])
+            if "MACHINERY" in keys:
                 out.append((n.lineno, "half_life"))
+            if len(keys & TOKENS) >= 3 and keys & {"yes", "partial"} and keys & TIERS:
+                out.append((n.lineno, "promoted_vocab"))
         elif isinstance(n, ast.Assign):
             if isinstance(n.value, ast.Constant) and n.value.value == "RESOLVED":
                 out.append((n.lineno, "resolved_prefix"))
@@ -224,3 +276,30 @@ def test_the_owners_exist():
 def test_no_state_parsing_outside_the_two_modules():
     offenders = {p: f for p, f in tree_findings().items() if p not in ALLOWLIST}
     assert offenders == {}, "\n".join(f"{p}: {f}" for p, f in offenders.items())
+
+
+# ------------------------------------------------------------------ Codex r1 F2: realistic false negatives
+
+@pytest.mark.parametrize("src,sig", [
+    ('import re as rx\nrx.search(r"^\\s*promoted:", text)', "key_scrape"),
+    ('from re import search\nsearch(r"^\\s*promoted:", text)', "key_scrape"),
+    ('from re import compile as c\nR = c(r"\\b(TRIPPED|OWED)\\b")', "gate_grammar"),
+    ('SEP = "---"\nparts = text.split(SEP, 2)', "frontmatter_split"),
+    ('def f(text):\n    for line in text.splitlines():\n        key, value = line.split(":", 1)\n'
+     '        if key == "promoted":\n            state = value', "key_scrape"),
+    ('def f(line):\n    k, _, v = line.partition(":")\n    return v if k.strip() == "reopen_gate" else None',
+     "key_scrape"),
+    ('STATE = {"no": "open", "yes": "closed", "partial": "partial", "hook": "closed"}', "promoted_vocab"),
+    ('resolved = fix.startswith("RESOLVED")', "resolved_prefix"),
+])
+def test_detector_finds_codex_r1_false_negatives(src, sig):
+    assert sig in {s for _, s in findings_in_source(src)}
+
+
+@pytest.mark.parametrize("src", [
+    'def f(t):\n    h, m = t.split(":", 1)\n    return int(h)',
+    'def f(line):\n    key, value = line.split(":", 1)\n    return key == "name"',
+    'import re as rx\nrx.search(r"\\d+ passed", t)',
+])
+def test_detector_r1_lookalikes_stay_clean(src):
+    assert findings_in_source(src) == []

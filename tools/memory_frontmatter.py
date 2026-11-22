@@ -13,9 +13,9 @@ meant a word boundary, and 40 of 50 detectors were refused).
 Contract:
   * `read(text)` returns `(fields, defect)`. A malformed block is a NAMED defect, never a
     silent `{}`: a reader that cannot tell "no fields" from "unreadable" fails open.
-  * The `metadata:` mapping is flattened into the top level. A key present at both levels
-    is a defect (`duplicate_key`), because the two readers it replaces each took a
-    different copy.
+  * The `metadata:` mapping is flattened into the top level. A key present at both levels,
+    or twice in one mapping, is a defect (`duplicate_key`): the readers it replaces each
+    took a different copy, and plain safe_load silently keeps the last.
   * One value type per meaning: YAML 1.1 booleans become "yes" / "no", null becomes "",
     dates become ISO strings. So `promoted: no` and `promoted: "no"` read the same.
   * `write(path, updates)` is the only sanctioned machine writer. It edits only the lines of
@@ -33,6 +33,7 @@ import contextlib
 import datetime as _dt
 import os
 import re
+import stat
 import tempfile
 from pathlib import Path
 from typing import NamedTuple
@@ -43,6 +44,29 @@ import yaml
 _BLOCK = re.compile(r"\A---\n(.*?\n)?---(?:\n|\Z)", re.DOTALL)
 
 NEVER_MACHINE_WRITTEN = frozenset({"occurrences"})
+
+
+class _DuplicateKey(Exception):
+    pass
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """safe_load, except a key repeated in one mapping is an error. Plain safe_load keeps the
+    LAST value, so `promoted: no` then `promoted: yes` read closed with no defect (Codex r1
+    F1, P0, 2026-11-22)."""
+
+    def construct_mapping(self, node, deep=False):
+        seen = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if key in seen:
+                raise _DuplicateKey(f"{key} appears twice in one mapping (line {key_node.start_mark.line + 1})")
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
+
+
+_UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+                                 _UniqueKeyLoader.construct_mapping)
 
 
 class Defect(NamedTuple):
@@ -98,7 +122,9 @@ def read(text: str) -> tuple[dict, Defect | None]:
     if not m:
         return {}, Defect("no_frontmatter", "the file does not open with a ---/--- block")
     try:
-        loaded = yaml.safe_load(m.group(1) or "")
+        loaded = yaml.load(m.group(1) or "", Loader=_UniqueKeyLoader)  # noqa: S506 (SafeLoader subclass)
+    except _DuplicateKey as e:
+        return {}, Defect("duplicate_key", str(e))
     except yaml.YAMLError as e:
         return {}, Defect("yaml_error", " ".join(str(e).split())[:300])
     if not isinstance(loaded, dict):
@@ -216,11 +242,15 @@ def _refuse_unless_consistent(old: dict, new_text: str, updates: dict) -> dict:
 
 
 def _atomic_write(path: Path, text: str) -> None:
+    """tmp + os.replace, keeping the file's permission bits (mkstemp creates 0600; Codex r1
+    F4). Owner and extended attributes are not copied: the writer runs as the file's owner."""
     path = Path(path)
+    mode = stat.S_IMODE(path.stat().st_mode)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
             f.write(text)
+        os.chmod(tmp, mode)
         os.replace(tmp, path)
     except BaseException:
         with contextlib.suppress(FileNotFoundError):

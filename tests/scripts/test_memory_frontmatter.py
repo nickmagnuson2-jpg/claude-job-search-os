@@ -446,3 +446,29 @@ def test_write_keeps_metadata_indent_when_a_top_level_key_follows(tmp_path):
     mf.write(p, {"reopen_at": 2})
     assert p.read_text(encoding="utf-8") == (
         "---\nmetadata:\n    type: feedback\n    promoted: no\n    reopen_at: 2\nname: x\n---\nbody\n")
+
+
+# ------------------------------------------------------------------ Codex r1 (run on c57eec51..eaa76d59)
+
+@pytest.mark.parametrize("text", [
+    "---\npromoted: no\npromoted: yes\n---\n",
+    "---\nmetadata:\n  promoted: no\n  promoted: yes\n---\n",
+    "---\nmetadata:\n  a: 1\nmetadata:\n  promoted: yes\n---\n",
+])
+def test_duplicate_key_at_any_level_is_a_defect(text):
+    # F1 (P0): safe_load keeps the last of two keys, so `no` then `yes` read closed.
+    fields, defect = mf.read(text)
+    assert fields == {}
+    assert defect.code == "duplicate_key"
+
+
+def test_write_and_record_fire_keep_the_file_mode(tmp_path, monkeypatch):
+    # F4: mkstemp creates 0600; the original mode must survive.
+    monkeypatch.setenv("CLAUDECODE", "1")
+    p = _file(tmp_path)
+    p.chmod(0o644)
+    mf.write(p, {"reopen_at": 3})
+    assert p.stat().st_mode & 0o777 == 0o644
+    p.chmod(0o640)
+    mf.record_fire(p, "2026-11-22 a fire")
+    assert p.stat().st_mode & 0o777 == 0o640
