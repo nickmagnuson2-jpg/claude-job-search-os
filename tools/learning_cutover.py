@@ -44,13 +44,14 @@ RULE_RE = re.compile(r"(feedback|reference|project|user)_.*\.md$")
 CORPUS_FILES = ("memory/lessons.md",)
 # Bound inputs are in the hash. friction_kinds is read for the report only (org 68 ruling,
 # 2026-11-22): the friction migration is rule-based and re-run on the live ledger at apply.
-BOUND_INPUTS = ("reopen_at", "frontmatter", "lessons", "i7")
+BOUND_INPUTS = ("reopen_at", "frontmatter", "lessons", "i7", "hand_edit")
 INPUT_NAMES = BOUND_INPUTS + ("friction_kinds",)
 DEFAULT_INPUTS = {
     "reopen_at": "output/memory-hygiene/112226-reopen-at-proposals.jsonl",
     "frontmatter": "output/memory-hygiene/112226-malformed-frontmatter-proposals.md",
     "lessons": "output/memory-hygiene/112226-lessons-repair-proposals.md",
     "i7": "output/memory-hygiene/112226-i7-proposals.jsonl",
+    "hand_edit": "output/memory-hygiene/112226-b1-commented-promoted.jsonl",
     "friction_kinds": "output/memory-hygiene/112226-friction-kinds-dryrun.json",
 }
 MISSING = "MISSING"
@@ -406,6 +407,23 @@ def build_report_entries(memory_dir: Path, repo_root: Path, inputs: dict,
           "Today's reader state shows why it skipped each.", "",
           "| File | Today's reader | After |", "|---|---|---|"]
     L += [f"| `{r['file']}` | {r['before']} | {r['after']} |" for r in uncovered]
+    hand = load_jsonl(inputs.get("hand_edit"))
+    touched = {r["file"] for r in fm_repairs}
+    L += ["", "**Hand edit required (writer refuses commented line):**", ""]
+    if inputs.get("hand_edit") is None:
+        L.append("input missing")
+    else:
+        L += [f"{len(hand)} files. B1's writer refuses to rewrite a `promoted` line that carries `#`. "
+              "Only a row whose `#` is a YAML comment needs a decision; for the others the `#` is "
+              "inside the quoted value, and nothing needs editing unless a proposal below rewrites "
+              "that line.", "",
+              "| File | Current line | Intended value | YAML comment | A proposal rewrites it |",
+              "|---|---|---|---|---|"]
+        for r in hand:
+            line = " ".join(r.get("promoted_lines_verbatim") or []).strip().replace("|", "/")
+            L.append(f"| `{r.get('file')}` | `{line}` | {str(r.get('value_as_read')).replace('|', '/')} | "
+                     f"{'yes: keep beside the value or drop (your call)' if r.get('hash_is_yaml_comment') else 'no'} | "
+                     f"{'yes' if r.get('file') in touched else 'no'} |")
     L += ["", "**Defects (known migration items):**", ""]
     L += [f"- `{r['file']}`: {r['after']}" for r in mem if r["after"].startswith("defect")] or ["- none"]
     L.append("")

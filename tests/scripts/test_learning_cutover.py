@@ -713,3 +713,24 @@ def test_G8_promoted_and_terminal_reads_terminal_before_and_after(world):
             "  promoted: yes - hook", "  promoted: yes - hook\n  terminal: yes"), encoding="utf-8")
     row = next(r for r in lc.memory_transitions(mem, repo, [], []) if r["file"] == "feedback_both.md")
     assert (row["before"], row["after"]) == ("terminal", "terminal")
+
+
+def test_hand_edit_rows_are_listed_and_bound(world, tmp_path):
+    mem, repo, inputs = world
+    before = _digest(world)
+    he = tmp_path / "props" / "hand.jsonl"
+    he.write_text(json.dumps({"file": "feedback_alpha.md", "promoted_lines_verbatim": ['  promoted: "no"  # note'],
+                              "value_as_read": "no", "hash_is_yaml_comment": True}) + "\n"
+                  + json.dumps({"file": "feedback_beta.md", "promoted_lines_verbatim": ['  promoted: "yes (PR #1)"'],
+                                "value_as_read": "yes (PR #1)", "hash_is_yaml_comment": False}) + "\n",
+                  encoding="utf-8")
+    inputs["hand_edit"] = he
+    assert lc.cutover_digest(mem, repo, inputs) != before
+    text, _ = _report(world, tmp_path)
+    block = text.split("**Hand edit required (writer refuses commented line):**", 1)[1].split("**Defects", 1)[0]
+    assert "2 files." in block
+    assert "| `feedback_alpha.md` | `promoted: \"no\"  # note` | no | yes: keep beside the value or drop (your call) | no |" in block
+    assert "| `feedback_beta.md` | `promoted: \"yes (PR #1)\"` | yes (PR #1) | no | no |" in block
+    inputs["hand_edit"] = None
+    text, _ = _report(world, tmp_path)
+    assert "**Hand edit required (writer refuses commented line):**\n\ninput missing" in text
