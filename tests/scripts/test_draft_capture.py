@@ -768,3 +768,15 @@ def test_an_unreadable_lessons_file_is_not_found(store):
     with pytest.raises(dc.CaptureError) as exc:
         dc.confirm(cid, "edited", sent_text=SENT_EDIT, lesson_ref="Casey Doe / Acme")
     assert "cannot be read" in str(exc.value)
+
+
+@pytest.mark.parametrize("row,detail", [
+    (ROW + " <!-- trailing -->", "text after the closing pipe"),
+    (ROW.replace("| 1 | No |", "| 1 | Someday |"), "someday"),
+])
+def test_the_refusal_names_what_is_wrong_with_the_row(store, row, detail):
+    _lessons(store, row)
+    cid = dc.capture(DRAFT)
+    with pytest.raises(dc.CaptureError) as exc:
+        dc.confirm(cid, "edited", sent_text=SENT_EDIT, lesson_ref="Casey Doe / Acme")
+    assert detail in str(exc.value).lower()

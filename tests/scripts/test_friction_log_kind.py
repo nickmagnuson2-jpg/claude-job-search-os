@@ -302,3 +302,10 @@ def test_only_kind_changed():
     assert not fl.only_kind_changed(old, old.replace("| 1 |", "| 2 |")[:-1] + "| friction |")
     assert not fl.only_kind_changed(old, old.replace("widget missing", "x")[:-1] + "| friction |")
     assert not fl.only_kind_changed("not a row", old[:-1] + "| friction |")
+
+
+def test_whitespace_after_the_table_is_dropped_on_apply(ledger):
+    ledger.write_text(LEGACY + "   \n", encoding="utf-8")
+    code, out = run(ledger, "migrate-kinds", "--apply", "--expect-sha", sha(ledger))
+    assert code == 0, out
+    assert ledger.read_text(encoding="utf-8").endswith("misattributed: wrong surface | 2 | memory | friction |\n")
