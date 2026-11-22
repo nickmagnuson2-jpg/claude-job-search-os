@@ -48,7 +48,9 @@ the queue, the workstream files or the board.
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/decision_write.py add --owner <workstream|org> \
       --class <class> --question "..." --option "a: ..." --option "b: ..." --acts "..." \
-      --predict a --predict-reason "..." [--usd N|unknown] [--commitment] [--by <session>]
+      --predict a --predict-reason "..." [--usd N|unknown] [--commitment] [--by <session>] \
+      --lean "a: <why>" --rests-on <path>:<line> [--rests-on ...] --if-nothing "..." \
+      --group time-bound|role|policy [--by-date YYYY-MM-DD (time-bound only)]
       [--why-not-answered "<why the cited ruling does not cover this>"]
   PYTHONIOENCODING=utf-8 python3 tools/decision_write.py topic-add --key <slug> --pattern <regex> \
       [--pattern ...] --file <repo-relative path> --anchor "<text on exactly one line>" [--replace]
@@ -110,6 +112,12 @@ BOARD_REL = Path("output/overnight-merge-back/SESSIONS.md")
 ORG_FILE_RELS = {(WORKSTREAMS_REL / f"{n}.md").as_posix() for n in (ORG_FILE, LEGACY_ORG_FILE)}
 
 OPTION_RE = re.compile(r"^([A-Za-z0-9]+):\s*(\S.*)$")
+REST_RE = re.compile(r"^([^\s:][^:]*):([1-9]\d*)$")
+GROUPS = ("time-bound", "role", "policy")  # how the morning page orders what is waiting on Nick
+# Org c0, 2026-11-21: every new question shows Nick a lean. A shown lean anchors him, so the
+# asked event says so (lean_shown) and resolve copies the stamp onto the resolved event; R1's
+# blind measure reads only questions with lean_shown false (rows asked before the lean existed).
+LEAN_FIELDS = ("lean", "lean_label", "lean_shown", "rests_on", "if_nothing", "group", "by_date")
 RULING_RE = re.compile(r"^RULING (Q\d+) \| option: *(\S+) *\| reason: *(.*?) *\| window: *(.*?) *$")
 
 
@@ -306,7 +314,7 @@ def route(owner: str, board, status: str = "missing") -> str:
 def public_view(q: dict) -> dict:
     """The only form in which a question is ever printed. No prediction field exists here."""
     return {k: q.get(k) for k in ("id", "owner", "class", "kind", "question", "options", "acts",
-                                  "usd", "at", "by")}
+                                  "usd", "at", "by", *LEAN_FIELDS, "not_answered")}
 
 
 def emit(obj: dict) -> None:
@@ -500,6 +508,7 @@ def cmd_add(p: dict, a) -> dict:
     if a.predict not in labels:
         raise Refusal("bad_prediction", f"--predict must be one of {labels}")
     usd = parse_usd(a.cls, a.usd)
+    lean = lean_fields(p, a, labels)
 
     # A corrupt queue refuses every add before anything is matched or written, the citing path
     # included (T8; Grok r1 F1: the refusal path appended cited events past a corrupt line).
@@ -540,6 +549,7 @@ def cmd_add(p: dict, a) -> dict:
         pred = {"id": q["id"], "at": q["at"], "option": a.predict, "reason": a.predict_reason.strip(),
                 "blind": True, "question_hash": q["question_hash"]}
         q["prediction_hash"] = prediction_hash(pred)
+        q.update(lean)
         if not_answered:
             q["not_answered"] = not_answered
         return sealed(q), pred
@@ -554,6 +564,44 @@ def cmd_add(p: dict, a) -> dict:
         append(p["predictions"], pred)          # first, so an asked event never lacks one
         append(p["questions"], q)
     return {"status": "ok", "question": public_view(q), **extra}
+
+
+def lean_fields(p: dict, a, labels: list) -> dict:
+    """The fields rule 8 requires on every new question: the lean (an option label and why), the
+    data lines it rests on (each must exist in the main checkout), what happens if Nick does
+    nothing, and the group (time-bound needs a date; no other group takes one)."""
+    for name, val in (("lean", a.lean), ("if-nothing", a.if_nothing)):
+        if not val.strip():
+            raise Refusal("blank_field", f"--{name} is blank")
+    m = OPTION_RE.match(a.lean.strip())
+    if not m or m.group(1) not in labels:
+        raise Refusal("bad_lean", f"--lean is '<option label>: <why>' with a label in {labels}, "
+                                  f"got {a.lean!r}")
+    rests = []
+    for cite in a.rests_on:
+        cite = cite.strip()
+        rm = REST_RE.match(cite)
+        rel = Path(rm.group(1)) if rm else None
+        if not rm or rel.is_absolute() or ".." in rel.parts:
+            raise Refusal("bad_rests_on", f"--rests-on is '<repo-relative path>:<line>', got {cite!r}")
+        f = p["main"] / rel
+        n = int(rm.group(2))
+        if not f.is_file() or len(f.read_text(encoding="utf-8").splitlines()) < n:
+            raise Refusal("rests_on_missing", f"{cite}: no such line in the main checkout")
+        rests.append(cite)
+    by_date = None
+    if a.group == "time-bound":
+        if not a.by_date:
+            raise Refusal("by_date_required", "a time-bound question needs --by-date YYYY-MM-DD")
+        try:
+            by_date = datetime.strptime(a.by_date, "%Y-%m-%d").date().isoformat()
+        except ValueError:
+            raise Refusal("bad_by_date", f"--by-date is YYYY-MM-DD, got {a.by_date!r}") from None
+    elif a.by_date:
+        raise Refusal("by_date_not_time_bound", f"--by-date is only for --group time-bound, not {a.group}")
+    return {"lean": a.lean.strip(), "lean_label": m.group(1), "lean_shown": True,
+            "rests_on": rests, "if_nothing": a.if_nothing.strip(), "group": a.group,
+            "by_date": by_date}
 
 
 def listing(p: dict) -> tuple[list, str]:
@@ -651,7 +699,9 @@ def cmd_resolve(p: dict, a) -> dict:
             "type": "resolved", "id": a.id, "at": now(), "option": ruling["option"],
             "reason": ruling["reason"], "window": ruling["window"], "route_at_resolve": routing(p)[0](q["owner"]),
             "file": ruling["file"], "line": ruling["line"], "line_hash": ruling["line_hash"],
-            "outcome": outcome, "approval": "none", "payload_hash": sha(payload), "signature": None}))
+            "outcome": outcome, "lean_shown": q.get("lean_shown") is True,
+            "lean_label": q.get("lean_label"),
+            "approval": "none", "payload_hash": sha(payload), "signature": None}))
         if topic:
             with inbox_lock.file_lock(p["topics"]):
                 append(p["topics"], topic)
@@ -659,7 +709,7 @@ def cmd_resolve(p: dict, a) -> dict:
             if q["kind"] == "big" else "design call recorded")
     out = {"status": "ok", "summary": f"{a.id} resolved: {note}", "question": public_view(q),
            "ruling": ruling, "prediction": {"option": pred["option"], "reason": pred["reason"]},
-           "outcome": outcome, "approval": "none"}
+           "outcome": outcome, "lean_shown": q.get("lean_shown") is True, "approval": "none"}
     if topic:
         out["topic"] = {"key": topic["key"], "file": topic["file"], "line": topic["line_at_add"],
                         "patterns": topic["patterns"]}
@@ -762,6 +812,12 @@ def parser() -> argparse.ArgumentParser:
     add.add_argument("--commitment", action="store_true", help="spend only: credits or a subscription")
     add.add_argument("--by", default="unknown", help="the session adding the question")
     add.add_argument("--dry-run", action="store_true")
+    add.add_argument("--lean", required=True, help="'<option label>: <why>', shown to Nick (rule 8)")
+    add.add_argument("--rests-on", action="append", required=True,
+                     help="'<repo-relative path>:<line>' the lean rests on; repeatable")
+    add.add_argument("--if-nothing", required=True, help="what happens if Nick does nothing")
+    add.add_argument("--group", required=True, choices=GROUPS)
+    add.add_argument("--by-date", default=None, help="time-bound only: YYYY-MM-DD")
     add.add_argument("--why-not-answered", default=None,
                      help="why the cited prior ruling does not cover this question (recorded)")
     ta = sub.add_parser("topic-add")
