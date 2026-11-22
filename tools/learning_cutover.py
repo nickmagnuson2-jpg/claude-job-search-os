@@ -645,7 +645,15 @@ def plan_apply(memory_dir: Path, repo_root: Path, inputs: dict,
     lessons_write, (5) friction kinds via friction_log migrate-kinds. Reads only."""
     reopen = load_reopen(inputs.get("reopen_at"))
     fm_repairs = load_frontmatter_repairs(inputs.get("frontmatter"), memory_dir)
-    les_repairs, _ = load_lessons_repairs(inputs.get("lessons"), repo_root)
+    les_repairs, les_stale = load_lessons_repairs(inputs.get("lessons"), repo_root)
+    # Grok B7b r1 F1: a proposal the report shows as STALE or DOES NOT APPLY is never
+    # written; the whole apply refuses, so the proposals get regenerated and re-approved.
+    bad = [f"frontmatter repair for {f['file']} is {'stale' if f['stale'] else 'not applicable'}"
+           for f in fm_repairs if f["stale"] or not f["applies"]]
+    bad += ["lessons proposals are stale (lessons.md changed since they were made)"] if les_stale else []
+    bad += [f"lessons repair L{r['line']} does not apply" for r in les_repairs if not r["applies"]]
+    if bad:
+        raise ValueError("; ".join(bad))
     structural, promoted = [], []
     for fix in fm_repairs:
         text = (Path(memory_dir) / fix["file"]).read_text(encoding="utf-8")
@@ -716,7 +724,14 @@ def apply_cutover(memory_dir: Path, repo_root: Path, inputs: dict, expected_dige
     if not ok or digest_of(baseline) != expected_digest:
         return {"status": "refused", "reasons": ["verify failed: the corpus or an input is not the approved state"],
                 "verify": info, "applied": [], "not_applied": []}
-    steps = plan_apply(memory_dir, repo_root, inputs, drop_promoted)
+    unresolved = build_report_entries(memory_dir, repo_root, inputs)[3]
+    if unresolved:  # Grok B7b r1 F3: the report says Apply: BLOCKED
+        return {"status": "refused", "reasons": ["the report is BLOCKED by unresolved writer-refused lines: "
+                                                 + ", ".join(unresolved)], "applied": [], "not_applied": []}
+    try:
+        steps = plan_apply(memory_dir, repo_root, inputs, drop_promoted)
+    except ValueError as e:
+        return {"status": "refused", "reasons": [str(e)], "applied": [], "not_applied": []}
     expected = dict(baseline)
     applied: list[dict] = []
     ledger = repo_root / "memory/friction-log.md"
@@ -743,11 +758,19 @@ def apply_cutover(memory_dir: Path, repo_root: Path, inputs: dict, expected_dige
                 raise ApplyStop(brief, ["writer gap: no sanctioned writer removes a key "
                                         "(memory_frontmatter.repair/write at this base)"])
             elif step["step"] == "lessons-set-promoted":
+                hits = [n for n, ln in enumerate(lessons.read_text(encoding="utf-8").split("\n"), 1)
+                        if step["match"] in ln]
+                if hits != [step["line"]]:  # Grok B7b r1 F2: the writer matches by substring
+                    raise ApplyStop(brief, [f"set-promoted match is on lines {hits}, not only L{step['line']}"])
                 rc, out = _cli("lessons_write.py", ["set-promoted", "--expect-sha", expected[label],
                                                     step["match"], step["value"]],
                                {"LESSONS_PATH": str(lessons)})
                 if rc != 0:
                     raise ApplyStop(brief, [f"lessons_write set-promoted exit {rc}: {out}"])
+                if not isinstance(out, dict) or out.get("line") != step["line"]:
+                    expected[label] = file_sha(path)
+                    raise ApplyStop(brief, [f"set-promoted WROTE but reports line {out.get('line') if isinstance(out, dict) else out!r}, "
+                                            f"not L{step['line']}: lessons.md changed outside the plan; inspect it"])
             elif step["step"] == "lessons-repair-row":
                 rc, out = _cli("lessons_write.py", ["repair-row", "--line", str(step["line"]),
                                                     "--expect-sha", expected[label],

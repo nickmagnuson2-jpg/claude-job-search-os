@@ -352,7 +352,7 @@ def test_lessons_set_promoted_refusal_stops(aworld):
     digest, entries = approve(aworld)
     res = lc.apply_cutover(mem, repo, inputs, digest, entries)
     assert res["status"] == "stopped" and res["stopped_at"]["step"] == "lessons-set-promoted"
-    assert "set-promoted exit 1" in res["reasons"][0] and "matches 2" in res["reasons"][0]
+    assert "match is on lines [7, 8], not only L7" in res["reasons"][0]
     assert [s["step"] for s in res["not_applied"]] == ["lessons-set-promoted", "friction-kinds"]
 
 
@@ -504,3 +504,79 @@ def test_r1_F2_set_promoted_refuses_a_change_after_the_pre_check(aworld, monkeyp
     res = lc.apply_cutover(mem, repo, inputs, digest, entries)
     assert res["status"] == "stopped" and res["stopped_at"]["step"] == "lessons-set-promoted"
     assert "Superseded" in (repo / "memory/lessons.md").read_text(encoding="utf-8")
+
+
+
+def test_set_promoted_writer_refusal_stops(aworld):
+    mem, repo, inputs, _ = aworld
+    les = inputs["lessons"]
+    les.write_text(les.read_text(encoding="utf-8").replace("superseded by 2026-01-01 ruling", "bogus token"),
+                   encoding="utf-8")
+    digest, entries = approve(aworld)
+    res = lc.apply_cutover(mem, repo, inputs, digest, entries)
+    assert res["stopped_at"]["step"] == "lessons-set-promoted" and "set-promoted exit 1" in res["reasons"][0]
+    assert "Superseded" in (repo / "memory/lessons.md").read_text(encoding="utf-8")
+
+
+def test_grok_F1_a_stale_proposal_refuses_the_whole_apply(aworld):
+    mem, repo, inputs, _ = aworld
+    fm = inputs["frontmatter"]
+    fm.write_text(fm.read_text(encoding="utf-8").replace(sha(mem / "feedback_bad.md"), "0" * 64), encoding="utf-8")
+    digest, entries = approve(aworld)
+    before = snapshot(mem, repo)
+    res = lc.apply_cutover(mem, repo, inputs, digest, entries)
+    assert res["status"] == "refused" and "feedback_bad.md is stale" in res["reasons"][0]
+    assert snapshot(mem, repo) == before
+
+
+def test_grok_F1_stale_lessons_proposals_refuse(aworld):
+    mem, repo, inputs, _ = aworld
+    les = inputs["lessons"]
+    les.write_text(les.read_text(encoding="utf-8").replace(sha(repo / "memory/lessons.md"), "0" * 64),
+                   encoding="utf-8")
+    digest, entries = approve(aworld)
+    res = lc.apply_cutover(mem, repo, inputs, digest, entries)
+    assert res["status"] == "refused" and "lessons proposals are stale" in res["reasons"][0]
+
+
+def test_grok_F1_a_lessons_repair_that_does_not_apply_refuses(aworld):
+    mem, repo, inputs, _ = aworld
+    les = inputs["lessons"]
+    les.write_text(les.read_text(encoding="utf-8").replace("| r1 | 2 | Superseded |", "| rX | 2 | Superseded |", 1),
+                   encoding="utf-8")
+    digest, entries = approve(aworld)
+    res = lc.apply_cutover(mem, repo, inputs, digest, entries)
+    assert res["status"] == "refused" and "L7 does not apply" in res["reasons"][0]
+
+
+def test_grok_F2_a_writer_that_reports_another_line_stops_loudly(aworld, monkeypatch):
+    mem, repo, inputs, _ = aworld
+    digest, entries = approve(aworld)
+    real = lc._cli
+
+    def other_line(script, args, env):
+        rc, out = real(script, args, env)
+        if script == "lessons_write.py" and isinstance(out, dict):
+            out = {**out, "line": 99}
+        return rc, out
+
+    monkeypatch.setattr(lc, "_cli", other_line)
+    res = lc.apply_cutover(mem, repo, inputs, digest, entries)
+    assert res["stopped_at"]["step"] == "lessons-set-promoted"
+    assert "WROTE but reports line 99" in res["reasons"][0]
+    assert res["not_applied"][0]["step"] == "lessons-set-promoted"
+
+
+def test_grok_F3_a_blocked_report_refuses_apply(aworld, tmp_path):
+    mem, repo, inputs, _ = aworld
+    (mem / "feedback_c.md").write_text(RULE.format(name="feedback_c", desc="d", occ=1, promoted='"no"  # note'),
+                                       encoding="utf-8")
+    he = tmp_path / "hand.jsonl"
+    he.write_text(json.dumps({"file": "feedback_c.md", "promoted_lines_verbatim": ['  promoted: "no"  # note'],
+                              "value_as_read": "no", "hash_is_yaml_comment": True}) + "\n", encoding="utf-8")
+    inputs["hand_edit"] = he
+    digest, entries = approve(aworld)
+    before = snapshot(mem, repo)
+    res = lc.apply_cutover(mem, repo, inputs, digest, entries)
+    assert res["status"] == "refused" and "BLOCKED" in res["reasons"][0] and "feedback_c.md" in res["reasons"][0]
+    assert snapshot(mem, repo) == before
