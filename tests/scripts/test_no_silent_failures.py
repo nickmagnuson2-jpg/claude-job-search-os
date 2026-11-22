@@ -514,15 +514,36 @@ def _resolve_script_ref(ref, repo, main_root):
         return candidate
 
 
+def _missing_script_refs(plists, repo, main_root):
+    """`<plist>: <ref>` for every script reference that is not a file in the tree under test."""
+    missing = []
+    for plist in sorted(plists):
+        for ref in _launchd_script_refs(plist):
+            if not _resolve_script_ref(ref, repo, main_root).is_file():
+                missing.append(f"  {plist.name}: {ref}")
+    return missing
+
+
+def test_a_plist_whose_script_is_missing_from_the_tree_is_reported(tmp_path):
+    main, tree = tmp_path / "main", tmp_path / "tree"
+    (tree / "tools").mkdir(parents=True)
+    (tree / "tools" / "kept.py").write_text("")
+    plist = tmp_path / "job.plist"
+    plist.write_bytes(plistlib.dumps({"ProgramArguments": [
+        "/usr/bin/python3", str(main / "tools" / "kept.py"), str(main / "tools" / "gone.py")]}))
+    assert _missing_script_refs([plist], tree, main) == [f"  job.plist: {main / 'tools' / 'gone.py'}"]
+
+
+def test_the_main_checkout_root_falls_back_when_git_cannot_run(monkeypatch, tmp_path):
+    def boom(*a, **k):
+        raise OSError("no git")
+    monkeypatch.setattr(subprocess, "run", boom)
+    assert _main_checkout_root(tmp_path) == tmp_path
+
+
 def test_every_launchd_plist_points_at_an_existing_script():
     """A scheduled job whose script moved fails on a timer, into a log nobody reads."""
-    missing = []
-    main_root = _main_checkout_root(REPO)
-    for plist in sorted(_all_plists()):
-        for ref in _launchd_script_refs(plist):
-            candidate = _resolve_script_ref(ref, REPO, main_root)
-            if not candidate.is_file():
-                missing.append(f"  {plist.name}: {ref}")
+    missing = _missing_script_refs(_all_plists(), REPO, _main_checkout_root(REPO))
     assert not missing, "launchd jobs reference non-existent scripts:\n" + "\n".join(missing)
 
 
