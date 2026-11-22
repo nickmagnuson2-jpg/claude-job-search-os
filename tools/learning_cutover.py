@@ -40,7 +40,6 @@ import learning_state as ls  # noqa: E402  after
 import memory_frontmatter as mf  # noqa: E402  after
 
 REPO_ROOT = TOOLS.parent
-MEMORY_DIR = Path.home() / ".claude" / "projects" / "-Users-mag-Documents-Obsidian-30-projects-job-search" / "memory"
 RULE_RE = re.compile(r"(feedback|reference|project|user)_.*\.md$")
 CORPUS_FILES = ("memory/lessons.md",)
 # Bound inputs are in the hash. friction_kinds is read for the report only (org 68 ruling,
@@ -411,7 +410,8 @@ def main(argv=None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name in ("report", "verify"):
         p = sub.add_parser(name)
-        p.add_argument("--memory-dir", default=str(MEMORY_DIR))
+        p.add_argument("--memory-dir", required=True,
+                       help="the live memory folder (~/.claude/projects/<project-slug>/memory)")
         p.add_argument("--repo-root", default=str(REPO_ROOT))
         p.add_argument("--no-default-inputs", action="store_true",
                        help="use only the inputs named on the command line")
