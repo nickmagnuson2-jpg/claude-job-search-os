@@ -309,3 +309,210 @@ def test_report_lists_defects_as_known_migration_items(world, tmp_path):
     text, _ = _report(world, tmp_path)
     block = text.split("**Defects (known migration items):**", 1)[1].split("\n## ", 1)[0]
     assert "`feedback_delta.md`: defect: frontmatter (no_frontmatter)" in block
+
+
+# ---------------------------------------------------------------- pinned outputs (mutation r1)
+
+FULL_RULES = {
+    "feedback_closed.md": RULE.format(name="c", occ=3, promoted="yes - hook", gate="2nd fire"),
+    "feedback_term.md": RULE.format(name="t", occ=3, promoted="no", gate="2nd fire") .replace(
+        "  promoted: no", "  promoted: no\n  terminal: yes"),
+    "feedback_na.md": RULE.format(name="n", occ=3, promoted="n/a", gate="2nd fire"),
+    "feedback_low.md": RULE.format(name="l", occ=1, promoted="no", gate="2nd fire"),
+}
+
+
+def test_memory_transitions_pin_before_and_after_per_rule(world):
+    mem, repo, inputs = world
+    for name, text in FULL_RULES.items():
+        (mem / name).write_text(text, encoding="utf-8")
+    (mem / "MEMORY.md").write_text("not a rule\n", encoding="utf-8")
+    rows = {r["file"]: (r["before"], r["after"])
+            for r in lc.memory_transitions(mem, repo, lc.load_reopen(inputs["reopen_at"]), {})}
+    assert rows == {
+        "feedback_alpha.md": ("due", "due"),
+        "feedback_beta.md": ("open (<2, not scanned)", "not_due (below 2)"),
+        "feedback_closed.md": ("closed", "closed"),
+        "feedback_term.md": ("terminal", "terminal"),
+        "feedback_na.md": ("closed", "defect: promoted"),
+        "feedback_low.md": ("open (<2, not scanned)", "not_due (below 2)"),
+    }
+
+
+def test_a_repair_is_applied_in_memory_only_when_current(world, tmp_path):
+    mem, repo, inputs = world
+    bad = RULE.format(name="b", occ=3, promoted="no", gate="2nd fire").replace(
+        "description: d", "description: a: b")
+    (mem / "feedback_bad.md").write_text(bad, encoding="utf-8")
+    md = tmp_path / "props" / "fm.md"
+
+    def write(sha):
+        md.write_text(
+            "## 1. `feedback_bad.md`\n\n- sha256 of the current file: `" + sha + "`\n\n"
+            "Current line:\n\n```yaml\ndescription: a: b\n```\n\nProposed line:\n\n```yaml\n"
+            "description: 'a: b'\n```\n", encoding="utf-8")
+        return {r["file"]: r for r in lc.load_frontmatter_repairs(md, mem)}
+
+    current = write(lc.file_sha(mem / "feedback_bad.md"))
+    assert current["feedback_bad.md"]["stale"] is False and current["feedback_bad.md"]["applies"] is True
+    after = {r["file"]: r["after"] for r in lc.memory_transitions(mem, repo, [], current)}
+    assert after["feedback_bad.md"] == "no_number"
+    stale = write("0" * 64)
+    after = {r["file"]: r["after"] for r in lc.memory_transitions(mem, repo, [], stale)}
+    assert after["feedback_bad.md"].startswith("defect: frontmatter")
+    assert (mem / "feedback_bad.md").read_text(encoding="utf-8") == bad
+
+
+def test_a_repair_whose_old_line_is_absent_does_not_apply(world, tmp_path):
+    mem, _, _ = world
+    md = tmp_path / "props" / "fm.md"
+    md.write_text(
+        "## 1. `feedback_alpha.md`\n\n- sha256 of the current file: `"
+        + lc.file_sha(mem / "feedback_alpha.md") + "`\n\nCurrent line:\n\n```yaml\n  nope: 1\n```\n\n"
+        "Proposed line:\n\n```yaml\n  nope: 2\n```\n", encoding="utf-8")
+    assert lc.load_frontmatter_repairs(md, mem)[0]["applies"] is False
+    assert lc.load_frontmatter_repairs(None, mem) == []
+
+
+LESSONS_FULL = LESSONS + "| p3 | r3 | 1 | No | 2026-01-03 | <!-- tail -->\n"
+
+
+def _lessons_props(tmp_path, sha, old, new, line):
+    md = tmp_path / "props" / "les.md"
+    md.write_text(f"**sha256 when these were made:** `{sha}`\n\n## L{line}\n\nCurrent line:\n\n```text\n"
+                  f"{old}\n```\n\nProposed line:\n\n```text\n{new}\n```\n", encoding="utf-8")
+    return md
+
+
+def test_lessons_transitions_pin_states_and_apply_a_current_repair(world, tmp_path):
+    mem, repo, _ = world
+    (repo / "memory/lessons.md").write_text(LESSONS_FULL, encoding="utf-8")
+    old = "| p3 | r3 | 1 | No | 2026-01-03 | <!-- tail -->"
+    md = _lessons_props(tmp_path, lc.file_sha(repo / "memory/lessons.md"), old,
+                        "| p3 | r3 | 1 | No | 2026-01-03 <!-- tail --> |", 9)
+    repairs, stale = lc.load_lessons_repairs(md, repo)
+    assert stale is False and repairs == [{"line": 9, "old": old,
+                                           "new": "| p3 | r3 | 1 | No | 2026-01-03 <!-- tail --> |"}]
+    rows = lc.lessons_transitions(repo, mem, repairs, stale)
+    assert rows == [{"line": 7, "before": "open", "after": "open/due"},
+                    {"line": 8, "before": "open", "after": "defect"},
+                    {"line": 9, "before": "unreadable", "after": "open/not_due"}]
+    unapplied = lc.lessons_transitions(repo, mem, repairs, True)
+    assert unapplied[2] == {"line": 9, "before": "unreadable", "after": "defect: row"}
+
+
+def test_lessons_repairs_bound_to_another_file_are_stale(world, tmp_path):
+    _, repo, _ = world
+    md = _lessons_props(tmp_path, "0" * 64, "a", "b", 7)
+    assert lc.load_lessons_repairs(md, repo)[1] is True
+    assert lc.load_lessons_repairs(None, repo) == ([], None)
+
+
+def test_lessons_without_section_2_yields_no_rows(world):
+    mem, repo, _ = world
+    (repo / "memory/lessons.md").write_text("# Lessons\n| a | b | c | d | e |\n", encoding="utf-8")
+    assert lc.lessons_transitions(repo, mem, [], None) == []
+
+
+def test_closed_lesson_reads_closed_before_and_after(world):
+    mem, repo, _ = world
+    (repo / "memory/lessons.md").write_text(
+        LESSONS.replace("| p1 | r1 | 2 | No |", "| p1 | r1 | 2 | Yes - skill |"), encoding="utf-8")
+    assert lc.lessons_transitions(repo, mem, [], None)[0] == {"line": 7, "before": "closed", "after": "closed"}
+
+
+def test_report_proposed_changes_section_pins_every_count(world, tmp_path):
+    mem, repo, inputs = world
+    inputs["i7"] = tmp_path / "props" / "i7.jsonl"
+    inputs["i7"].write_text('{"disposition": "GATE"}\n{"disposition": "SKILL"}\n{"disposition": "SKILL"}\n',
+                            encoding="utf-8")
+    inputs["lessons"] = _lessons_props(tmp_path, lc.file_sha(repo / "memory/lessons.md"), "x", "y", 8)
+    text, _ = _report(world, tmp_path)
+    assert "### reopen_at\n2 rows. Status: number 1, relative 1. Confidence: high 1, low 1." in text
+    assert "### Lessons repairs\n1 rows: L8." in text
+    assert "### I7 dispositions\n3 rows. GATE 1, SKILL 2." in text
+    assert "### Frontmatter repairs\ninput missing" in text
+    assert "1 distinct rows (1 low confidence, 1 relative, 1 both)" in text
+    assert "| feedback_beta.md" not in text and "| `feedback_beta.md` | 1 | None | relative | low |" in text
+
+
+def test_report_marks_each_missing_input(world, tmp_path):
+    mem, repo, inputs = world
+    for k in inputs:
+        inputs[k] = None
+    text, _ = _report(world, tmp_path)
+    for sec in ("reopen_at", "Frontmatter repairs", "Lessons repairs", "I7 dispositions"):
+        assert f"### {sec}\ninput missing" in text
+    assert "  - reopen_at: input missing" in text
+
+
+def test_report_frontmatter_section_counts_stale_and_unapplied(world, tmp_path):
+    mem, repo, inputs = world
+    md = tmp_path / "props" / "fm.md"
+    md.write_text(
+        "## 1. `feedback_alpha.md`\n\n- sha256 of the current file: `" + "0" * 64 + "`\n\n"
+        "Current line:\n\n```yaml\n  nope: 1\n```\n\nProposed line:\n\n```yaml\n  nope: 2\n```\n",
+        encoding="utf-8")
+    inputs["frontmatter"] = md
+    text, _ = _report(world, tmp_path)
+    assert "1 repairs. Stale (file changed since proposed): 1. Old line not found exactly once: 1." in text
+    assert "- `feedback_alpha.md` STALE DOES NOT APPLY" in text
+
+
+def test_report_memory_table_lists_every_transition(world, tmp_path):
+    text, _ = _report(world, tmp_path)
+    table = text.split("### Memory rules", 1)[1].split("###", 1)[0]
+    assert "| due | due | 1 |" in table
+    assert "| open (<2, not scanned) | not_due (below 2) | 1 |" in table
+
+
+def test_bad_friction_kinds_shape_is_an_error(world, tmp_path):
+    _, repo, _ = world
+    p = tmp_path / "props" / "k.json"
+    p.write_text('{"rows": []}', encoding="utf-8")
+    with pytest.raises(ValueError):
+        lc.load_friction_kinds(p, repo)
+    assert lc.load_friction_kinds(None, repo) is None
+
+
+def test_missing_inputs_raise_with_a_named_reason(world):
+    mem, repo, inputs = world
+    inputs["i7"] = repo / "nope.jsonl"
+    with pytest.raises(FileNotFoundError, match="named but missing"):
+        lc.entries(mem, repo, inputs)
+    inputs["i7"] = None
+    (repo / "memory/lessons.md").unlink()
+    with pytest.raises(FileNotFoundError, match="corpus file missing"):
+        lc.entries(mem, repo, inputs)
+
+
+def test_load_reopen_of_no_input_is_empty(world):
+    assert lc.load_reopen(None) == []
+    assert lc.load_jsonl(None) == []
+    assert len(lc.load_jsonl(world[2]["reopen_at"])) == 2
+
+
+def test_report_cli_writes_the_report_and_uses_default_inputs(world, tmp_path, capsys):
+    mem, repo, inputs = world
+    dflt = repo / lc.DEFAULT_INPUTS["reopen_at"]
+    dflt.parent.mkdir(parents=True)
+    dflt.write_bytes(inputs["reopen_at"].read_bytes())
+    out = tmp_path / "r.md"
+    assert lc.main(["report", "--memory-dir", str(mem), "--repo-root", str(repo), "--out", str(out)]) == 0
+    res = json.loads(capsys.readouterr().out)
+    assert out.read_text(encoding="utf-8").count(res["sha256"]) == 1
+    assert f"reopen_at: `{lc.file_sha(dflt)}`" in out.read_text(encoding="utf-8")
+    assert lc.main(["report", "--memory-dir", str(mem), "--repo-root", str(repo), "--out", str(out),
+                    "--no-default-inputs"]) == 0
+    assert "  - reopen_at: input missing" in out.read_text(encoding="utf-8")
+
+
+def test_for_nick_counts_low_and_relative_separately(world, tmp_path):
+    rows = [{"file": f"feedback_{n}.md", "occurrences": 2, "proposed_reopen_at": p, "status": s,
+             "prose_fragment": "x", "confidence": c, "note": ""}
+            for n, p, s, c in (("a", 2, "number", "low"), ("b", 3, "number", "low"),
+                               ("c", None, "relative", "med"), ("d", 2, "number", "high"),
+                               ("e", 2, "number", "high"))]
+    world[2]["reopen_at"].write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    text, _ = _report(world, tmp_path)
+    assert "3 distinct rows (2 low confidence, 1 relative, 0 both)" in text
