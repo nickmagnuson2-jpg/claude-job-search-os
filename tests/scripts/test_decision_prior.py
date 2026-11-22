@@ -214,6 +214,41 @@ def test_cite_is_the_terminal_row_not_the_first_row_of_the_company(main, capsys)
     assert all(a["topic"] == "company:Twiceco" for a in data["answers"])
 
 
+def test_company_with_a_live_row_under_an_alias_is_not_a_ruling(main, capsys):
+    """Codex r1 F1: rows are grouped by canonical company, not raw spelling."""
+    (main / "data" / "companies.yaml").write_text(COMPANIES_ALIAS, encoding="utf-8")
+    p = main / "data" / "job-pipeline.md"
+    p.write_text(p.read_text(encoding="utf-8")
+                 + "| Newname | Second Seat | Interviewing | 2026-01-10 | prep | - | - | - |\n",
+                 encoding="utf-8")
+    for q in ("Newname: next interview?", "Formerco again?"):
+        rc, _, out = add(main, capsys, q)
+        assert rc == 0, out
+
+
+def test_a_damaged_company_file_does_not_break_add(main, capsys):
+    """Codex r1 F3: an unreadable dimension falls back to raw pipeline names, with a warning."""
+    (main / "data" / "companies.yaml").write_text("schema: 1\ncompanies: []\n", encoding="utf-8")
+    rc, data, out = add(main, capsys, "Ship part one first?")
+    assert rc == 0, out
+    assert any("companies.yaml" in w for w in data["warnings"])
+    rc, data, _ = add(main, capsys, "Formerco again?")
+    assert rc == 1 and data["answers"][0]["topic"] == "company:Formerco"
+    assert any("companies.yaml" in w for w in data["warnings"])
+
+
+def test_an_unloaded_company_file_is_not_read_when_nothing_is_terminal(main, capsys, monkeypatch):
+    p = main / "data" / "job-pipeline.md"
+    p.write_text(PIPELINE.split("| Formerco")[0]
+                 + "| Livelyco | Strategist | Applied 2026-01-08 | 2026-01-08 | wait | - | - | - |\n",
+                 encoding="utf-8")
+    import company_dim
+    monkeypatch.setattr(company_dim, "load", lambda *a, **k: (_ for _ in ()).throw(AssertionError("read")))
+    rc, data, out = add(main, capsys, "Ship part one first?")
+    assert rc == 0, out
+    assert "warnings" not in data
+
+
 def test_active_company_is_not_a_ruling(main, capsys):
     rc, _, out = add(main, capsys, "Livelyco: nudge on Monday?")
     assert rc == 0, out
@@ -228,6 +263,7 @@ def test_company_match_works_without_the_company_file(main, capsys):
     (main / "data" / "companies.yaml").unlink()
     rc, data, _ = add(main, capsys, "Formerco again?")
     assert rc == 1 and data["answers"][0]["topic"] == "company:Formerco"
+    assert "warnings" not in data                  # a missing file is a normal state, not damage
 
 
 def test_cite_follows_the_line_when_lines_are_inserted_above(main, capsys):
@@ -383,6 +419,18 @@ def test_check_lists_promote_on_the_third_citation_outside_goals(main, capsys):
 def test_check_never_promotes_a_goals_ruling(main, capsys):
     seed_all(main, capsys)
     cite_n(main, capsys, 4, "Is every weekend OK?")
+    _, data, _ = run(main, capsys, "check")
+    assert data["promote"] == []
+
+
+def test_a_goals_cite_spelled_with_dotdot_is_stored_plainly_and_never_promoted(main, capsys):
+    """Codex r1 F2: the stored cite path is the resolved repo-relative path."""
+    rc, data, _ = topic_add(main, capsys, "expansion-metric", [r"expansion metric"],
+                            "Expansion metric", "data/workstreams/../goals.md")
+    assert rc == 0
+    (ev,) = events(main, "ruling-topics.jsonl")
+    assert ev["file"] == "data/goals.md"
+    cite_n(main, capsys, 3, "An expansion metric?")
     _, data, _ = run(main, capsys, "check")
     assert data["promote"] == []
 

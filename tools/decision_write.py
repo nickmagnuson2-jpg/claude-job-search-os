@@ -360,40 +360,55 @@ def curated_topics(p: dict) -> dict:
     return {e["key"]: e for e in load_events(p["topics"]) if e.get("type") == "topic"}
 
 
-def company_topics(p: dict) -> list:
-    """One topic per company whose EVERY pipeline row is terminal (a company with one closed role
-    and one live role is still in play: 3 such companies on 2026-11-21). Each item is
-    (key, names, rel, [(line number, line text) of each terminal row]). Rows come from pipe_read's
-    parser and are mapped back to their lines by their company, role and stage cells."""
+def company_topics(p: dict) -> tuple[list, list]:
+    """(topics, warnings). One topic per company whose EVERY pipeline row is terminal (a company
+    with one closed role and one live role is still in play: 3 such companies on 2026-11-21).
+    Rows are grouped by canonical company through data/companies.yaml, so a live row written
+    under an alias keeps the company live. Each topic is (key, names, rel, [(line number, line
+    text) of each terminal row]); rows come from pipe_read's parser and are mapped back to their
+    lines by their company, role and stage cells. The company file is read only when some row is
+    terminal; if it cannot be loaded, companies match by their pipeline spelling only and a
+    warning says so (the same as a missing file, but visible)."""
     if not p["pipeline"].is_file():
-        return []
+        return [], []
     from datetime import date
     from pipe_read import parse_all_rows            # lazy: only the gate needs it
     text = p["pipeline"].read_text(encoding="utf-8")
-    cells_at = [(n, l, [c.strip() for c in l.strip().strip("|").split("|")])
-                for n, l in enumerate(text.splitlines(), 1) if l.startswith("|")]
-    rows_by_company = {}
-    for row in parse_all_rows(text, date.today()):
-        rows_by_company.setdefault(row["company"], []).append(row)
-    dim = None
+    rows = parse_all_rows(text, date.today())
+    if not any(is_terminal_stage(r["stage"]) for r in rows):
+        return [], []
+    dim, warnings = None, []
     if p["companies"].is_file():
         import company_dim
-        dim = company_dim.load(p["companies"])
+        try:
+            dim = company_dim.load(p["companies"])
+        except Exception as exc:                    # yaml, schema or read error: degrade, visibly
+            warnings.append(f"{COMPANIES_REL.as_posix()} unreadable ({exc}); companies matched by "
+                            "their pipeline spelling only, aliases ignored")
+    groups = {}
+    for row in rows:
+        entry = dim.resolve(row["company"]) if dim else None
+        key = entry["canonical"] if entry else row["company"]
+        g = groups.setdefault(key, {"entry": entry, "rows": []})
+        g["rows"].append(row)
+    cells_at = [(n, l, [c.strip() for c in l.strip().strip("|").split("|")])
+                for n, l in enumerate(text.splitlines(), 1) if l.startswith("|")]
     out = []
-    for company, rows in rows_by_company.items():
-        if not all(is_terminal_stage(r["stage"]) for r in rows):
+    for key, g in groups.items():
+        if not all(is_terminal_stage(r["stage"]) for r in g["rows"]):
             continue
-        keys = {(r["company"], r["role"], r["stage"]) for r in rows}
+        keys = {(r["company"], r["role"], r["stage"]) for r in g["rows"]}
         where = [(n, l) for n, l, c in cells_at if len(c) >= 3 and (c[0], c[1], c[2]) in keys]
-        entry = dim.resolve(company) if dim else None
-        names = {company, *([entry["canonical"], *(entry.get("aliases") or [])] if entry else [])}
-        out.append((COMPANY_PREFIX + (entry["canonical"] if entry else company), sorted(names),
-                    PIPELINE_REL.as_posix(), where))
-    return out
+        entry = g["entry"]
+        names = {r["company"] for r in g["rows"]} | (
+            {entry["canonical"], *(entry.get("aliases") or [])} if entry else set())
+        out.append((COMPANY_PREFIX + key, sorted(names), PIPELINE_REL.as_posix(), where))
+    return out, warnings
 
 
-def prior_rulings(p: dict, question: str) -> list:
-    """Every ruling the question repeats, with the answering line as it reads now."""
+def prior_rulings(p: dict, question: str) -> tuple[list, list]:
+    """(answers, warnings): every ruling the question repeats, with the answering line as it
+    reads now."""
     answers = []
     for key, t in curated_topics(p).items():
         if not any(rx.search(question) for rx in compile_patterns(t["patterns"])):
@@ -404,10 +419,11 @@ def prior_rulings(p: dict, question: str) -> list:
             raise Refusal("topic_cite_stale", f"topic {key} matches but its cite is stale: {r.message}; "
                           f"fix it with topic-add --replace") from None
         answers.append({"topic": key, "file": t["file"], "line": n, "text": text})
-    for key, names, rel, where in company_topics(p):
+    companies, warnings = company_topics(p)
+    for key, names, rel, where in companies:
         if any(re.search(rf"(?<!\w){re.escape(nm)}(?!\w)", question) for nm in names):
             answers += [{"topic": key, "file": rel, "line": n, "text": text} for n, text in where]
-    return answers
+    return answers, warnings
 
 
 def topic_event(p: dict, key: str, patterns: list, rel: str, anchor: str, by: str, replace: bool,
@@ -416,10 +432,13 @@ def topic_event(p: dict, key: str, patterns: list, rel: str, anchor: str, by: st
         raise Refusal("bad_topic_key", f"a topic key is lowercase letters, digits and hyphens, got {key!r}")
     compile_patterns(patterns)
     n, text = locate(p, rel, anchor)
+    # Stored as the resolved repo-relative path, so data/x/../goals.md is data/goals.md
+    # everywhere a cite path is compared (Codex r1 F2).
+    rel = cite_path(p, rel).relative_to(p["main"].resolve()).as_posix()
     if key in existing and not replace:
         raise Refusal("topic_exists", f"topic {key} exists; pass --replace to supersede it")
     return sealed({"type": "topic", "key": key, "at": now(), "by": by, "patterns": list(patterns),
-                   "file": Path(rel).as_posix(), "anchor": anchor, "line_at_add": n,
+                   "file": rel, "anchor": anchor, "line_at_add": n,
                    "line_hash_at_add": sha(text)})
 
 
@@ -482,14 +501,14 @@ def cmd_add(p: dict, a) -> dict:
         raise Refusal("bad_prediction", f"--predict must be one of {labels}")
     usd = parse_usd(a.cls, a.usd)
 
-    answers = prior_rulings(p, a.question)
+    answers, warnings = prior_rulings(p, a.question)
     if answers and a.why_not_answered is None:
         refusal = Refusal(
             "already_answered",
             "already answered at " + "; ".join(f"{x['file']}:{x['line']}" for x in answers)
             + ". The ruling text is in `answers`. If it does not cover this question, re-run with "
               "--why-not-answered \"<why>\"; the reason is recorded.",
-            answers=answers)
+            answers=answers, **({"warnings": warnings} if warnings else {}))
         if not a.dry_run:
             with inbox_lock.file_lock(p["questions"]):
                 for x in answers:
@@ -521,7 +540,8 @@ def cmd_add(p: dict, a) -> dict:
             q["not_answered"] = not_answered
         return sealed(q), pred
 
-    extra = {"not_answered": not_answered} if not_answered else {}
+    extra = {**({"not_answered": not_answered} if not_answered else {}),
+             **({"warnings": warnings} if warnings else {})}
     if a.dry_run:
         q, _ = build(load_events(p["questions"]), load_events(p["predictions"]))
         return {"status": "ok", "dry_run": True, "question": public_view(q), **extra}
