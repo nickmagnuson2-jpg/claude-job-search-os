@@ -21,6 +21,15 @@ Subcommands (Section 2 only, the "| Pattern | Rule | Occurrences | Promoted | Da
   append-row --pattern P --rule R --occurrences N --promoted V --date YYYY-MM-DD
       Add a new row at the top of the Section 2 table (newest first, the file's order).
 
+  repair-row --line N --expect-sha <sha256 of the file> --old "<exact row>" --new "<row>"
+      STRUCTURAL repair of one Section 2 row that cannot be read (for example text after
+      its closing pipe), for the approved cutover repairs (org 72, 2026-11-22). Refused
+      unless: CLAUDECODE=1 (a tripwire for sessions, as in memory_write); the file's
+      sha256 is --expect-sha; line N is in the Section 2 table and equals --old byte for
+      byte; --new passes the row validator; and the TEXT IS PRESERVED: --old and --new are
+      identical once every "|" and all whitespace are removed. So it may move text across
+      cell boundaries and never reword.
+
 Cells may not contain "|" or a newline: either would break the table, and the reader
 would then see the wrong cell count.
 
@@ -31,8 +40,11 @@ tools/draft_capture.py. Output: one JSON object on stdout. Exit 0 written, 1 ref
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import re
+import stat
 import sys
 import tempfile
 from pathlib import Path
@@ -108,10 +120,13 @@ def validate_cells(cells: list[str]) -> list[str]:
 
 
 def atomic_write(path: Path, text: str) -> None:
+    """Write via a temp file and os.replace, keeping the file's permission bits."""
+    mode = stat.S_IMODE(path.stat().st_mode)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".lessons-", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
+        os.chmod(tmp, mode)
         os.replace(tmp, path)
     except BaseException:
         os.unlink(tmp)          # mkstemp created it; a failed replace leaves it behind
@@ -158,6 +173,39 @@ def append_row(path: Path, cells: list[str]) -> dict:
     return {"action": "append-row", "line": first + 1}
 
 
+_NOT_TEXT = re.compile(r"[|\s]")
+
+
+def repair_row(path: Path, line: int, expect_sha: str, old: str, new: str) -> dict:
+    reasons = []
+    if os.environ.get("CLAUDECODE") != "1":
+        raise Refused(["CLAUDECODE=1 is not set: repair-row applies an approved repair "
+                       "from a session, not from a scheduled job"])
+    raw = path.read_bytes()
+    sha = hashlib.sha256(raw).hexdigest()
+    if sha != expect_sha:
+        raise Refused([f"file changed: sha256 is {sha}, expected {expect_sha}"])
+    lines, _ = read_lines(path)
+    first, end = section2_bounds(lines)
+    if not first <= line - 1 < end:
+        raise Refused([f"line {line} is not a Section 2 row (rows are lines {first + 1}-{end})"])
+    if lines[line - 1] != old:
+        raise Refused([f"line {line} does not equal --old byte for byte"])
+    if _NOT_TEXT.sub("", old) != _NOT_TEXT.sub("", new):
+        reasons.append("--new changes the row's text; repair-row may only move cell "
+                       "boundaries and whitespace")
+    cells, defect = ls.parse_lessons_row(new)
+    if cells is None:
+        reasons.append(f"--new is not a readable row: {defect or 'not a table row'}")
+    else:
+        reasons += list(ls.lessons_state(cells, memory_dir=memory_dir(), repo_root=REPO_ROOT)[2])
+    if reasons:
+        raise Refused(reasons)
+    lines[line - 1] = new
+    atomic_write(path, "\n".join(lines))
+    return {"action": "repair-row", "line": line, "sha256_before": sha}
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="lessons_write.py", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -167,6 +215,11 @@ def main(argv: list[str] | None = None) -> int:
     pa = sub.add_parser("append-row")
     for flag in ("--pattern", "--rule", "--occurrences", "--promoted", "--date"):
         pa.add_argument(flag, required=True)
+    pr = sub.add_parser("repair-row")
+    pr.add_argument("--line", type=int, required=True)
+    pr.add_argument("--expect-sha", required=True)
+    pr.add_argument("--old", required=True)
+    pr.add_argument("--new", required=True)
     args = p.parse_args(argv)
     path = lessons_path()
     try:
@@ -174,6 +227,8 @@ def main(argv: list[str] | None = None) -> int:
             raise Refused([f"no such file: {path}"])
         if args.cmd == "set-promoted":
             out = set_promoted(path, args.match, args.value)
+        elif args.cmd == "repair-row":
+            out = repair_row(path, args.line, args.expect_sha, args.old, args.new)
         else:
             out = append_row(path, [args.pattern, args.rule, args.occurrences,
                                     args.promoted, args.date])

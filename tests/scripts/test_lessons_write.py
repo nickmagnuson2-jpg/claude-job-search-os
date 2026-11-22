@@ -251,3 +251,74 @@ def test_default_memory_dir_is_the_main_checkouts_live_tier():
     finally:
         if env is not None:
             os.environ["MEMORY_DIR"] = env
+
+
+# ------------------------------------------------------------------ repair-row (org 72)
+
+import hashlib  # noqa: E402
+
+BROKEN = "| Invented pattern delta | Invented rule delta | 2 | Yes | 2026-08-11 | <!-- 2nd: 2026-10-13 -->"
+FIXED = "| Invented pattern delta | Invented rule delta | 2 | Yes | 2026-08-11 <!-- 2nd: 2026-10-13 --> |"
+
+
+@pytest.fixture
+def broken(tmp_path):
+    f = tmp_path / "lessons.md"
+    f.write_text(LESSONS + BROKEN + "\n", encoding="utf-8")
+    f.chmod(0o640)
+    return f
+
+
+def repair(f, *, line=None, sha=None, old=BROKEN, new=FIXED, claudecode="1"):
+    lines = f.read_text(encoding="utf-8").split("\n")
+    line = line or lines.index(BROKEN) + 1
+    sha = sha or hashlib.sha256(f.read_bytes()).hexdigest()
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+    if claudecode is not None:
+        env["CLAUDECODE"] = claudecode
+    env.update({"LESSONS_PATH": str(f), "PYTHONIOENCODING": "utf-8",
+                "MEMORY_DIR": str(f.parent / "no-memory-here")})
+    p = subprocess.run([sys.executable, str(SCRIPT), "repair-row", "--line", str(line),
+                        "--expect-sha", sha, "--old", old, "--new", new],
+                       capture_output=True, text=True, env=env, timeout=60)
+    out = json.loads(p.stdout) if p.stdout.strip().startswith("{") else None
+    return p.returncode, out, p
+
+
+def test_repair_row_moves_text_across_a_cell_boundary(broken):
+    before = broken.read_text(encoding="utf-8")
+    code, out, p = repair(broken)
+    assert code == 0, p.stdout + p.stderr
+    assert out["action"] == "repair-row"
+    assert out["sha256_before"] == hashlib.sha256(before.encode("utf-8")).hexdigest()
+    after = broken.read_text(encoding="utf-8")
+    assert after == before.replace(BROKEN, FIXED)
+    assert oct(broken.stat().st_mode & 0o777) == "0o640"
+
+
+@pytest.mark.parametrize("kw,needle", [
+    ({"new": FIXED.replace("Invented rule delta", "Invented rule DELTA")}, "changes the row's text"),
+    ({"new": FIXED.replace("Invented pattern delta", "Invented pattern deltas")}, "changes the row's text"),
+    ({"sha": "0" * 64}, "file changed: sha256 is"),
+    ({"old": BROKEN + " "}, "does not equal --old byte for byte"),
+    ({"line": 3}, "is not a Section 2 row"),
+    ({"new": "| Invented pattern delta | Invented rule delta | 2 | Yes 2026-08-11 <!-- 2nd: 2026-10-13 --> |"},
+     "not a readable row"),
+    ({"new": FIXED.replace("| Yes |", "| Yes2026-08-11 |").replace("| 2026-08-11 <!--", "| <!--")},
+     "date"),
+    ({"claudecode": None}, "CLAUDECODE=1 is not set"),
+    ({"claudecode": "0"}, "CLAUDECODE=1 is not set"),
+])
+def test_repair_row_refusals(broken, kw, needle):
+    before = broken.read_text(encoding="utf-8")
+    code, out, p = repair(broken, **kw)
+    assert code == 1, p.stdout + p.stderr
+    assert any(needle.lower() in r.lower() for r in out["reasons"]), out["reasons"]
+    assert broken.read_text(encoding="utf-8") == before
+
+
+def test_set_promoted_keeps_the_file_mode(lessons):
+    lessons.chmod(0o640)
+    code, _, _ = run(["set-promoted", "Invented pattern alpha", "Yes"], lessons)
+    assert code == 0
+    assert oct(lessons.stat().st_mode & 0o777) == "0o640"
