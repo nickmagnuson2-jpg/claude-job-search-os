@@ -18,7 +18,7 @@ sys.path.insert(0, str(REPO_ROOT / "tools"))
 import memory_frontmatter as mf  # noqa: E402
 
 BODY = "\n**Rule:** an example.\n\n**Why:** because.\n"
-NOTE = "> 2026-11-22 note (repair 11): moved verbatim from a YAML comment: gate tripped"
+NOTE = "> 2026-11-22 note (repair 11): moved verbatim from a YAML comment: example comment"
 
 
 def _file(tmp_path, block, body=BODY, name="feedback_example.md"):
@@ -37,12 +37,12 @@ def _claude(monkeypatch):
 
 
 # The 5 proposal classes, as synthetic blocks: (old block, new block, intended, note)
-RAW = ('name: x\ndescription: "Merged" answers only for code\nmetadata:\n  promoted: no\n',
-       'name: x\ndescription: \'"Merged" answers only for code\'\nmetadata:\n  promoted: no\n',
-       {"description": '"Merged" answers only for code'}, None)
-OUTER = ('name: x\nmetadata:\n  promoted: "no -- the "please" phrase"\n  occurrences: 2\n',
-         'name: x\nmetadata:\n  promoted: \'no -- the "please" phrase\'\n  occurrences: 2\n',
-         {"promoted": 'no -- the "please" phrase'}, None)
+RAW = ('name: x\ndescription: "Quoted" word at the start of a value\nmetadata:\n  promoted: no\n',
+       'name: x\ndescription: \'"Quoted" word at the start of a value\'\nmetadata:\n  promoted: no\n',
+       {"description": '"Quoted" word at the start of a value'}, None)
+OUTER = ('name: x\nmetadata:\n  promoted: "no -- the "example" phrase"\n  occurrences: 2\n',
+         'name: x\nmetadata:\n  promoted: \'no -- the "example" phrase\'\n  occurrences: 2\n',
+         {"promoted": 'no -- the "example" phrase'}, None)
 DUPLICATE = ('name: x\nmetadata:\n  promoted_date: 2026-09-07\n  exit_path: exit1\n  last_cited: 2026-10-22\n'
              '  promoted_date: 2026-09-07\n  exit_path: exit1\n',
              'name: x\nmetadata:\n  promoted_date: 2026-09-07\n  exit_path: exit1\n  last_cited: 2026-10-22\n',
@@ -50,7 +50,7 @@ DUPLICATE = ('name: x\nmetadata:\n  promoted_date: 2026-09-07\n  exit_path: exit
 VOCAB = ('name: x\nmetadata:\n  promoted: n/a -- reference\n',
          "name: x\nmetadata:\n  promoted: 'superseded by ruling 2026-11-22 (earlier value: n/a -- reference)'\n",
          {"promoted": "superseded by ruling 2026-11-22 (earlier value: n/a -- reference)"}, None)
-COMMENT = ('name: x\nmetadata:\n  promoted: "no"  # gate tripped\n  last_cited: 2026-11-03\n',
+COMMENT = ('name: x\nmetadata:\n  promoted: "no"  # example comment\n  last_cited: 2026-11-03\n',
            'name: x\nmetadata:\n  promoted: "no"\n  last_cited: 2026-11-03\n',
            {"promoted": "no"}, NOTE)
 
@@ -112,7 +112,7 @@ def test_refuses_a_file_without_frontmatter(tmp_path):
 
 
 @pytest.mark.parametrize("bad,code", [
-    ('name: x\ndescription: "Merged" answers\n', "yaml_error"),
+    ('name: x\ndescription: "Quoted" word first\n', "yaml_error"),
     ("name: x\nname: y\n", "duplicate_key"),
     ("- a\n- b\n", "not_a_mapping"),
 ])
