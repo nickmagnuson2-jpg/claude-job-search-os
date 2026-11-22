@@ -301,3 +301,60 @@ def test_dry_run_writes_nothing(tmp_path):
     assert code == 0
     assert res.get("dry_run") is True
     assert p.read_text(encoding="utf-8") == before
+
+
+# --- company-key-1121: known = exact normalize_name, the shared company_key.exact -------
+# Ruling (org c0, 2026-11-21): target-add and target-reject are a discovery path, so a
+# key match must never block the write. The known check moved from strip().lower() to
+# normalize_name equality (the 2026-09-14 identity). That is a deliberate, small widening:
+# the rows marked True/False below pin EXACTLY which extra inputs now count as known, so
+# any later widening (a legal suffix, "ai", an alias) fails here.
+
+@pytest.mark.parametrize("stored,given,known", [
+    ("Existing Co", "existing co", True),        # was already known (lower)
+    ("Existing Co", "Existing Co.", True),       # NEW: trailing punctuation
+    ("Existing Co", "Existing  Co", True),       # NEW: double space
+    ("Existing Co", "Existing-Co", True),        # NEW: hyphen for space
+    ("Café Nova", "Cafe Nova", True),            # NEW: accent
+    ("Existing Co", "Existing Co, Inc.", False), # a legal suffix: tagged, not known
+    ("Existing Co", "Existing Co AI", False),    # "ai": tagged, not known
+    ("Existing Co", "ExistingCo", False),        # spacing removed: tagged, not known
+    ("Existing Co (Alias)", "Alias", False),     # an alias: tagged, not known
+    ("Existing Co", "Existing Corp Labs", False),
+])
+def test_target_exists_is_exact_normalize_name(stored, given, known):
+    sys.path.insert(0, str(TOOLS))
+    import act_apply
+    doc = {"companies": [{"name": stored}], "rejected": []}
+    assert act_apply._target_exists(doc, given) is known
+    doc = {"companies": [], "rejected": [{"name": stored}]}
+    assert act_apply._target_exists(doc, given) is known
+
+
+def test_target_add_keeps_a_key_match_and_tags_it(tmp_path):
+    p = _write(tmp_path)
+    out, rc = _run(tmp_path, "target-add", "Existing Co, Inc.", "--outreach")
+    assert rc == 0 and out.get("added") is True
+    assert out.get("possible_duplicate") == ["Existing Co"]
+    assert [c["name"] for c in _load(p)["companies"]] == ["Existing Co", "Existing Co, Inc."]
+
+
+def test_target_add_of_a_punctuation_variant_is_already_known(tmp_path):
+    p = _write(tmp_path)
+    out, rc = _run(tmp_path, "target-add", "existing co.", "--outreach")
+    assert rc == 0 and out.get("added") is False
+    assert [c["name"] for c in _load(p)["companies"]] == ["Existing Co"]
+
+
+def test_target_add_of_a_new_company_carries_no_duplicate_tag(tmp_path):
+    _write(tmp_path)
+    out, rc = _run(tmp_path, "target-add", "Brand New Co", "--outreach")
+    assert out.get("added") is True and "possible_duplicate" not in out
+
+
+def test_target_reject_keeps_a_key_match_and_tags_it(tmp_path):
+    p = _write(tmp_path)
+    out, rc = _run(tmp_path, "target-reject", "Existing Co AI", "--reason", "x")
+    assert rc == 0 and out.get("added") is True
+    assert out.get("possible_duplicate") == ["Existing Co"]
+    assert [c["name"] for c in _load(p).get("rejected") or []] == ["Existing Co AI"]

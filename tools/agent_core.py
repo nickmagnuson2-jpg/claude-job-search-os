@@ -6,6 +6,8 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from slug import slugify as _slugify  # noqa: E402
+from company_key import KeyIndex  # noqa: E402
+from name_dedup import normalize_name  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 BETAS = ["agent-2026-05-07"]
@@ -74,11 +76,46 @@ def run_agent(client, query, output_schema=None, effort="low",
 
 # --- dedup helpers (moved verbatim from webset_discover.py) ---
 def _norm_name(name):
+    """The key of agent_collect's persisted per-preset seen-set. Kept as is so stored
+    keys stay valid; identity checks use company_key / normalize_name, not this."""
     return re.sub(r"[^a-z0-9]+", " ", (name or "").lower()).strip()
 
 
+class KnownNames(set):
+    """Exact normalized names (still a plain set to every caller) plus the display names
+    behind them, so a key match can be tagged with a name Nick recognizes."""
+
+    def __init__(self):
+        self.index = KeyIndex([])
+
+    def add_name(self, name) -> None:
+        n = normalize_name(name) if isinstance(name, str) else ""
+        if n:
+            self.add(n)
+            self.index.add(name)
+
+    @classmethod
+    def from_names(cls, names):
+        known = cls()
+        for n in names or []:
+            known.add_name(n)
+        return known
+
+
 def filter_known(candidates, known_names):
-    return [c for c in candidates if _norm_name(c.get("name", "")) not in known_names]
+    """Drop a candidate only on an exact normalize_name match (tools/company_key.exact).
+    A looser company-key match is a discovery path, so it is KEPT and tagged
+    `possible_duplicate` for Nick, never dropped (company-key-1121 ruling). Returns new
+    dicts for tagged candidates; the input is not mutated."""
+    index = getattr(known_names, "index", None) or KeyIndex(sorted(known_names))
+    out = []
+    for c in candidates:
+        name = c.get("name", "")
+        if normalize_name(name) in known_names:
+            continue
+        dup = index.possible(name)
+        out.append({**c, "possible_duplicate": dup[0]} if dup else c)
+    return out
 
 
 def guess_slug(name):
@@ -87,7 +124,7 @@ def guess_slug(name):
 
 def load_known_names(paths):
     import yaml
-    known = set()
+    known = KnownNames()
     for path in paths or []:
         p = Path(path)
         if not p.is_file():
@@ -105,11 +142,11 @@ def load_known_names(paths):
             for key in ("companies", "rejected"):
                 for c in (data.get(key) or []):
                     if isinstance(c, dict) and c.get("name"):
-                        known.add(_norm_name(c["name"]))
+                        known.add_name(c["name"])
         else:
             for line in text.splitlines():
                 if line.strip().startswith("|"):
                     cells = [x.strip() for x in line.strip().strip("|").split("|")]
                     if cells and cells[0] and cells[0].lower() not in ("company", "---"):
-                        known.add(_norm_name(cells[0]))
+                        known.add_name(cells[0])
     return known

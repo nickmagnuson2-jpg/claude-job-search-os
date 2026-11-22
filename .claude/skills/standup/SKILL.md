@@ -156,7 +156,7 @@ The weekly discovery job writes here, not to the inbox (funnel-intake decision 3
 
 ```
 🏢 **New companies:** [pending_companies] waiting ([pending_people] people) · oldest [oldest_first_seen]
-- [Name] ([score]) — [description, ~10 words] [· possible match: X] [· location unverified]
+- [Name] ([score]) — [description, ~10 words] [· possible match: X] [· possible duplicate of Y] [· location unverified]
 ```
 
 - `exists: false` is NOT zero: say `⚠️ discovery queue unreadable: <reason>`.

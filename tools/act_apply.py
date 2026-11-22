@@ -42,6 +42,7 @@ from pathlib import Path
 # Sibling import: fuzzy name-duplicate guard (stdlib-only module in tools/).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from name_dedup import find_near_duplicates  # noqa: E402
+from company_key import KeyIndex, exact as exact_company  # noqa: E402
 # Single source of truth for markdown-table cell escaping. Do NOT reimplement: a raw "|"
 # in any user-supplied cell silently shifts every later column of the row, and nothing
 # downstream complains. See tools/pipe_write.py:sanitize_cell.
@@ -434,13 +435,23 @@ def _target_exists(doc: dict, name: str) -> bool:
 
     Checked across BOTH keys so a triage pass cannot add a company to the target
     list that was previously rejected, or re-reject one already targeted.
+
+    Known means exact normalize_name equality (tools/company_key.exact), the
+    2026-09-14 identity. A looser key match is never treated as known here: this is a
+    discovery path, so it is kept and tagged (_possible_duplicates), never dropped
+    (company-key-1121 ruling).
     """
-    want = name.strip().lower()
-    for key in ("companies", "rejected"):
-        for c in (doc.get(key) or []):
-            if isinstance(c, dict) and str(c.get("name", "")).strip().lower() == want:
-                return True
-    return False
+    return any(exact_company(name, n) for n in _target_display_names(doc))
+
+
+def _target_display_names(doc: dict) -> list:
+    return [str(c.get("name", "")) for key in ("companies", "rejected")
+            for c in (doc.get(key) or []) if isinstance(c, dict) and c.get("name")]
+
+
+def _possible_duplicates(doc: dict, name: str) -> list:
+    """Targets the loose company key matches: shown to Nick, never acted on."""
+    return KeyIndex(_target_display_names(doc)).possible(name)
 
 
 def cmd_target_add(args, targets_path: Path, dry_run: bool) -> None:
@@ -476,10 +487,11 @@ def cmd_target_add(args, targets_path: Path, dry_run: bool) -> None:
     if args.notes:
         row["notes"] = args.notes
 
+    dupes = _possible_duplicates(doc, args.company)
     _write_validated(targets_path, "companies", row, "target-add")
     out_ok("target-add", f"Added target: {args.company}",
            company=args.company, added=True, outreach=row["outreach"],
-           lane=row.get("lane"))
+           lane=row.get("lane"), **({"possible_duplicate": dupes} if dupes else {}))
 
 
 def cmd_target_reject(args, targets_path: Path, dry_run: bool) -> None:
@@ -506,9 +518,11 @@ def cmd_target_reject(args, targets_path: Path, dry_run: bool) -> None:
     if args.lane:
         row["lane"] = args.lane
 
+    dupes = _possible_duplicates(doc, args.company)
     _write_validated(targets_path, "rejected", row, "target-reject")
     out_ok("target-reject", f"Recorded rejection: {args.company}",
-           company=args.company, added=True, reason=args.reason)
+           company=args.company, added=True, reason=args.reason,
+           **({"possible_duplicate": dupes} if dupes else {}))
 
 
 def parse_args():
