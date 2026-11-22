@@ -100,6 +100,13 @@ def test_check_from_a_worktree_fails_a_record_held_only_by_the_worktree(main_and
     assert r.returncode == 1 and out["recorded"] is False
     assert out["code"] == "recorded_only_in_worktree"
     assert "re-record from the main checkout" in out["message"]
+    # The message names a runnable command, with the commit SHA resolved (HEAD in the
+    # main checkout is a different commit), and running it clears the check.
+    sha = _git(wt, "rev-parse", "HEAD")
+    want = f"--repo-root {main} record --tip {sha}"
+    assert want in out["message"]
+    assert _cli(main, "record", "--tip", sha).returncode == 0
+    assert _cli(wt, "check", "--tip", "HEAD").returncode == 0
 
 
 def test_check_from_a_worktree_with_no_record_anywhere_fails(main_and_worktree):

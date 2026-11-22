@@ -34,8 +34,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from vault_paths import main_checkout  # noqa: E402  (a file read, no git call)
+from vault_paths import main_checkout  # a file read, no git call; tools/ is on the path
 
 LEDGER = Path("tools") / ".audit-pii-ledger.jsonl"
 
@@ -48,6 +47,13 @@ def tree_of(root: Path, sha: str) -> str | None:
     """The tree id of commit SHA, or None when SHA is not a commit here."""
     r = subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "--quiet",
                         f"{sha}^{{commit}}^{{tree}}"], capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+
+
+def commit_of(root: Path, sha: str) -> str | None:
+    """The full commit id SHA names in `root` (HEAD differs between checkouts)."""
+    r = subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "--quiet",
+                        f"{sha}^{{commit}}"], capture_output=True, text=True)
     return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
 
 
@@ -128,11 +134,12 @@ def main(argv: list[str] | None = None) -> int:
     except LedgerError as e:
         return _out({"status": "error", "code": "ledger_unreadable", "message": str(e)}, 2)
     if stranded:
+        fix = (f"PYTHONIOENCODING=utf-8 python3 {main / 'tools' / 'audit_pii_record.py'} "
+               f"--repo-root {main} record --tip {commit_of(root, args.tip)}")
         return _out({"status": "ok", "action": "check", "tree": tree, "recorded": False,
                      "code": "recorded_only_in_worktree", "ledger": ledger,
                      "message": "recorded only in this worktree's copy, which the push gate "
-                                "does not read; re-record from the main checkout (or re-run "
-                                "record, which now writes main's ledger)"}, 1)
+                                f"does not read; re-record from the main checkout: {fix}"}, 1)
     return _out({"status": "ok", "action": "check", "tree": tree, "recorded": ok,
                  "ledger": ledger}, 0 if ok else 1)
 
