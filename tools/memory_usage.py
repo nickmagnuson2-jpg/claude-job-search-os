@@ -120,14 +120,48 @@ def _names_in_memory(segment: str, stems: set[str]) -> set[str]:
 
 
 SEARCH_VERBS = {"grep", "rg"}
-# Flags that print file names, counts or nothing, never the file's text.
-NO_CONTENT_LONG = {"--files-with-matches", "--files-without-match", "--count", "--count-matches",
-                   "--quiet", "--files"}
-NO_CONTENT_SHORT = set("lLcq")
-# Flags whose value is the next token (or the rest of a short cluster).
-VALUE_SHORT = set("efABCmgtTM")
-VALUE_LONG = {"--regexp", "--file", "--glob", "--type", "--type-not", "--max-count", "--include",
-              "--exclude", "--context", "--after-context", "--before-context", "--max-columns"}
+# Each verb's option grammar (Codex r3 F2: one shared table shifted operands, and grep -r is
+# recursive while rg -r takes a replacement). Any option not listed here fails safe: the
+# segment counts nothing, which can only lower the count, never freshen a rule wrongly.
+_GRAMMAR = {
+    "grep": {
+        "no_content_short": set("lLcqo"),
+        "value_short": set("efABCmdD"),
+        "flag_short": set("abhHiInrRsuUvVwxyzZEFGPT0123456789"),
+        "no_content_long": {"--files-with-matches", "--files-without-match", "--count", "--quiet",
+                            "--silent", "--only-matching"},
+        "value_long": {"--regexp", "--file", "--after-context", "--before-context", "--context",
+                       "--max-count", "--directories", "--devices", "--binary-files", "--exclude",
+                       "--exclude-from", "--exclude-dir", "--include", "--label", "--group-separator"},
+        "flag_long": {"--recursive", "--dereference-recursive", "--line-number", "--ignore-case",
+                      "--no-ignore-case", "--no-filename", "--with-filename", "--color", "--colour",
+                      "--fixed-strings", "--extended-regexp", "--basic-regexp", "--perl-regexp",
+                      "--word-regexp", "--line-regexp", "--invert-match", "--null", "--null-data",
+                      "--no-messages", "--text", "--byte-offset", "--line-buffered", "--initial-tab",
+                      "--no-group-separator"},
+    },
+    "rg": {
+        "no_content_short": set("lcqo"),
+        "value_short": set("efABCmgtTEjrMd"),
+        "flag_short": set("aFHhiIInNpsSuUvVwxzPb0123456789"),
+        "no_content_long": {"--files-with-matches", "--files-without-match", "--count",
+                            "--count-matches", "--quiet", "--files", "--only-matching"},
+        "value_long": {"--regexp", "--file", "--after-context", "--before-context", "--context",
+                       "--max-count", "--glob", "--iglob", "--type", "--type-not", "--type-add",
+                       "--type-clear", "--encoding", "--threads", "--replace", "--engine", "--sort",
+                       "--sortr", "--max-depth", "--max-filesize", "--max-columns", "--path-separator",
+                       "--pre", "--pre-glob", "--colors", "--context-separator",
+                       "--field-match-separator", "--field-context-separator", "--ignore-file",
+                       "--dfa-size-limit", "--regex-size-limit", "--hyperlink-format", "--color"},
+        "flag_long": {"--line-number", "--no-line-number", "--ignore-case", "--smart-case",
+                      "--case-sensitive", "--no-filename", "--with-filename", "--no-heading",
+                      "--heading", "--hidden", "--no-ignore", "--follow", "--fixed-strings",
+                      "--word-regexp", "--line-regexp", "--invert-match", "--multiline", "--pcre2",
+                      "--null", "--null-data", "--text", "--binary", "--vimgrep", "--json",
+                      "--no-messages", "--trim", "--column", "--byte-offset", "--search-zip",
+                      "--crlf", "--unrestricted"},
+    },
+}
 PATTERN_SHORT = set("ef")
 PATTERN_LONG = {"--regexp", "--file"}
 
@@ -136,12 +170,17 @@ def _search_file_args(segment: str) -> list[str] | None:
     """The file arguments of a grep/rg segment, or None when it prints no file text.
 
     The pattern is a search for text, not a file that was read (Grok r2 F1): it is the
-    first operand unless -e/-f gave it. -l, -c, -q and their long forms print names or
-    counts only."""
+    first operand unless -e/-f gave it. -l, -c, -q, -o and their long forms print names,
+    counts or matches only. An option outside the verb's grammar returns None (fail safe)."""
     try:
         toks = shlex.split(segment)
     except ValueError:
         toks = segment.split()
+    if not toks:
+        return None
+    g = _GRAMMAR.get(toks[0].split("/")[-1])
+    if g is None:
+        return None
     args, explicit_pattern, i = [], False, 1
     while i < len(toks):
         t = toks[i]
@@ -149,21 +188,25 @@ def _search_file_args(segment: str) -> list[str] | None:
             args += toks[i + 1:]
             break
         if t.startswith("--"):
-            name = t.split("=", 1)[0]
-            if name in NO_CONTENT_LONG:
+            name, has_value = t.split("=", 1)[0], "=" in t
+            if name in g["no_content_long"]:
                 return None
             explicit_pattern |= name in PATTERN_LONG
-            if name in VALUE_LONG and "=" not in t:
-                i += 1
+            if name in g["value_long"]:
+                i += 0 if has_value else 1
+            elif name not in g["flag_long"] and not has_value:
+                return None
         elif t.startswith("-") and len(t) > 1:
             for j, ch in enumerate(t[1:], 1):
-                if ch in NO_CONTENT_SHORT:
+                if ch in g["no_content_short"]:
                     return None
-                if ch in VALUE_SHORT:
+                if ch in g["value_short"]:
                     explicit_pattern |= ch in PATTERN_SHORT
                     if j == len(t) - 1:
                         i += 1
                     break
+                if ch not in g["flag_short"]:
+                    return None
         else:
             args.append(t)
         i += 1
@@ -184,6 +227,11 @@ def classify_bash(command: str, stems: set[str]) -> tuple[set[str], set[str], in
     for seg in SEGMENT_SPLIT.split(text):
         toks = seg.strip().split()
         while toks and (re.match(r"^\w+=", toks[0]) or toks[0] in ("cd", "time", "env")):
+            if toks[0] == "env":   # env's own options come before the command (Codex r3 F3)
+                toks = toks[1:]
+                while toks and toks[0].startswith("-"):
+                    toks = toks[2:] if toks[0] in ("-u", "--unset", "-C", "--chdir") else toks[1:]
+                continue
             toks = toks[2:] if toks[0] == "cd" else toks[1:]
         if not toks:
             continue

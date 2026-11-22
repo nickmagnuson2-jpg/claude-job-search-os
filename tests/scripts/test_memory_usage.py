@@ -596,3 +596,39 @@ def test_a_grep_of_a_rule_file_with_content_output_is_a_print(tmp_path, cmd):
 ])
 def test_search_file_args_finds_only_the_file_operands(seg, files):
     assert mu._search_file_args(seg) == files
+
+
+# ---------------------------------------------------------------------------- Codex r3 (2026-11-22)
+
+@pytest.mark.parametrize("seg,files", [
+    ("grep -o feedback_alpha_rule memory/a.md", None),                  # F1: only-matching prints the match
+    ("rg --only-matching x memory/a.md", None),
+    ("rg --encoding utf-8 memory/a.md output/", ["output/"]),            # F2: value flags consume values
+    ("grep --exclude-from excludes memory/a.md output/", ["output/"]),
+    ("grep -d skip memory/a.md output/", ["output/"]),
+    ("grep --binary-files text memory/a.md output/", ["output/"]),
+    ("grep --label x memory/a.md output/", ["output/"]),
+    ("rg -j 4 memory/a.md output/", ["output/"]),
+    ("rg -r X memory/a.md output/", ["output/"]),                       # rg -r is --replace (a value)
+    ("grep -r memory/a.md output/", ["output/"]),                       # grep -r is recursive (no value)
+    ("rg --sort path memory/a.md output/", ["output/"]),
+    ("rg --engine pcre2 memory/a.md output/", ["output/"]),
+    ("grep --some-new-flag memory/a.md output/", None),                 # unknown: fail safe, count nothing
+    ("grep -K memory/a.md output/", None),
+    ("rg --some-new-flag=1 promoted memory/a.md", ["memory/a.md"]),     # '=' keeps the value inside
+    ("grep --line-number --ignore-case promoted memory/a.md", ["memory/a.md"]),
+    ("rg --no-heading --hidden -n promoted memory/a.md", ["memory/a.md"]),
+])
+def test_search_file_args_reads_each_verbs_own_option_grammar(seg, files):
+    assert mu._search_file_args(seg) == files
+
+
+@pytest.mark.parametrize("cmd", [
+    f"env -i grep -n promoted {MP}feedback_alpha_rule.md",
+    f"env -u GREP_OPTIONS grep -n promoted {MP}feedback_alpha_rule.md",
+    f"env -i X=1 cat {MP}feedback_alpha_rule.md",
+])
+def test_env_options_do_not_hide_the_real_command(tmp_path, cmd):
+    """Codex r3 F3 (P1)."""
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", "3:promoted: no")])
+    assert _chans(res.events) == [("feedback_alpha_rule", "bash_print")]
