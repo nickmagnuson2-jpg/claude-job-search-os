@@ -58,6 +58,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import day_check  # noqa: E402
+import decision_write  # noqa: E402
 import funnel_state  # noqa: E402
 import standup_collect  # noqa: E402
 from stage_vocab import is_terminal_stage  # noqa: E402
@@ -185,6 +186,19 @@ def waiting_on_them(root: Path) -> dict:
     return {"error": None, "rows": rows}
 
 
+def decisions_waiting(root: Path) -> dict:
+    """Build M (orchestration.md 2026-11-21 19:05): the open questions for Nick, read through
+    decision_write's own listing, so the page and `decision_write.py list --json` cannot
+    disagree (one reader, imported, never re-parsed here). The listing reads only; it routes
+    each question from the board and never shows the sealed prediction. A failure is stated
+    on the page, never shown as an empty queue."""
+    try:
+        qs, board = decision_write.listing(decision_write.paths(decision_write.resolve_main(root)))
+    except (decision_write.Refusal, OSError, ValueError) as e:
+        return {"error": f"{type(e).__name__}: {e}", "board": None, "open": None}
+    return {"error": None, "board": board, "open": qs}
+
+
 def gather_live(root: Path, now: datetime) -> dict:
     today = now.date()
     return {
@@ -195,11 +209,12 @@ def gather_live(root: Path, now: datetime) -> dict:
         "claude_read": claude_read(root, today),
         "waiting_on_them": waiting_on_them(root),
         "funnel": funnel_state.collect(root, now.astimezone()),
+        "decisions": decisions_waiting(root),
     }
 
 
 SOURCES = ("collector", "day", "calendar", "commonplace", "claude_read", "waiting_on_them",
-           "funnel")
+           "funnel", "decisions")
 
 
 def gather_demo(fixtures: Path = FIXTURES, today: date | None = None) -> dict:
@@ -218,6 +233,27 @@ def gather_demo(fixtures: Path = FIXTURES, today: date | None = None) -> dict:
 
 
 # --------------------------------------------------------------------------- view
+
+DECISION_GROUPS = ("time-bound", "role", "policy")
+QUESTION_CHARS = 200  # real questions run past 400 characters; the full text is one `list` away
+
+
+def decisions_view(d: dict) -> dict:
+    """Group the open questions time-bound (soonest by_date first, undated last), role,
+    policy, then "ungrouped" for rows asked before the group field existed or with a value
+    outside the three. Nothing is dropped; empty groups are left out."""
+    qs = d.get("open")
+    if qs is None:
+        return {"error": d.get("error") or "not read", "groups": None, "total": None}
+    by = {}
+    for q in qs:
+        g = q.get("group") if q.get("group") in DECISION_GROUPS else "ungrouped"
+        by.setdefault(g, []).append(q)
+    if "time-bound" in by:
+        by["time-bound"].sort(key=lambda q: (q.get("by_date") is None, q.get("by_date") or ""))
+    groups = [{"name": g, "items": by[g]} for g in DECISION_GROUPS + ("ungrouped",) if g in by]
+    return {"error": None, "groups": groups, "total": len(qs)}
+
 
 def _event_day(ev: dict) -> date | None:
     # fromisoformat reads both "2026-01-07" (all-day) and "2026-01-07T10:00:00".
@@ -356,6 +392,7 @@ def build_view(src: dict, now: datetime) -> dict:
         "commonplace": cp.get("pick"),
         "claude_read": read,
         "waiting_on_them": src.get("waiting_on_them") or {"error": "not read", "rows": None},
+        "decisions": decisions_view(src.get("decisions") or {}),
     }
 
 
@@ -411,7 +448,7 @@ ul{list-style:none;padding-left:0}li{padding-left:14px;text-indent:-14px}li::bef
 .funnel{grid-column:1/-1}.fgrid2{display:grid;grid-template-columns:3fr 2fr;column-gap:40px}
 ul.cuts{columns:2;column-gap:40px}ul.cuts li{break-inside:avoid}
 code{font:15px/1.3 ui-monospace,Menlo,monospace}summary{cursor:pointer;font-weight:600;margin-top:6px}
-.ruled{color:var(--ok);font-weight:700}.funnel li{display:block}
+.ruled{color:var(--ok);font-weight:700}.funnel li{display:block}ul.decisions li{display:block;margin:6px 0}
 #sources-failed{margin:0 32px 20px}
 @media (max-width:900px){main{grid-template-columns:1fr;padding:0 16px 16px}
 .fgrid2{grid-template-columns:1fr}ul.cuts{columns:1}#sources-failed{margin:0 16px 16px}
@@ -459,6 +496,46 @@ def _cut_li(r: dict, with_company: bool) -> str:
     name = f'{r["company"]}: {r["title"]}' if with_company else r["title"]
     return (f'<li><code>{_e(r["key"])}</code> {_link(r["url"], name)} '
             f'<span class="muted">({_e("; ".join(n for n in note if n))})</span>{ruled}</li>')
+
+
+def _decision_li(q: dict) -> str:
+    route = q.get("route") or ""
+    where = route if route.startswith("UNROUTED") else f"answer in {route}"
+    text = q.get("question") or ""
+    head = _e(text if len(text) <= QUESTION_CHARS else text[:QUESTION_CHARS - 1].rstrip() + "\u2026")
+    if q.get("group") == "time-bound" and q.get("by_date"):
+        head += f' <span class="muted">by {_e(q["by_date"])}</span>'
+    lean = (f"Lean: {_e(q['lean'])}" if q.get("lean")
+            else '<span class="muted">no lean recorded</span>')
+    rests = q.get("rests_on") or []
+    rests_html = (" ".join(f"<code>{_e(r)}</code>" for r in rests) if rests
+                  else '<span class="muted">no data line recorded</span>')
+    nothing = (f"<br>If nothing: {_e(q['if_nothing'])}" if q.get("if_nothing") else "")
+    over = q.get("not_answered") or {}
+    over_html = ""
+    if over:
+        topics = ", ".join(str(t) for t in (over.get("topics") or []))
+        over_html = f'<br><span class="warn">overrides {_e(topics)}: {_e(over.get("reason"))}</span>'
+    return (f'<li><strong>{_e(q.get("id"))}</strong> {head}<br>{lean} &middot; {rests_html}'
+            f'{nothing}{over_html}<br><span class="muted">{_e(where)}</span></li>')
+
+
+def render_decisions(v: dict) -> str:
+    if v["groups"] is None:
+        return f'<p class="muted">Decisions unavailable: {_e(v["error"])}</p>'
+    if not v["groups"]:
+        return ('<p class="muted">No open questions in '
+                f'<code>{_e(decision_write.QUESTIONS_REL.as_posix())}</code>.</p>')
+    out = ""
+    for g in v["groups"]:
+        items = g["items"]
+        out += f'<h3>{_e(g["name"])}</h3><ul class="decisions">'
+        out += "".join(_decision_li(q) for q in items[:MAX_ITEMS]) + "</ul>"
+        more = len(items) - MAX_ITEMS
+        if more > 0:
+            out += (f'<p class="muted">and {more} more: '
+                    f'<code>python3 tools/decision_write.py list</code></p>')
+    return out
 
 
 def render_funnel(f: dict) -> str:
@@ -582,6 +659,9 @@ def render(view: dict, now: datetime, demo: bool) -> str:
                 'confirmations, debrief scores, P0 sign-offs, coaching decisions.</p>')
 
     funnel = render_funnel(view["funnel"])
+    dv = view["decisions"]
+    decisions = render_decisions(dv)
+    total = f" ({dv['total']})" if dv.get("total") is not None else ""
     failed = (f'<p class="warn" id="sources-failed">Sources failed: '
               f'{_e(", ".join(view["sources_failed"]))}</p>' if view["sources_failed"] else "")
 
@@ -638,6 +718,7 @@ def render(view: dict, now: datetime, demo: bool) -> str:
 <section id="b3" class="funnel"><h2>Funnel</h2>{funnel}</section>
 <section id="b1"><h2>Today's must-dos</h2>{must}</section>
 <section id="b2"><h2>Waiting on me</h2>{waiting}</section>
+<section id="decisions"><h2>Decisions waiting{total}</h2>{decisions}</section>
 <section id="theirs"><h2>Waiting on them</h2>{theirs}</section>
 <section id="b5"><h2>Done so far</h2>{done}</section>
 <section id="b6"><h2>Commonplace</h2>{cp}</section>

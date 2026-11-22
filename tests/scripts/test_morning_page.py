@@ -297,11 +297,13 @@ def test_gather_live_uses_the_read_only_collector(tmp_path, monkeypatch):
     monkeypatch.setattr(mp, "calendar_events", lambda root: {"events": []})
     monkeypatch.setattr(mp, "waiting_on_them", lambda root: {"error": None, "rows": []})
     monkeypatch.setattr(mp.funnel_state, "collect", lambda root, now: {"root": str(root)})
+    monkeypatch.setattr(mp, "decisions_waiting", lambda root: {"error": None, "open": []})
     src = mp.gather_live(tmp_path, NOW)
     assert seen["ro"] is True
     assert src["day"] == {"day": "2026-01-07"} and src["funnel"] == {"root": str(tmp_path)}
     assert set(src) == set(mp.SOURCES) == {"collector", "day", "calendar", "commonplace",
-                                           "claude_read", "waiting_on_them", "funnel"}
+                                           "claude_read", "waiting_on_them", "funnel",
+                                           "decisions"}
 
 
 def test_event_day_parses_dates_and_datetimes():
