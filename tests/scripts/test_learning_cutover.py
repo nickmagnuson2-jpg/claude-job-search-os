@@ -781,3 +781,11 @@ def test_r2_F3_the_current_line_is_read_from_the_live_file(world, tmp_path):
     _hand(world, tmp_path, [{"file": "feedback_gone.md", "promoted_lines_verbatim": ["  promoted: no"],
                              "value_as_read": "no", "hash_is_yaml_comment": False}])
     assert "(file or line not found) STALE" in _hand_block(_report(world, tmp_path)[0])
+
+
+def test_r2_F3_a_missing_file_with_no_listed_line_is_not_stale(world, tmp_path):
+    assert lc._promoted_lines(world[0] / "feedback_gone.md") == []
+    _hand(world, tmp_path, [{"file": "feedback_gone.md", "promoted_lines_verbatim": [],
+                             "value_as_read": "", "hash_is_yaml_comment": False}])
+    block = _hand_block(_report(world, tmp_path)[0])
+    assert "(file or line not found)`" in block and "STALE" not in block
