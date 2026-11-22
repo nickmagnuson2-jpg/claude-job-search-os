@@ -370,13 +370,14 @@ def _table(counter: Counter, head: tuple[str, str]) -> list[str]:
 def build_report(memory_dir: Path, repo_root: Path, inputs: dict,
                  today: _dt.date | None = None) -> tuple[str, str]:
     """(markdown, digest). Reads only; the caller writes the markdown."""
-    text, digest, _ = build_report_entries(memory_dir, repo_root, inputs, today)
+    text, digest, _, _ = build_report_entries(memory_dir, repo_root, inputs, today)
     return text, digest
 
 
 def build_report_entries(memory_dir: Path, repo_root: Path, inputs: dict,
-                         today: _dt.date | None = None) -> tuple[str, str, dict]:
-    """(markdown, digest, the exact entries map the digest was computed over) (Grok B7 F2)."""
+                         today: _dt.date | None = None) -> tuple[str, str, dict, list]:
+    """(markdown, digest, the exact entries map the digest was computed over (Grok B7 F2),
+    the files with an unresolved writer-refused line, which block apply)."""
     today = today or _dt.date.today()
     ents = stable_entries(memory_dir, repo_root, inputs)
     digest = digest_of(ents)
@@ -397,6 +398,7 @@ def build_report_entries(memory_dir: Path, repo_root: Path, inputs: dict,
 
     L = [f"# Learning-loop cutover report ({today.isoformat()})", "",
          f"**Cutover SHA-256:** `{digest}`", "",
+         "__APPLY_STATUS__", "",
          "Approve by this hash. `learning_cutover.py verify --expect-sha <hash>` recomputes it "
          "and refuses if any memory rule file, memory/lessons.md or any bound input below "
          "changed. memory/friction-log.md is not bound (see Friction). This report applies nothing.", "",
@@ -432,25 +434,33 @@ def build_report_entries(memory_dir: Path, repo_root: Path, inputs: dict,
     # text is a promoted line (Codex B7 r2 F1)
     touched = {r["file"] for r in fm_repairs if not r["stale"] and r["applies"]
                and any(ln.strip().startswith("promoted:") for ln in r["old"].split("\n"))}
-    L += ["", "**Hand edit required (writer refuses commented line):**", ""]
+    # Nick, 2026-11-22: nothing is hand-edited. A line the writer refuses is either covered
+    # by a current repair, needs no write at all, or is an UNRESOLVED defect that blocks apply.
+    L += ["", "**Writer-refused lines (B1's writer refuses a `promoted` line carrying `#`):**", ""]
+    unresolved: list[str] = []
     if inputs.get("hand_edit") is None:
         L.append("input missing")
     else:
-        L += [f"{len(hand)} files. B1's writer refuses to rewrite a `promoted` line that carries `#`. "
-              "Only a row whose `#` is a YAML comment needs a decision; for the others the `#` is "
-              "inside the quoted value, and nothing needs editing unless a proposal below rewrites "
-              "that line.", "",
-              "| File | Current line | Intended value | YAML comment | A proposal rewrites it |",
-              "|---|---|---|---|---|"]
+        L += [f"{len(hand)} files. Nothing is edited by hand: each line is covered by a repair "
+              "below, needs no write, or is UNRESOLVED and blocks apply.", "",
+              "| File | Current line | Value | Outcome |", "|---|---|---|---|"]
         for r in hand:
             listed = [ln.strip() for ln in (r.get("promoted_lines_verbatim") or [])]
             live = _promoted_lines(Path(memory_dir) / str(r.get("file")))
             line = " ".join(live) if live else "(file or line not found)"
-            if live != listed:  # the input is a snapshot; the table shows the live line (r2 F3)
+            stale = live != listed  # the input is a snapshot; the table shows the live line (r2 F3)
+            if stale:
                 line += " STALE: the input listed a different line"
-            L.append(f"| {_code_cell(r.get('file'))} | {_code_cell(line)} | {_code_cell(r.get('value_as_read'))} | "
-                     f"{'yes: keep beside the value or drop (your call)' if r.get('hash_is_yaml_comment') else 'no'} | "
-                     f"{'yes' if r.get('file') in touched else 'no'} |")
+            if r.get("file") in touched and not stale:
+                outcome = "covered: a current repair rewrites this line"
+            elif not r.get("hash_is_yaml_comment") and not stale:
+                outcome = "no change needed: the # is inside the value and no proposal rewrites the line"
+            else:
+                outcome = ("UNRESOLVED: blocks apply (the input is stale)" if stale else
+                           "UNRESOLVED: blocks apply (a YAML comment no repair removes)")
+                unresolved.append(str(r.get("file")))
+            L.append(f"| {_code_cell(r.get('file'))} | {_code_cell(line)} | "
+                     f"{_code_cell(r.get('value_as_read'))} | {outcome} |")
     L += ["", "**Defects (known migration items):**", ""]
     L += [f"- `{r['file']}`: {r['after']}" for r in mem if r["after"].startswith("defect")] or ["- none"]
     L.append("")
@@ -518,9 +528,12 @@ def build_report_entries(memory_dir: Path, repo_root: Path, inputs: dict,
     L += ["", "### Lessons Section 2 rows", ""]
     L += _table(Counter((r["before"], r["after"]) for r in les), ("Before", "After"))
     L.append("")
+    L[L.index("__APPLY_STATUS__")] = (
+        f"**Apply: BLOCKED.** {len(unresolved)} unresolved defect(s): " + ", ".join(f"`{u}`" for u in unresolved)
+        if unresolved else "**Apply: not blocked** by any unresolved writer-refused line.")
     if stable_entries(memory_dir, repo_root, inputs) != ents:
         raise CorpusMoved(["(the corpus or an input changed while the report was built)"])
-    return "\n".join(L), digest, ents
+    return "\n".join(L), digest, ents, unresolved
 
 
 # ---------------------------------------------------------------- CLI
@@ -557,7 +570,7 @@ def main(argv=None) -> int:
     inputs = _inputs(args)
     mem, repo = Path(args.memory_dir), Path(args.repo_root)
     if args.cmd == "report":
-        text, digest, hashed = build_report_entries(mem, repo, inputs)
+        text, digest, hashed, unresolved = build_report_entries(mem, repo, inputs)
         out = Path(args.out) if args.out else (
             repo / "output/memory-hygiene" / f"{_dt.date.today():%m%d%y}-cutover-report.md")
         protected = [mem.resolve(), (repo / "memory").resolve()]
@@ -574,8 +587,9 @@ def main(argv=None) -> int:
         out.write_text(text, encoding="utf-8")
         side = out.with_suffix(".entries.json")
         side.write_text(json.dumps(hashed, indent=0, sort_keys=True), encoding="utf-8")
-        print(json.dumps({"status": "ok", "sha256": digest, "report": str(out), "entries": str(side)}))
-        return 0
+        print(json.dumps({"status": "blocked" if unresolved else "ok", "sha256": digest,
+                          "report": str(out), "entries": str(side), "unresolved": unresolved}))
+        return 3 if unresolved else 0
     baseline = json.loads(Path(args.entries).read_text(encoding="utf-8")) if args.entries else None
     ok, info = verify(mem, repo, inputs, args.expect_sha, baseline=baseline)
     print(json.dumps({"status": "ok" if ok else "refused", **info}))

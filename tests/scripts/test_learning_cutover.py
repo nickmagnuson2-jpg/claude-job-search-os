@@ -724,7 +724,7 @@ def _hand(world, tmp_path, rows):
 
 
 def _hand_block(text):
-    return text.split("**Hand edit required (writer refuses commented line):**", 1)[1].split("**Defects", 1)[0]
+    return text.split("**Writer-refused lines (B1's writer refuses a `promoted` line carrying `#`):**", 1)[1].split("**Defects", 1)[0]
 
 
 def test_hand_edit_rows_are_listed_and_bound(world, tmp_path):
@@ -742,11 +742,14 @@ def test_hand_edit_rows_are_listed_and_bound(world, tmp_path):
     assert lc.cutover_digest(mem, repo, inputs) != before
     block = _hand_block(_report(world, tmp_path)[0])
     assert "2 files." in block
-    assert '| `feedback_gamma.md` | `promoted: "no"  # note` | `no` | yes: keep beside the value or drop (your call) | no |' in block
-    assert '| `feedback_delta.md` | `promoted: "yes (PR #1)"` | `yes (PR #1)` | no | no |' in block
+    assert ('| `feedback_gamma.md` | `promoted: "no"  # note` | `no` | '
+            'UNRESOLVED: blocks apply (a YAML comment no repair removes) |') in block
+    assert ('| `feedback_delta.md` | `promoted: "yes (PR #1)"` | `yes (PR #1)` | '
+            'no change needed: the # is inside the value and no proposal rewrites the line |') in block
     inputs["hand_edit"] = None
     text, _ = _report(world, tmp_path)
-    assert "**Hand edit required (writer refuses commented line):**\n\ninput missing" in text
+    assert "carrying `#`):**\n\ninput missing" in text
+    assert "**Apply: not blocked** by any unresolved writer-refused line." in text
 
 
 def test_r2_F1_rewrites_only_when_a_current_repair_targets_the_promoted_line(world, tmp_path):
@@ -758,13 +761,14 @@ def test_r2_F1_rewrites_only_when_a_current_repair_targets_the_promoted_line(wor
     inputs["frontmatter"] = md
     md.write_text(_fm_section(1, "feedback_alpha.md", sha, old="  type: feedback", new="  type: 'feedback'"),
                   encoding="utf-8")
-    assert _hand_block(_report(world, tmp_path)[0]).rstrip().endswith("| no | no |")
+    none = "| no change needed: the # is inside the value and no proposal rewrites the line |"
+    assert _hand_block(_report(world, tmp_path)[0]).rstrip().endswith(none)
     md.write_text(_fm_section(1, "feedback_alpha.md", sha, old="  promoted: no", new="  promoted: 'no'"),
                   encoding="utf-8")
-    assert _hand_block(_report(world, tmp_path)[0]).rstrip().endswith("| no | yes |")
+    assert _hand_block(_report(world, tmp_path)[0]).rstrip().endswith("| covered: a current repair rewrites this line |")
     md.write_text(_fm_section(1, "feedback_alpha.md", "0" * 64, old="  promoted: no", new="  promoted: 'no'"),
                   encoding="utf-8")
-    assert _hand_block(_report(world, tmp_path)[0]).rstrip().endswith("| no | no |")
+    assert _hand_block(_report(world, tmp_path)[0]).rstrip().endswith(none)
 
 
 def test_r2_F2_cells_keep_pipes_and_backticks(world, tmp_path):
@@ -778,6 +782,7 @@ def test_r2_F3_the_current_line_is_read_from_the_live_file(world, tmp_path):
                              "value_as_read": "old", "hash_is_yaml_comment": False}])
     block = _hand_block(_report(world, tmp_path)[0])
     assert "`promoted: no STALE: the input listed a different line`" in block
+    assert "UNRESOLVED: blocks apply (the input is stale)" in block
     _hand(world, tmp_path, [{"file": "feedback_gone.md", "promoted_lines_verbatim": ["  promoted: no"],
                              "value_as_read": "no", "hash_is_yaml_comment": False}])
     assert "(file or line not found) STALE" in _hand_block(_report(world, tmp_path)[0])
@@ -789,3 +794,35 @@ def test_r2_F3_a_missing_file_with_no_listed_line_is_not_stale(world, tmp_path):
                              "value_as_read": "", "hash_is_yaml_comment": False}])
     block = _hand_block(_report(world, tmp_path)[0])
     assert "(file or line not found)`" in block and "STALE" not in block
+
+
+
+def test_an_uncovered_comment_line_blocks_apply_and_the_cli_exits_3(world, tmp_path, capsys):
+    mem, repo, inputs = world
+    (mem / "feedback_gamma.md").write_text(RULE.format(name="g", occ=1, promoted='"no"  # note', gate="x"),
+                                           encoding="utf-8")
+    he = _hand(world, tmp_path, [{"file": "feedback_gamma.md", "promoted_lines_verbatim": ['  promoted: "no"  # note'],
+                                  "value_as_read": "no", "hash_is_yaml_comment": True}])
+    text, _, _, unresolved = lc.build_report_entries(mem, repo, inputs)
+    assert unresolved == ["feedback_gamma.md"]
+    assert "**Apply: BLOCKED.** 1 unresolved defect(s): `feedback_gamma.md`" in text
+    assert "Hand edit" not in text and "your call" not in text
+    out = tmp_path / "r.md"
+    assert lc.main(["report", "--memory-dir", str(mem), "--repo-root", str(repo), "--out", str(out),
+                    "--no-default-inputs", "--hand-edit", str(he)]) == 3
+    res = json.loads(capsys.readouterr().out)
+    assert res["status"] == "blocked" and res["unresolved"] == ["feedback_gamma.md"]
+
+
+def test_a_comment_line_covered_by_a_current_repair_does_not_block(world, tmp_path):
+    mem, repo, inputs = world
+    (mem / "feedback_gamma.md").write_text(RULE.format(name="g", occ=1, promoted='"no"  # note', gate="x"),
+                                           encoding="utf-8")
+    _hand(world, tmp_path, [{"file": "feedback_gamma.md", "promoted_lines_verbatim": ['  promoted: "no"  # note'],
+                             "value_as_read": "no", "hash_is_yaml_comment": True}])
+    md = tmp_path / "props" / "fm.md"
+    md.write_text(_fm_section(1, "feedback_gamma.md", lc.file_sha(mem / "feedback_gamma.md"),
+                              old='  promoted: "no"  # note', new='  promoted: "no"'), encoding="utf-8")
+    inputs["frontmatter"] = md
+    _, _, _, unresolved = lc.build_report_entries(mem, repo, inputs)
+    assert unresolved == []
