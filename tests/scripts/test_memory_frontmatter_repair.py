@@ -239,3 +239,54 @@ def test_a_comment_in_a_block_the_scanner_cannot_read_must_still_travel(tmp_path
     mf.repair(p, expect_sha256=_sha(p), new_block=new, intended={"description": "unterminated"},
               body_note="> 2026-11-22 note: moved from a comment: keep this text")
     assert p.read_text(encoding="utf-8").count("keep this text") == 1
+
+
+# ------------------------------------------------------------------ Codex r1 on learning-repair-1122
+
+def test_an_intended_span_cannot_absorb_other_keys(tmp_path):
+    # F1 (P0): in a malformed block, more-indented key-shaped lines after an intended key
+    # were inside its span and were deleted with it.
+    old = "name: x\ndescription: broken\n  hidden: lost\n  promoted: no\n"
+    p = _file(tmp_path, old)
+    before = p.read_bytes()
+    with pytest.raises(mf.WriteRefused) as e:
+        mf.repair(p, expect_sha256=_sha(p), new_block="name: x\ndescription: fixed\n",
+                  intended={"description": "fixed"})
+    assert "hidden" in str(e.value)
+    assert p.read_bytes() == before
+
+
+def test_block_scalar_content_shaped_like_a_key_is_still_text(tmp_path):
+    old = "name: x\nreopen_gate: |\n  note: this line is text\n  more text\n"
+    new = "name: x\nreopen_gate: 'note: this line is text more text'\n"
+    p = _file(tmp_path, old)
+    mf.repair(p, expect_sha256=_sha(p), new_block=new,
+              intended={"reopen_gate": "note: this line is text more text"})
+
+
+def test_a_glued_comment_in_an_unscannable_block_must_travel(tmp_path):
+    # F2 (P0): the scanner fallback only saw "#" after whitespace.
+    old = 'name: x\ndescription: "unterminated\nmetadata:\n  promoted: "no"# secret comment\n'
+    new = "name: x\ndescription: 'unterminated'\nmetadata:\n  promoted: 'no'\n"
+    p = _file(tmp_path, old)
+    before = p.read_bytes()
+    with pytest.raises(mf.WriteRefused) as e:
+        mf.repair(p, expect_sha256=_sha(p), new_block=new,
+                  intended={"description": "unterminated", "promoted": "no"})
+    assert "secret comment" in str(e.value)
+    assert p.read_bytes() == before
+
+
+@pytest.mark.parametrize("gap", ["\n", "    # a comment first\n"])
+def test_metadata_indent_skips_a_blank_or_comment_first_line(tmp_path, gap, monkeypatch):
+    # F3: child indent came from the next physical line, so a blank or comment line made
+    # a valid 4-space block unwritable.
+    monkeypatch.setenv("CLAUDECODE", "1")
+    text = "---\nname: x\nmetadata:\n" + gap + "    occurrences: 2\n    promoted: no\n---\nbody\n"
+    p = tmp_path / "feedback_x.md"
+    p.write_text(text, encoding="utf-8")
+    mf.write(p, {"promoted": "partial -- half"})
+    assert mf.read_file(p)[0]["promoted"] == "partial -- half"
+    mf.record_fire(p, "2026-11-22 a fire")
+    assert mf.read_file(p)[0]["occurrences"] == 3
+    assert gap in p.read_text(encoding="utf-8")

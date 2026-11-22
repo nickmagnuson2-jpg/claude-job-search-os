@@ -205,8 +205,14 @@ def _all_key_spans(block: str) -> tuple[list, int | None, int]:
         indent = len(m.group(1)) if m else None
         if m and indent == 0:
             in_meta = m.group(2) == "metadata" and not line.split(":", 1)[1].strip()
-            if in_meta:  # the block ends in a newline, so a line i + 1 always exists
-                nxt = re.match(r"^( +)\S", lines[i + 1])
+            if in_meta:
+                # the first child line, past blank and comment lines (Codex learning-repair
+                # r1 F3: a blank line after metadata: made a valid 4-space block unwritable)
+                k = i + 1
+                while k < len(lines) and (not lines[k].strip()
+                                          or lines[k].lstrip().startswith("#")):
+                    k += 1
+                nxt = re.match(r"^( +)\S", lines[k]) if k < len(lines) else None
                 child_indent = len(nxt.group(1)) if nxt else 2
         if m and indent == 0 and in_meta:
             i += 1  # its children are keys of their own, not continuation lines
@@ -369,6 +375,7 @@ def repair(path: Path, *, expect_sha256: str, new_block: str, intended: dict,
     reasons += [f"{k}: reads back as {new.get(k)!r}, not {v!r}" for k, v in intended.items()
                 if new.get(k) != normalize(v)]
     reasons += _outside_intended(old_block, new_block, set(intended))
+    reasons += _absorbed_keys(old_block, set(intended))
     reasons += _dropped_comments(old_block, new_block, body_note)
     note = None if body_note is None else body_note.strip()
     if note is not None:
@@ -409,6 +416,28 @@ def _outside_intended(old_block: str, new_block: str, keys: set) -> list[str]:
     return out
 
 
+_BLOCK_SCALAR_HEADER = re.compile(r":\s*[|>][-+0-9]*\s*(?:#.*)?$")
+_KEY_SHAPED = re.compile(r"^\s+([A-Za-z_][A-Za-z0-9_-]*)\s*:(?:\s|$)")
+
+
+def _absorbed_keys(old_block: str, keys: set) -> list[str]:
+    """A key-shaped line inside an intended key's span, in an old block that may not parse,
+    is most likely another key that malformed indentation pulled in; replacing the span
+    would delete it (Codex learning-repair r1 F1, P0). Refused unless the span opens a
+    block scalar (its lines are text) or that key is itself intended."""
+    lines = old_block.split("\n")
+    out = []
+    for k, a, b, _ in _all_key_spans(old_block)[0]:
+        if k not in keys or _BLOCK_SCALAR_HEADER.search(lines[a]):
+            continue
+        for ln in range(a + 1, b):
+            m = _KEY_SHAPED.match(lines[ln])
+            if m and m.group(1) not in keys:
+                out.append(f"old line {ln + 1} looks like key {m.group(1)!r} inside {k}'s "
+                           "span; name it in intended or keep its line outside the span")
+    return out
+
+
 def _dropped_comments(old_block: str, new_block: str, body_note: str | None) -> list[str]:
     """A YAML comment on a line the repair removes must appear verbatim in body_note."""
     kept = set(new_block.split("\n"))
@@ -419,18 +448,19 @@ def _dropped_comments(old_block: str, new_block: str, body_note: str | None) -> 
 
 
 def _old_comments(block: str) -> dict[int, str]:
-    """{line index: comment text} for a block that may not parse: the scanner when it can,
-    else every "#" after whitespace or at line start (over-detection only asks for a note)."""
-    try:
+    """{line index: comment text}. For a block that reads strictly, PyYAML's scanner decides.
+    For one that does not, the scanner's view no longer matches what the author wrote (an
+    unterminated quote swallows the next lines, and a "#" in them becomes scalar text), so
+    every "#" counts: over-detection only asks for a note (Codex learning-repair r1 F2)."""
+    if read("---\n" + block + "---\n")[1] is None:
         return {ln: block[i + 1:].split("\n", 1)[0].strip()
                 for ln, i in _comment_lines(block).items()}
-    except yaml.YAMLError:
-        out = {}
-        for ln, line in enumerate(block.split("\n")):
-            m = re.search(r"(?:^|\s)#(.*)$", line)
-            if m:
-                out[ln] = m.group(1).strip()
-        return out
+    out = {}
+    for ln, line in enumerate(block.split("\n")):
+        m = re.search(r"#(.*)$", line)
+        if m:
+            out[ln] = m.group(1).strip()
+    return out
 
 
 def write(path: Path, updates: dict, *, memory_dir: Path | None = None,
