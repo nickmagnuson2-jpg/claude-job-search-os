@@ -568,3 +568,28 @@ def test_merged_pointer_cannot_leave_the_memory_folder(tmp_path):
 def test_parked_by_an_existing_path_still_needs_a_date():
     d = ls.disposition("parked by tools/learning_state.py")
     assert d.state == "defect" and "YYYY-MM-DD" in d.defect
+
+
+# ------------------------------------------------------------------ occurrences at write time (1f's Grok F2; org 72)
+
+@pytest.mark.parametrize("bad", ["two", -1, True, "yes", 1.5])
+def test_validate_refuses_a_bad_occurrences_value(bad):
+    # One rule with due_state: _count. Before this, a create carrying "two" passed the
+    # write-time check and surfaced later as bad_occurrences.
+    out = ls.validate_fields({"occurrences": bad})
+    assert out == [f"occurrences: {bad!r} is not a non-negative integer"]
+
+
+@pytest.mark.parametrize("good", [0, 3, "3"])
+def test_validate_accepts_a_count(good):
+    assert ls.validate_fields({"occurrences": good}) == []
+
+
+def test_occurrences_is_checked_only_when_asked():
+    assert ls.validate_fields({"occurrences": "two"}, keys=["promoted"]) == []
+
+
+def test_no_typed_claim_about_importers():
+    # The docstring said "Nothing imports this module yet", which goes stale when B2 lands.
+    text = (REPO_ROOT / "tools" / "learning_state.py").read_text(encoding="utf-8")
+    assert "Nothing imports this module" not in text

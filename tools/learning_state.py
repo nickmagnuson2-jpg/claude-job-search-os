@@ -25,8 +25,9 @@ Unknown is never filled with a value. An unrecognised token, a missing pointer, 
 `reopen_at` and an untrusted kind each come back as a named state, and a record in a defect
 state stays open.
 
-Nothing imports this module yet. The reader cutover is one later commit, bound to the
-hash-checked dry-run report Nick approves (design v4 section 8).
+Readers move to this module in the reader cutover, one commit bound to the hash-checked
+dry-run report Nick approves (design v4 section 8). Until then the sites that still parse
+or define state themselves are listed by tests/scripts/test_learning_state_single_source.py.
 """
 from __future__ import annotations
 
@@ -278,6 +279,7 @@ def validate_fields(fields: dict, *, keys=None, memory_dir: Path | None = None,
       skill        exit_path skill needs skill_file (exists under repo_root or skills_home)
                    and a non-empty skill_step
       reopen_at    a positive int when present
+      occurrences  a non-negative integer when present (_count, the rule due_state uses)
       terminal     "yes" or "no" when present
     """
     check = set(fields) if keys is None else set(keys)
@@ -295,6 +297,8 @@ def validate_fields(fields: dict, *, keys=None, memory_dir: Path | None = None,
         r = fields["reopen_at"]
         if not (type(r) is int and r > 0):
             out.append(f"reopen_at: {r!r} is not a positive integer")
+    if "occurrences" in check and "occurrences" in fields and _count(fields["occurrences"]) is None:
+        out.append(f"occurrences: {fields['occurrences']!r} is not a non-negative integer")
     if "terminal" in check and "terminal" in fields and fields["terminal"] not in ("yes", "no"):
         out.append(f"terminal: {fields['terminal']!r} is not yes or no")
     return out
