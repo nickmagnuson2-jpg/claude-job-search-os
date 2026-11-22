@@ -286,3 +286,169 @@ def test_full_apply_over_a_copy_of_the_live_memory(tmp_path, monkeypatch):
         assert res["status"] == "stopped" and "writer gap" in res["reasons"][0], res
         assert len(pending) <= len(res["not_applied"])
     assert {p.name: sha(p) for p in live.glob("*.md")} == live_before
+
+
+# ---------------------------------------------------------------- pinned helpers (mutation r1)
+
+def test_promoted_value_routes_only_clean_single_promoted_lines():
+    clean = RULE.format(name="x", desc="d", occ=1, promoted="no")
+    fix = {"old": "  promoted: no", "new": "  promoted: 'yes - skill'"}
+    assert lc._promoted_value(fix, clean) == "yes - skill"
+    assert lc._promoted_value({"old": "  promoted: no\n  type: feedback", "new": "  promoted: x\n  type: feedback"},
+                              clean) is None
+    assert lc._promoted_value({"old": "  type: feedback", "new": "  type: 'feedback'"}, clean) is None
+    commented = clean.replace("promoted: no", 'promoted: "no"  # c')
+    assert lc._promoted_value({"old": '  promoted: "no"  # c', "new": '  promoted: "no"'}, commented) is None
+    broken = clean.replace("description: d", "description: a: b")
+    assert lc._promoted_value(fix, broken) is None
+    assert lc._promoted_value({"old": "  promoted: no", "new": "  promoted: a: b"}, clean) is None
+
+
+def test_repair_args_derive_block_intended_and_note():
+    text = RULE.format(name="x", desc="a: b", occ=1, promoted='"no"  # gone')
+    block, intended, note = lc._repair_args(text, {"old": "description: a: b", "new": "description: 'a: b'"})
+    assert intended == {"description": "a: b"} and note is None and "description: 'a: b'" in block
+    clean = RULE.format(name="x", desc="d", occ=1, promoted='"no"  # gone')
+    old = '  promoted: "no"  # gone\n---'
+    _, intended, note = lc._repair_args(clean, {"old": old, "new": '  promoted: "no"\n---\n\n> 2026-01-01 note: gone'})
+    assert intended == {"promoted": "no"} and note == "> 2026-01-01 note: gone"
+    with pytest.raises(ValueError, match="beyond one note line"):
+        lc._repair_args(text, {"old": "---\nbody of x", "new": "---\nother body"})
+    with pytest.raises(ValueError, match="beyond one note line"):
+        lc._repair_args(clean, {"old": '  promoted: "no"  # gone\n---',
+                               "new": '  promoted: "no"\n---\n\n> 2026-01-01 a\n> b'})
+    with pytest.raises(ValueError, match="changes no key line"):
+        lc._repair_args(clean, {"old": "  type: feedback", "new": "  type: feedback\n# a comment line"})
+    with pytest.raises(ValueError, match="does not read"):
+        lc._repair_args(clean, {"old": "  type: feedback", "new": "  type: f: g"})
+    with pytest.raises(ValueError, match="no ---/--- block"):
+        lc._repair_args("no block\n", {"old": "no block", "new": "x"})
+
+
+def test_repair_args_count_a_removed_duplicate_line():
+    text = RULE.format(name="x", desc="d", occ=1, promoted="no").replace(
+        "  promoted: no\n", "  promoted: no\n  exit_path: exit1\n  last: 1\n  exit_path: exit1\n")
+    _, intended, _ = lc._repair_args(text, {"old": "  last: 1\n  exit_path: exit1", "new": "  last: 1"})
+    assert intended == {"exit_path": "exit1"}
+
+
+def test_stop_result_lists_exactly_the_brief_fields(aworld, monkeypatch):
+    mem, repo, inputs, _ = aworld
+    digest, entries = approve(aworld)
+    monkeypatch.setattr(mf, "write", lambda *a, **k: (_ for _ in ()).throw(mf.WriteRefused(["no"])))
+    res = lc.apply_cutover(mem, repo, inputs, digest, entries)
+    assert res["not_applied"][0] == {"step": "reopen_at", "file": "feedback_rule.md", "value": 2}
+    assert res["not_applied"][-1] == {"step": "friction-kinds"}
+    assert str(lc.ApplyStop({"step": "x"}, ["a", "b"])) == "a; b"
+
+
+def test_lessons_set_promoted_refusal_stops(aworld):
+    mem, repo, inputs, _ = aworld
+    (repo / "memory/lessons.md").write_text(LESSONS + f"| {PATTERN} again | r | 1 | No | 2026-01-02 |\n",
+                                            encoding="utf-8")
+    les = inputs["lessons"]
+    les.write_text(les.read_text(encoding="utf-8").replace(
+        les.read_text(encoding="utf-8").split("`")[1], sha(repo / "memory/lessons.md")), encoding="utf-8")
+    digest, entries = approve(aworld)
+    res = lc.apply_cutover(mem, repo, inputs, digest, entries)
+    assert res["status"] == "stopped" and res["stopped_at"]["step"] == "lessons-set-promoted"
+    assert "set-promoted exit 1" in res["reasons"][0] and "matches 2" in res["reasons"][0]
+    assert [s["step"] for s in res["not_applied"]] == ["lessons-set-promoted", "friction-kinds"]
+
+
+def test_lessons_repair_row_applies_a_text_preserving_move(aworld):
+    mem, repo, inputs, _ = aworld
+    row = f"| {PATTERN} | r1 | 2 | No | 2026-01-01 | <!-- c -->"
+    (repo / "memory/lessons.md").write_text(LESSONS.replace(
+        f"| {PATTERN} | r1 | 2 | Superseded | 2026-01-01 |", row), encoding="utf-8")
+    new = f"| {PATTERN} | r1 | 2 | No | 2026-01-01 <!-- c --> |"
+    inputs["lessons"].write_text(f"**sha256 when these were made:** `{sha(repo / 'memory/lessons.md')}`\n\n## L7\n\n"
+                                 f"Current line:\n\n```text\n{row}\n```\n\nProposed line:\n\n```text\n{new}\n```\n",
+                                 encoding="utf-8")
+    digest, entries = approve(aworld)
+    res = lc.apply_cutover(mem, repo, inputs, digest, entries)
+    assert res["status"] == "applied", res
+    assert new in (repo / "memory/lessons.md").read_text(encoding="utf-8").split("\n")
+    assert lc.pending_changes(mem, repo, inputs) == []
+
+
+def test_lessons_repair_row_refusal_is_not_called_a_writer_gap(aworld):
+    mem, repo, inputs, _ = aworld
+    les = inputs["lessons"]
+    les.write_text(les.read_text(encoding="utf-8").replace(
+        "| superseded by 2026-01-01 ruling | 2026-01-01 |", "| Superseded | 2026-01-01 extra |"), encoding="utf-8")
+    digest, entries = approve(aworld)
+    res = lc.apply_cutover(mem, repo, inputs, digest, entries)
+    assert res["stopped_at"]["step"] == "lessons-repair-row"
+    assert "repair-row exit 1" in res["reasons"][0] and "writer gap" not in res["reasons"][0]
+
+
+@pytest.mark.parametrize("which,result,expect", [
+    ("--dry-run", (1, "boom"), "--dry-run exit 1"),
+    ("--dry-run", (0, {"status": "ok"}), "--dry-run exit 0"),
+    ("--dry-run", (0, "not json"), "--dry-run exit 0"),
+    ("--apply", (1, "refused"), "--apply exit 1")])
+def test_friction_refusals_stop(aworld, monkeypatch, which, result, expect):
+    mem, repo, inputs, _ = aworld
+    digest, entries = approve(aworld)
+    real = lc._cli
+    monkeypatch.setattr(lc, "_cli", lambda s, a, e: result if (s == "friction_log.py" and which in a)
+                        else real(s, a, e))
+    res = lc.apply_cutover(mem, repo, inputs, digest, entries)
+    assert res["stopped_at"] == {"step": "friction-kinds"} and expect in res["reasons"][0]
+    assert len(res["applied"]) == 4
+
+
+def test_cli_parses_non_json_output():
+    rc, out = lc._cli("lessons_write.py", ["--no-such-flag"], {})
+    assert rc == 2 and isinstance(out, str) and "usage" in out
+
+
+def test_pending_lists_each_kind_until_applied(aworld):
+    mem, repo, inputs, _ = aworld
+    assert lc.pending_changes(mem, repo, inputs) == [
+        {"change": "frontmatter repair", "file": "feedback_bad.md"},
+        {"change": "frontmatter repair", "file": "feedback_na.md"},
+        {"change": "reopen_at", "file": "feedback_rule.md"},
+        {"change": "lessons row", "line": 7}]
+    inputs["lessons"] = None
+    assert {"change": "lessons row", "line": 7} not in lc.pending_changes(mem, repo, inputs)
+    rows = [json.loads(x) for x in inputs["reopen_at"].read_text(encoding="utf-8").splitlines()]
+    rows[0]["status"] = "relative"
+    inputs["reopen_at"].write_text(json.dumps(rows[0]) + "\n", encoding="utf-8")
+    assert all(p["change"] != "reopen_at" for p in lc.pending_changes(mem, repo, inputs))
+
+
+def test_report_after_apply_marks_a_removed_comment_resolved(aworld, tmp_path):
+    mem, repo, inputs, _ = aworld
+    he = tmp_path / "hand.jsonl"
+    he.write_text(json.dumps({"file": "feedback_rule.md", "promoted_lines_verbatim": ['  promoted: "no"  # c'],
+                              "value_as_read": "no", "hash_is_yaml_comment": True}) + "\n", encoding="utf-8")
+    inputs["hand_edit"] = he
+    text, _, _, unresolved = lc.build_report_entries(mem, repo, inputs)
+    assert unresolved == [] and "resolved: the line no longer carries a YAML comment" in text
+
+
+def test_label_names_only_files_the_report_hashes():
+    assert lc._label({"step": "repair", "file": "f.md"}) == "memory/f.md"
+    assert lc._label({"step": "lessons-set-promoted", "line": 7}) == "repo/memory/lessons.md"
+    assert lc._label({"step": "friction-kinds"}) is None
+
+
+def test_two_steps_on_one_file_track_the_sha_between_them(aworld):
+    mem, repo, inputs, _ = aworld
+    rows = inputs["reopen_at"].read_text(encoding="utf-8")
+    inputs["reopen_at"].write_text(rows + json.dumps({
+        "file": "feedback_bad.md", "occurrences": 1, "proposed_reopen_at": 2, "status": "number",
+        "prose_fragment": "x", "confidence": "high", "note": ""}) + "\n", encoding="utf-8")
+    digest, entries = approve(aworld)
+    res = lc.apply_cutover(mem, repo, inputs, digest, entries)
+    assert res["status"] == "applied", res
+    assert mf.read_file(mem / "feedback_bad.md")[0]["reopen_at"] == 2
+
+
+def test_pending_without_a_lessons_input_needs_no_lessons_file(aworld):
+    mem, repo, inputs, _ = aworld
+    inputs["lessons"] = None
+    (repo / "memory/lessons.md").unlink()
+    assert {"change": "reopen_at", "file": "feedback_rule.md"} in lc.pending_changes(mem, repo, inputs)

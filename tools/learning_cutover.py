@@ -490,7 +490,10 @@ def build_report_entries(memory_dir: Path, repo_root: Path, inputs: dict,
                 Path(memory_dir) / str(r.get("file")),
                 [x for x in fm_repairs if x["file"] == r.get("file")]))
             # covered only if the repaired line carries no YAML comment (Codex B7 r3 F1)
-            if (r.get("file") in touched and not stale and fixed
+            if live and listed and not any(_has_yaml_comment(ln) for ln in live) and any(
+                    _has_yaml_comment(ln) for ln in listed):
+                outcome = "resolved: the line no longer carries a YAML comment"  # after apply
+            elif (r.get("file") in touched and not stale and fixed
                     and not any(_has_yaml_comment(ln) for ln in fixed)):
                 outcome = "covered: a current repair rewrites this line"
             elif not r.get("hash_is_yaml_comment") and not stale:
@@ -751,8 +754,7 @@ def apply_cutover(memory_dir: Path, repo_root: Path, inputs: dict, expected_dige
                 rc, out = _cli("friction_log.py", ["migrate-kinds", "--apply", "--expect-sha", out["sha256"]], env)
                 if rc != 0:
                     raise ApplyStop(brief, [f"friction_log migrate-kinds --apply exit {rc}: {out}"])
-            if label is not None:
-                expected[label] = file_sha(path)
+            expected[label] = file_sha(path)  # friction-kinds: label None, path unused later
             applied.append(brief)
         except ApplyStop as stop:
             return {"status": "stopped", "stopped_at": stop.step, "reasons": stop.reasons,
