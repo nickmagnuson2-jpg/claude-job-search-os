@@ -232,3 +232,20 @@ def test_the_fix_command_is_runnable_when_paths_hold_spaces_and_metacharacters(t
     r = subprocess.run(fix, shell=True, capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
     assert _cli(wt, "check", "--tip", "HEAD").returncode == 0
+
+
+def test_an_unresolvable_worktree_with_spaces_in_its_git_dir_still_refuses(tmp_path):
+    """Codex r2 F1: git's two paths were split on whitespace, so a git dir with a space
+    read as 'not a linked worktree' and the worktree's copy was used."""
+    main = tmp_path / "main"
+    gd = tmp_path / "git dir"
+    subprocess.run(["git", "init", "-q", "-b", "main", f"--separate-git-dir={gd}", str(main)],
+                   check=True)
+    (main / "x.txt").write_text("x\n", encoding="utf-8")
+    _git(main, "add", "-A")
+    _git(main, "commit", "-q", "-m", "one")
+    wt = tmp_path / "wt"
+    _git(main, "worktree", "add", "-q", "-b", "feature", str(wt))
+    r = _cli(wt, "record", "--tip", "HEAD")
+    assert r.returncode == 2 and json.loads(r.stdout)["code"] == "main_checkout_unresolved"
+    assert not (wt / AUDIT).exists()

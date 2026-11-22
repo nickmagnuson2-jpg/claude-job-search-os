@@ -64,7 +64,7 @@ def is_linked_worktree(root: Path) -> bool:
     which must refuse rather than fall back to this worktree's copy (Codex r1 F1)."""
     r = subprocess.run(["git", "-C", str(root), "rev-parse", "--path-format=absolute",
                         "--git-dir", "--git-common-dir"], capture_output=True, text=True)
-    lines = r.stdout.split()
+    lines = r.stdout.splitlines()
     return r.returncode == 0 and len(lines) == 2 and Path(lines[0]) != Path(lines[1])
 
 
