@@ -724,6 +724,33 @@ def apply_cutover(memory_dir: Path, repo_root: Path, inputs: dict, expected_dige
     if not ok or digest_of(baseline) != expected_digest:
         return {"status": "refused", "reasons": ["verify failed: the corpus or an input is not the approved state"],
                 "verify": info, "applied": [], "not_applied": []}
+    # Codex B7b r2 F1: plan only from the approved input bytes. Copy each input now, check
+    # the copy's sha against the approved map, and read nothing but the copies afterwards.
+    import shutil
+    import tempfile
+    snapdir = Path(tempfile.mkdtemp(prefix="cutover-inputs-"))
+    try:
+        return _apply_from_snapshot(memory_dir, repo_root, inputs, baseline, drop_promoted, snapdir)
+    finally:
+        shutil.rmtree(snapdir, ignore_errors=True)
+
+
+def _apply_from_snapshot(memory_dir: Path, repo_root: Path, inputs: dict, baseline: dict,
+                         drop_promoted: frozenset, snapdir: Path) -> dict:
+    import shutil
+    snap: dict = {}
+    for name in INPUT_NAMES:
+        src = inputs.get(name)
+        if src is None:
+            snap[name] = None
+            continue
+        dst = snapdir / f"{name}{Path(src).suffix}"
+        shutil.copyfile(src, dst)
+        if name in BOUND_INPUTS and file_sha(dst) != baseline.get(f"input/{name}"):
+            return {"status": "refused", "reasons": [f"input {name} changed after verify"],
+                    "applied": [], "not_applied": []}
+        snap[name] = dst
+    inputs = snap
     unresolved = build_report_entries(memory_dir, repo_root, inputs)[3]
     if unresolved:  # Grok B7b r1 F3: the report says Apply: BLOCKED
         return {"status": "refused", "reasons": ["the report is BLOCKED by unresolved writer-refused lines: "
@@ -787,20 +814,20 @@ def apply_cutover(memory_dir: Path, repo_root: Path, inputs: dict, expected_dige
                 rc, out = _cli("friction_log.py", ["migrate-kinds", "--apply", "--expect-sha", out["sha256"]], env)
                 if rc != 0:
                     raise ApplyStop(brief, [f"friction_log migrate-kinds --apply exit {rc}: {out}"])
+            applied.append(brief)  # the writer returned: this step is done (Codex B7b r2 F2)
             expected[label] = file_sha(path)  # friction-kinds: label None, path unused later
-            applied.append(brief)
         except ApplyStop as stop:
             return {"status": "stopped", "stopped_at": stop.step, "reasons": stop.reasons,
                     "applied": applied, "not_applied": [
                         {k: v for k, v in s.items() if k in ("step", "file", "line", "value")}
-                        for s in steps[i:]]}
+                        for s in steps[i + (1 if applied and applied[-1] is brief else 0):]]}
         except Exception as e:  # mf.WriteRefused, or anything unexpected (Codex B7b r1 F4)
             reasons = (list(e.reasons) if isinstance(e, mf.WriteRefused)
                        else [f"unexpected {type(e).__name__}: {e}"])
             return {"status": "stopped", "stopped_at": brief, "reasons": reasons,
                     "applied": applied, "not_applied": [
                         {k: v for k, v in s.items() if k in ("step", "file", "line", "value")}
-                        for s in steps[i:]]}
+                        for s in steps[i + (1 if applied and applied[-1] is brief else 0):]]}
     return {"status": "applied", "applied": applied, "not_applied": []}
 
 

@@ -580,3 +580,56 @@ def test_grok_F3_a_blocked_report_refuses_apply(aworld, tmp_path):
     res = lc.apply_cutover(mem, repo, inputs, digest, entries)
     assert res["status"] == "refused" and "BLOCKED" in res["reasons"][0] and "feedback_c.md" in res["reasons"][0]
     assert snapshot(mem, repo) == before
+
+
+def test_codex_r2_F1_an_input_changed_after_verify_refuses(aworld, monkeypatch):
+    mem, repo, inputs, _ = aworld
+    digest, entries = approve(aworld)
+    real = lc.verify
+
+    def verify_then_edit(*a, **k):
+        out = real(*a, **k)
+        p = inputs["reopen_at"]
+        p.write_text(p.read_text(encoding="utf-8").replace('"proposed_reopen_at": 2', '"proposed_reopen_at": 9'),
+                     encoding="utf-8")
+        return out
+
+    monkeypatch.setattr(lc, "verify", verify_then_edit)
+    before = snapshot(mem, repo)
+    res = lc.apply_cutover(mem, repo, inputs, digest, entries)
+    assert res["status"] == "refused" and res["reasons"] == ["input reopen_at changed after verify"]
+    assert snapshot(mem, repo) == before
+
+
+def test_codex_r2_F1_planning_reads_only_the_snapshot(aworld, monkeypatch):
+    mem, repo, inputs, _ = aworld
+    digest, entries = approve(aworld)
+    real = lc.plan_apply
+    seen = {}
+
+    def spy(m, r, inp, drop=frozenset()):
+        seen.update(inp)
+        return real(m, r, inp, drop)
+
+    monkeypatch.setattr(lc, "plan_apply", spy)
+    assert lc.apply_cutover(mem, repo, inputs, digest, entries)["status"] == "applied"
+    assert all(v is None or "cutover-inputs-" in str(v) for v in seen.values())
+    assert not Path(seen["reopen_at"]).exists()  # the snapshot is removed afterwards
+
+
+def test_codex_r2_F2_a_post_write_failure_keeps_the_step_applied(aworld, monkeypatch):
+    mem, repo, inputs, _ = aworld
+    digest, entries = approve(aworld)
+    real_sha, calls = lc.file_sha, {"n": 0}
+    real_repair = mf.repair
+
+    def repair_then_break_sha(*a, **k):
+        out = real_repair(*a, **k)
+        monkeypatch.setattr(lc, "file_sha", lambda p: (_ for _ in ()).throw(OSError("sha")))
+        return out
+
+    monkeypatch.setattr(mf, "repair", repair_then_break_sha)
+    res = lc.apply_cutover(mem, repo, inputs, digest, entries)
+    assert res["status"] == "stopped" and res["reasons"] == ["unexpected OSError: sha"]
+    assert [s["step"] for s in res["applied"]] == ["repair"]
+    assert res["not_applied"][0]["step"] == "reopen_at"
