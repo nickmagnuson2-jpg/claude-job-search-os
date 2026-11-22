@@ -58,8 +58,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import memory_frontmatter as mf  # noqa: E402  the validator write() runs (state matrix)
+from vault_paths import main_checkout  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# Pointers (a superseded path, a skill_file) resolve against the MAIN checkout: gitignored
+# targets (framework/, memory/, data/) exist only there, so a run from a worktree would
+# refuse a valid pointer (77's finding, 2026-11-22).
+POINTER_ROOT = main_checkout(REPO_ROOT)
 
 # `occurrences` was removed 2026-11-22 (state matrix, org 68): a count is never
 # machine-written. A fire is recorded with `memory_write.py bump`, the only path that
@@ -319,7 +325,7 @@ def main(argv: list[str]) -> int:
         # The state matrix's validator: the new frontmatter must read cleanly and every key
         # this verdict changed must pass learning_state (vocabulary, pointers, gate records).
         # An older defect in a key this verdict did not touch does not block it.
-        reasons = mf.check_text(text, original, memory_dir=memory_dir, repo_root=REPO_ROOT)
+        reasons = mf.check_text(text, original, memory_dir=memory_dir, repo_root=POINTER_ROOT)
         if reasons:
             failed.append(f"{fname}: refused by the state validator -- not written: "
                           + "; ".join(reasons))

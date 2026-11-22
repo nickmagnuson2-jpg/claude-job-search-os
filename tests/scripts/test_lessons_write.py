@@ -322,3 +322,29 @@ def test_set_promoted_keeps_the_file_mode(lessons):
     code, _, _ = run(["set-promoted", "Invented pattern alpha", "Yes"], lessons)
     assert code == 0
     assert oct(lessons.stat().st_mode & 0o777) == "0o640"
+
+
+@pytest.mark.parametrize("module", ["lessons_write", "memory_write", "apply_memory_verdicts"])
+def test_pointers_resolve_against_the_main_checkout(module):
+    """77's finding: gitignored pointer targets exist only in the main checkout, so a
+    worktree run must not validate against its own tree."""
+    sys.path.insert(0, str(REPO / "tools"))
+    import importlib
+    from vault_paths import main_checkout
+    m = importlib.import_module(module)
+    assert m.POINTER_ROOT == main_checkout(REPO)
+
+
+def test_a_superseded_pointer_to_a_main_only_path_is_accepted_from_a_worktree(lessons, monkeypatch):
+    """Run in-process with the pointer root moved to a folder holding the target, and the
+    tool's own checkout lacking it: the pointer must resolve."""
+    sys.path.insert(0, str(REPO / "tools"))
+    import lessons_write
+    main = lessons.parent / "main"
+    (main / "framework").mkdir(parents=True)
+    (main / "framework" / "voice-guide.md").write_text("x", encoding="utf-8")
+    monkeypatch.setattr(lessons_write, "POINTER_ROOT", main)
+    cells = ["p", "r", "1", "superseded by framework/voice-guide.md", "2026-11-22"]
+    assert lessons_write.validate_cells(cells) == []
+    monkeypatch.setattr(lessons_write, "POINTER_ROOT", lessons.parent / "elsewhere")
+    assert lessons_write.validate_cells(cells) != []

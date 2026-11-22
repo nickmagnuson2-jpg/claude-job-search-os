@@ -55,6 +55,11 @@ from vault_paths import main_checkout  # noqa: E402
 from hook_runtime import claude_project_dir  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# Pointers (a superseded path, a skill_file) resolve against the MAIN checkout: gitignored
+# targets (framework/, memory/, data/) exist only there, so a run from a worktree would
+# refuse a valid pointer (77's finding, 2026-11-22).
+POINTER_ROOT = main_checkout(REPO_ROOT)
 SECTION_2 = "## Section 2"
 MIN_MATCH = 12
 PROMOTED_CELL = ls.LESSONS_COLUMNS.index("Promoted")
@@ -115,7 +120,7 @@ def validate_cells(cells: list[str]) -> list[str]:
         return reasons
     # No cell holds a pipe or a newline, so format_row(cells) is exactly 5 cells and
     # parse_lessons_row would return these cells unchanged: validate them directly.
-    _disp, _due, defects = ls.lessons_state(cells, memory_dir=memory_dir(), repo_root=REPO_ROOT)
+    _disp, _due, defects = ls.lessons_state(cells, memory_dir=memory_dir(), repo_root=POINTER_ROOT)
     return list(defects)
 
 
@@ -198,7 +203,7 @@ def repair_row(path: Path, line: int, expect_sha: str, old: str, new: str) -> di
     if cells is None:
         reasons.append(f"--new is not a readable row: {defect or 'not a table row'}")
     else:
-        reasons += list(ls.lessons_state(cells, memory_dir=memory_dir(), repo_root=REPO_ROOT)[2])
+        reasons += list(ls.lessons_state(cells, memory_dir=memory_dir(), repo_root=POINTER_ROOT)[2])
     if reasons:
         raise Refused(reasons)
     lines[line - 1] = new

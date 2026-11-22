@@ -53,6 +53,11 @@ from hook_runtime import claude_project_dir  # noqa: E402
 from vault_paths import main_checkout  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# Pointers (a superseded path, a skill_file) resolve against the MAIN checkout: gitignored
+# targets (framework/, memory/, data/) exist only there, so a run from a worktree would
+# refuse a valid pointer (77's finding, 2026-11-22).
+POINTER_ROOT = main_checkout(REPO_ROOT)
 TRIPWIRE_ENV = "CLAUDECODE"
 
 
@@ -111,7 +116,7 @@ def cmd_set(args, memory_dir: Path) -> int:
                                  f"with `memory_write.py bump <file> --fire ...`"
                                  for k in refused]}, 1)
     try:
-        fields = mf.write(args.path, updates, memory_dir=memory_dir, repo_root=REPO_ROOT)
+        fields = mf.write(args.path, updates, memory_dir=memory_dir, repo_root=POINTER_ROOT)
     except mf.WriteRefused as exc:
         return emit({"action": "refused", "file": str(args.path),
                      "reasons": list(exc.reasons)}, 1)

@@ -308,7 +308,7 @@ def _lesson_row_problem(ref: str) -> str | None:
             problems.append(defect or "not a lessons row")
             continue
         _disp, _due, defects = learning_state.lessons_state(cells, memory_dir=memory_dir(),
-                                                            repo_root=REPO_ROOT)
+                                                            repo_root=main_checkout(REPO_ROOT))
         if not defects:
             return None
         problems.extend(defects)

@@ -792,3 +792,19 @@ def test_a_cited_merged_row_resolves_in_the_memory_folder(store, tmp_path, monke
     cid = dc.capture(DRAFT)
     meta = dc.confirm(cid, "edited", sent_text=SENT_EDIT, lesson_ref="Casey Doe / Acme")
     assert meta["lesson_ref"] == "Casey Doe / Acme"
+
+
+def test_a_cited_superseded_row_resolves_against_the_main_checkout(store, tmp_path, monkeypatch):
+    """77's finding: a pointer to a gitignored path exists only in the main checkout."""
+    main = tmp_path / "main"
+    (main / "framework").mkdir(parents=True)
+    (main / "framework" / "voice-guide.md").write_text("x", encoding="utf-8")
+    monkeypatch.setattr(dc, "main_checkout", lambda root: main)
+    monkeypatch.setenv("MEMORY_DIR", str(tmp_path / "memory"))
+    _lessons(store, ROW.replace("| 1 | No |", "| 1 | superseded by framework/voice-guide.md |"))
+    cid = dc.capture(DRAFT)
+    assert dc.confirm(cid, "edited", sent_text=SENT_EDIT, lesson_ref="Casey Doe / Acme")["lesson_ref"]
+    monkeypatch.setattr(dc, "main_checkout", lambda root: tmp_path / "nowhere")
+    cid2 = dc.capture(DRAFT.replace("role", "position"))
+    with pytest.raises(dc.CaptureError):
+        dc.confirm(cid2, "edited", sent_text=SENT_EDIT, lesson_ref="Casey Doe / Acme")
