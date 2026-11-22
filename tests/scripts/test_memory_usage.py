@@ -574,3 +574,25 @@ def test_a_grep_for_a_rule_name_or_one_that_prints_no_content_is_not_a_print(tmp
 def test_a_grep_of_a_rule_file_with_content_output_is_a_print(tmp_path, cmd):
     res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", "3:promoted: no")])
     assert _chans(res.events) == [("feedback_alpha_rule", "bash_print")]
+
+
+@pytest.mark.parametrize("seg,files", [
+    ("grep -n promoted memory/a.md", ["memory/a.md"]),
+    ("grep -n -- -weird memory/a.md", ["memory/a.md"]),            # after --, first operand is the pattern
+    ("grep -e x -- -odd.md", ["-odd.md"]),
+    ("grep --color=never -n promoted memory/a.md", ["memory/a.md"]),
+    ("grep --regexp=promoted -n memory/a.md", ["memory/a.md"]),
+    ("grep --regexp promoted memory/a.md", ["memory/a.md"]),
+    ("grep --include '*.md' -rn promoted memory/", ["memory/"]),
+    ("grep --max-count=1 promoted memory/a.md", ["memory/a.md"]),
+    ("grep -A 3 promoted memory/a.md", ["memory/a.md"]),
+    ("grep -A3 promoted memory/a.md", ["memory/a.md"]),
+    ("grep -nA 3 promoted memory/a.md", ["memory/a.md"]),
+    ("grep -nA3 promoted memory/a.md", ["memory/a.md"]),
+    ("grep -e x -e y memory/a.md memory/b.md", ["memory/a.md", "memory/b.md"]),
+    ("rg --files-without-match x memory/", None),
+    ("grep -rnl x memory/", None),
+    ("grep 'unbalanced memory/a.md", ["memory/a.md"]),             # shlex error: plain split
+])
+def test_search_file_args_finds_only_the_file_operands(seg, files):
+    assert mu._search_file_args(seg) == files
