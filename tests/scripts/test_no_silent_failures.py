@@ -489,17 +489,63 @@ def _launchd_script_refs(plist_path):
     return refs
 
 
+def _main_checkout_root(repo):
+    """The main checkout: the folder holding the git dir that every worktree shares. Falls
+    back to `repo` outside a git tree."""
+    try:
+        out = subprocess.run(["git", "-C", str(repo), "rev-parse", "--path-format=absolute",
+                              "--git-common-dir"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return Path(repo)
+    return Path(out.stdout.strip()).parent if out.returncode == 0 and out.stdout.strip() else Path(repo)
+
+
+def _resolve_script_ref(ref, repo, main_root):
+    """Where a plist's script reference lives in the tree under test. Plists name scripts by
+    the main checkout's absolute path; that path is read relative to `repo`, so a branch
+    that adds a plist and its script is checked against its own tree, not against main.
+    Any other absolute path is checked as is; a relative one is relative to `repo`."""
+    candidate = Path(ref)
+    if not candidate.is_absolute():
+        return Path(repo) / ref
+    try:
+        return Path(repo) / candidate.relative_to(main_root)
+    except ValueError:
+        return candidate
+
+
 def test_every_launchd_plist_points_at_an_existing_script():
     """A scheduled job whose script moved fails on a timer, into a log nobody reads."""
     missing = []
+    main_root = _main_checkout_root(REPO)
     for plist in sorted(_all_plists()):
         for ref in _launchd_script_refs(plist):
-            candidate = Path(ref)
-            if not candidate.is_absolute():
-                candidate = REPO / ref
+            candidate = _resolve_script_ref(ref, REPO, main_root)
             if not candidate.is_file():
                 missing.append(f"  {plist.name}: {ref}")
     assert not missing, "launchd jobs reference non-existent scripts:\n" + "\n".join(missing)
+
+
+def test_a_main_checkout_path_resolves_into_the_tree_under_test(tmp_path):
+    """Org 72 ruling, 2026-11-22: a plist names its script by the main checkout's absolute
+    path, so a branch adding a plist and its script failed until it landed. The check reads
+    the tree under test; a moved script in that tree still fails."""
+    main, tree = tmp_path / "main", tmp_path / "tree"
+    (tree / "tools").mkdir(parents=True)
+    (tree / "tools" / "new_job.py").write_text("")
+    resolve = lambda ref: _resolve_script_ref(ref, tree, main)
+    assert resolve(str(main / "tools" / "new_job.py")) == tree / "tools" / "new_job.py"
+    assert resolve(str(main / "tools" / "new_job.py")).is_file()
+    assert not resolve(str(main / "tools" / "moved_away.py")).is_file()
+    assert resolve("tools/new_job.py") == tree / "tools" / "new_job.py"
+    assert resolve("/opt/elsewhere/tool.py") == Path("/opt/elsewhere/tool.py")
+    assert resolve(str(tmp_path / "mainx" / "tools" / "new_job.py")) == tmp_path / "mainx" / "tools" / "new_job.py"
+
+
+def test_the_main_checkout_root_is_where_the_shared_git_dir_lives():
+    root = _main_checkout_root(REPO)
+    assert (root / ".git").exists()
+    assert _main_checkout_root(Path("/")) == Path("/")      # not a repo: falls back
 
 
 def test_launchd_script_ref_parser_sees_every_plist():
