@@ -168,14 +168,18 @@ The weekly discovery job writes here, not to the inbox (funnel-intake decision 3
 
 **Empty ATS boards (from `results.company_queue.data.empty_boards`) — EVERY day, whenever non-empty.**
 
-Nick, 2026-11-19: "empty boards can stay scan targets, but I want them to bring it up." An accepted company whose public board answered with zero postings is still a scan target; this line says so until he has seen it. One line per company:
+Nick, 2026-11-19: "empty boards can stay scan targets, but I want them to bring it up." A board with zero postings is still a scan target; this line says so until he has seen it. One line per entry in `empty_boards`, worded by `source` and, for scan entries, `after`:
 
 ```
 📭 **Empty board:** [name]: [ats]/[slug] had 0 postings when accepted [detected_on]; still a scan target
+📭 **Empty board:** [name]: [ats]/[slug] dropped to 0 postings in the scan of [detected_on]; still a scan target
+📭 **Empty board:** [name]: [ats]/[slug] had 0 postings when the scan first read it [detected_on]; still a scan target
 ```
 
+- `source: accept` takes the first wording. `source: scan` (Nick 2026-11-21, "4, sure": a target whose board later drops to 0) takes the second when `after: postings` and the third when `after: first_scan`. The scan flags a board once when it goes to 0, not every night it stays there, and stops naming it once the board has postings again or is no longer a scan target.
+- Two entries can share a name (two boards for one company). Then the ack needs the board: add `--board <ats>/<slug>`, as the line prints it; a bare `--name` that matches two is refused and clears nothing.
 - `empty_boards: null` is NOT zero: the queue was unreadable (the `⚠️ discovery queue unreadable` line already covers it).
-- After Nick has seen the line, clear it: `PYTHONIOENCODING=utf-8 python3 tools/company_queue.py --repo-root . ack-empty --name "<Name>"`. Reading never clears it.
+- After Nick has seen the line, clear it: `PYTHONIOENCODING=utf-8 python3 tools/company_queue.py --repo-root . ack-empty --name "<Name>" [--board <ats>/<slug>]`. The `--board` part is required when two lines share the name; copy `<ats>/<slug>` from the line. Reading never clears it.
 
 **Cross-model findings (from `cross_model_gate.py`) — surface whenever non-empty.**
 
