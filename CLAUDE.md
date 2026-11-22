@@ -52,17 +52,22 @@ After any user correction, run the **full tiered protocol** — not just a lesso
    metadata:
      node_type: memory
      type: feedback
-     occurrences: 1        # bump on EVERY repeat fire, or the rule can never trip its own gate
-     promoted: no          # or "yes — <tier>, <date>" once wired into a skill/hook/principle
+     occurrences: 1        # 1 at creation; each repeat fire: tools/memory_write.py bump <file> --fire "<what, YYYY-MM-DD>"
+     promoted: no          # no | partial | "<tier>, <date>" (yes, skill, hook, principle, hard-rule, framework, script, doc, schema) | pointer form below
      reopen_gate: "<trigger + target; MUST name a number ('3rd fire'), never 'the next dated fire'>"
+     reopen_at: 3          # the number the gate names; due when occurrences >= reopen_at (none = never due)
      last_cited: YYYY-MM-DD
-     promoted_date: YYYY-MM-DD   # these 3 set on exit only; promotion_schema.py BLOCKS
-     exit_path: exit1            # exit1 | exit2 | terminal
+     promoted_date: YYYY-MM-DD   # these set on exit only; promotion_schema.py BLOCKS
+     exit_path: exit1            # exit1 | exit2 | skill | terminal
      detector_signature: "..."   # REQUIRED for exit2
      exit1_gate: tools/check_x.py   # REQUIRED for a completed exit1: the gate that blocks
      exit1_evidence: tests/scripts/test_x.py::test_blocks_origin   # pytest node I8 runs
+     skill_file: .claude/skills/<name>/SKILL.md   # REQUIRED for exit_path skill; must exist
+     skill_step: "<the step that now carries the rule>"   # REQUIRED for exit_path skill
    ---
    ```
+
+   **Pointer forms** (a rule leaving the backlog without a gate): `superseded by <dated ruling or path>`, `merged into <memory file>`, `parked by <ref, YYYY-MM-DD>`. State fields go through `tools/memory_write.py`; `check_memory_frontmatter_write.py` blocks other writers.
 
    **`occurrences` / `promoted` / `reopen_gate` / `last_cited` are the ONLY keys `tools/scan_promotion_candidates.py` reads** — the detector behind the weekly `memory-promotion-scan` job. A memory file without them is **invisible** to it: the rule accumulates fires while reporting as a first-timer, and no promotion ever surfaces. Prose alone does not register. (384 of 403 `feedback_*.md` files, 95%, were invisible this way until it was fixed 2026-08-13.)
 
