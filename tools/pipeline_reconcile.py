@@ -29,6 +29,13 @@ DESIGN NOTES, each one earned:
    of `acmecorp`, and a three-letter name is a substring of a four-letter one that adds a
    single character. Containment and similarity are EVIDENCE FOR A HUMAN, never identity.
    Raised by cross-model review 2026-09-14 and confirmed against live data.
+   SUPPLEMENT 2026-11-21 (company-key-1121, ruling org c0): this module stays
+   normalized-exact. The S9 audit (452 known names) found 21 same-company pairs that
+   exact misses ("Acme" / "Acme Systems, Inc.", an alias in brackets, "Acme AI"); they
+   now surface as AMBIGUOUS candidates flagged `key_match` (tools/company_key.py),
+   never as a resolution, because agent_collect drops whatever resolves here before it
+   reaches the queue, a silent drop. Only pipeline_history, whose merges land on a
+   list Nick reads, auto-resolves with the strict key.
 
 2. Every matched row is returned. The pipeline is role-granular (`Company | Role | Stage`),
    so one company can hold a closed row and a live one. Synthesizing a single company
@@ -46,7 +53,7 @@ DESIGN NOTES, each one earned:
 
 Reuse, per the repo's no-new-parsers rule: `pipe_read.parse_all_rows` for the table,
 `stage_vocab.is_terminal_stage` for classification, `name_dedup.normalize_name` for
-identity. Deliberately NOT `career_scanner/dedup.py`: its `load_pipeline_entries` returns
+identity (with `company_key.possible_duplicate` for the flagged candidates). Deliberately NOT `career_scanner/dedup.py`: its `load_pipeline_entries` returns
 only `active_entries`, the exact complement of the rows this needs, and its `is_duplicate`
 compares company strings for equality. It answers role-level duplication for the scanner,
 which is a different question.
@@ -63,6 +70,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from name_dedup import normalize_name, similarity  # noqa: E402
+from company_key import possible_duplicate  # noqa: E402
 from pipe_read import parse_all_rows  # noqa: E402
 from stage_vocab import is_terminal_stage  # noqa: E402
 
@@ -152,29 +160,32 @@ def _row_view(row: dict) -> dict:
     }
 
 
-def _candidates(key: str, idx: dict[str, list[dict]]) -> list[dict]:
-    """Similarity and containment candidates, for HUMAN review only.
+def _candidates(key: str, idx: dict[str, list[dict]], raw: str = "") -> list[dict]:
+    """Similarity, containment and company-key candidates, for HUMAN review only.
 
     Never used to resolve. A containment hit is reported with its own flag so a reader
-    can see why a name surfaced.
+    can see why a name surfaced. A company-key hit (tools/company_key.possible_duplicate:
+    "Acme" / "Acme AI" / "Acme (Beta)") carries `key_match` and is reported even below
+    the length floor, because it is a normalization, not a fuzzy guess.
     """
-    if len(key) < _MIN_FUZZY_LEN:
-        return []
     # No `other == key` guard: _candidates runs only after an exact lookup missed, so a
     # self-match is unreachable here. A guard for it survived mutation testing because
     # nothing can exercise it, which is the signature of dead code, not of a missing test.
+    fuzzy = len(key) >= _MIN_FUZZY_LEN
     out = []
     for other in idx:
         score = similarity(key, other)
-        contained = key in other or other in key
-        if score >= _FUZZY_CANDIDATE_THRESHOLD or contained:
+        contained = fuzzy and (key in other or other in key)
+        keyed = any(possible_duplicate(raw or key, r.get("company", "")) for r in idx[other])
+        if keyed or (fuzzy and score >= _FUZZY_CANDIDATE_THRESHOLD) or contained:
             out.append({
                 "pipeline_company": idx[other][0].get("company", ""),
                 "score": round(score, 3),
                 "containment": contained,
+                "key_match": keyed,
                 "rows": [_row_view(r) for r in idx[other]],
             })
-    return sorted(out, key=lambda c: (-c["score"], c["pipeline_company"]))
+    return sorted(out, key=lambda c: (not c["key_match"], -c["score"], c["pipeline_company"]))
 
 
 def resolve(names: list[str], pipeline_path: Path) -> dict:
@@ -211,7 +222,7 @@ def resolve(names: list[str], pipeline_path: Path) -> dict:
             buckets[state].append({"name": raw, "matched": True, "rows": views})
             continue
 
-        cands = _candidates(key, idx)
+        cands = _candidates(key, idx, raw)
         if cands:
             buckets[STATE_AMBIGUOUS].append(
                 {"name": raw, "matched": False, "candidates": cands})
@@ -267,7 +278,9 @@ def render(result: dict) -> str:
         lines.append("")
         for item in amb:
             for cand in item["candidates"]:
-                why = "contains/contained" if cand["containment"] else f"score {cand['score']}"
+                why = ("same name, written another way" if cand.get("key_match")
+                       else "contains/contained" if cand["containment"]
+                       else f"score {cand['score']}")
                 lines.append(
                     f"- **{item['name']}** resembles pipeline company "
                     f"**{cand['pipeline_company']}** ({why})")

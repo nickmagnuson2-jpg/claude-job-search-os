@@ -506,3 +506,49 @@ def test_a_pending_role_now_held_back_moves_from_new_to_skipped(tmp_path, monkey
     assert [r["url"] for r in q["new"]] == ["https://f.example/1"]
     assert [(r["url"], r["history"]) for r in q["skipped_repeats"]] == [
         ("https://b.example/9", "they declined you 10/03 (Ops Lead)")]
+
+
+# --- company-key-1121: the strict company key (tools/company_key.py) --------------------
+# Ruling (org c0, 2026-11-21): the strict key auto-resolves where a wrong merge is
+# visible (the held-back skipped list and the labels). The silent duplicate count
+# (already_in_pipeline) stays on exact normalize_name.
+
+@pytest.mark.parametrize("a,b,same,overlap", [
+    ("Acme Systems", "Acme Systems, Inc.", True, False),   # legal suffix
+    ("Orchalo Labs", "Sparrix (Orchalo Labs)", True, False),  # bracketed alias
+    ("Contoso Works", "ContosoWorks", True, False),            # spacing
+    ("Kestrix", "Kestrix AI", False, True),                      # "ai" is identity: possible only
+    ("Quorrex", "Quorrex.ai", False, True),
+    ("Granix", "Granix Health", False, True),              # whole-word overlap, as before
+    ("Quilla", "Quillas", False, False),
+])
+def test_company_matcher_uses_the_strict_key(a, b, same, overlap):
+    assert ph.same_company(a, b) is same
+    assert ph.same_company(b, a) is same
+    assert ph.company_overlap(a, b) is overlap
+
+
+def test_same_company_is_the_shared_module():
+    assert ph.same_company.__module__.rsplit(".", 1)[-1] == "company_key"
+
+
+def test_a_legal_suffix_variant_of_a_declining_company_is_held_back(rows):
+    h = ph.history(role("Strategy Lead", "Cove Labs, Inc."), rows)
+    assert h["declined_company"] is True and h["held_back"] is True
+    assert "they declined you 08/02" in h["label"]
+    assert h["possible_match"] == ""
+
+
+def test_an_alias_of_a_declining_company_is_held_back(rows):
+    h = ph.history(role("Strategy Lead", "Cove Labs (Tidewell)"), rows)
+    assert h["declined_company"] is True and h["held_back"] is True
+
+
+def test_the_silent_duplicate_count_stays_exact(rows):
+    """already_in_pipeline drops a role into a bare count, so only an exact name may set it.
+    A suffix variant of an active row is shown, labelled with that row."""
+    h = ph.history(role("Deployment Strategist", "Northwind Labs, Inc."), rows)
+    assert h["already_in_pipeline"] is False
+    assert h["label"] == "in pipeline: Applied (Deployment Strategist)"
+    h2 = ph.history(role("Deployment Strategist", "northwind labs"), rows)
+    assert h2["already_in_pipeline"] is True
