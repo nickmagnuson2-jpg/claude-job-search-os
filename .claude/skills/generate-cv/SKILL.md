@@ -225,6 +225,21 @@ Before generating the cheat sheet, run all 20 checks from `framework/application
 
 After all fixes, record a QC summary using the template in `framework/application-workflow.md` § QC Summary Template.
 
+**Summary trace (required field of the QC summary).** The Professional Summary is the one slot with no source file behind it, so no source audit can reach it, `/review-cv-deep` included. Two of three summary overclaims got past the deep review and Nick caught them in the PDF (`memory/feedback_summary_is_synthesis_that_source_auditing_cannot_reach.md`). Fill this table in the QC summary before Step 7:
+
+| # | Summary clause (verbatim) | Backing CV bullet (`file:line`, quoted) | Verdict |
+|---|---|---|---|
+
+- **One row per clause.** Split the summary at every claim, not at every sentence. A company descriptor ("At X, a billing platform") gets a row too, marked "descriptor, sourced from `data/projects/<x>.md`".
+- **One row per number that appears only in the summary** (years of experience, headcounts, totals). Compute it from the dated records in `data/projects/*.md`, never from the calendar span. If the number is not also in a bullet, the row says so.
+- **A clause with no backing bullet is cut**, or rewritten so a bullet backs it. Do not soften it. Write the cut into the Verdict column.
+- **A scope qualifier in the bullet stays in the summary** or the clause is cut. "AI-in-the-development-lifecycle strategy" in the bullet does not back "the AI strategy" in the summary.
+- **Two clauses that are each backed can still overclaim together.** Check the link between them: "listening that became a business case" needs a bullet that says the listening produced the case.
+- **AI-thesis check, one line under the table:** if a sentence makes a claim about AI and the next sentence's proof is not AI work, flag it and rewrite (neutral thesis; AI goes in a later sentence that carries its own AI proof). Write "AI-thesis check: none" when there is none.
+- **A summary that reads like the JD is a warning, not a strength.** If a clause paraphrases the posting, its row must still name a bullet.
+
+Copy the table into the Step 11 display under "Summary trace". A QC summary without it is incomplete, and the CV is not presented.
+
 ### Step 7: Generate Companion Cheat Sheet
 
 Alongside the CV, generate a pre-interview cheat sheet following the structure, quality rules, and markdown template in `framework/application-workflow.md` § Cheat Sheet Structure.
@@ -371,6 +386,7 @@ the decisions instead of the artifact.
 - **Claims verified:** N checked, N corrected
 - **Issues fixed:** [list or "none"]
 - **Language consistency:** clean / N items fixed
+- **Summary trace:** [the Step 6b table: each summary clause and each summary-only number, its backing bullet with line, verdict; clauses cut; the AI-thesis check line]
 
 ### Deep Review Verdict (from Step 10b — always runs)
 - **Deep review file:** `output/<company-slug>/MMDDYY-magnuson-DEEP-REVIEW.md`
