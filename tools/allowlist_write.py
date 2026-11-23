@@ -23,6 +23,9 @@ replacing someone else's justification erases the argument it recorded.
 
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/allowlist_write.py add <key> --why "<reason>"
+      [--differs-from "<NOT EQUIVALENT precedent key>: <why this site differs>"]
+      (required when the reason says EQUIVALENT and an entry with the same operator and
+      line hash says NOT EQUIVALENT; see the precedent check below)
   PYTHONIOENCODING=utf-8 python3 tools/allowlist_write.py remove <key>
   PYTHONIOENCODING=utf-8 python3 tools/allowlist_write.py get <key>
   PYTHONIOENCODING=utf-8 python3 tools/allowlist_write.py list [--prefix tools/foo.py]
@@ -31,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -93,8 +97,72 @@ def validate_key(key: str) -> None:
         raise ValueError(f"first part must be a .py path, got {parts[0]!r}")
 
 
+# --- precedent check (codify #3, 2026-11-23) -----------------------------------------
+# A reason that claims a mutant is EQUIVALENT must engage any entry of the same shape whose
+# reason is labelled NOT EQUIVALENT. Shape = same operator + same line hash, any file: the
+# hash covers the line text only, so this is where copied code (a sibling hook) shows up.
+#
+# Two predicates, deliberately asymmetric (Grok r1 F1-F3, 2026-11-23):
+#   - a PRECEDENT is a reason that STARTS with a NOT EQUIVALENT label, the file's own
+#     convention (4 entries at b2495952). Mentioning "not equivalent" later in a reason
+#     (e.g. an EQUIVALENT reason explaining that a sibling was not) does not make it one.
+#   - a CLAIM is any reason that mentions EQUIVALENT and does not start with a NOT label,
+#     so mixed phrasing ("Equivalent: ...; X is NOT EQUIVALENT") cannot skip the check.
+# Measured at b2495952: refusing outright would refuse 7 of 280 existing claims, all the
+# bare `sys.exit(0)` collision (a5b711fb) and genuine on reading. So the writer does not
+# refuse; it demands --differs-from "<key>: <why>" and records it in the reason. It
+# cannot catch novel code with no sibling, nor a NOT EQUIVALENT entry added after the
+# EQUIVALENT one (it checks the new entry only).
+_NOT_LABEL = re.compile(r"\s*(?:NOT\s+(?:AN?\s+)?EQUIVALENT|NON-EQUIVALENT)\b", re.IGNORECASE)
+_EQ = re.compile(r"\bEQUIVALENT\b", re.IGNORECASE)
+
+
+def is_not_equivalent_label(reason: str) -> bool:
+    """True when the reason starts with a NOT EQUIVALENT label."""
+    return bool(_NOT_LABEL.match(reason))
+
+
+def claims_equivalent(reason: str) -> bool:
+    """True when the reason mentions EQUIVALENT and is not labelled NOT EQUIVALENT."""
+    return bool(_EQ.search(reason)) and not is_not_equivalent_label(reason)
+
+
+def not_equivalent_precedents(data: dict, key: str) -> list[str]:
+    """Other keys with the same operator and hash whose reason is labelled NOT EQUIVALENT."""
+    shape = key.split("::")[2:]
+    return sorted(k for k, v in data.items()
+                  if k != key and k.split("::")[2:] == shape
+                  and is_not_equivalent_label(v))
+
+
+def _checked_reason(data: dict, key: str, why: str, differs_from: str | None) -> str:
+    why = why.strip()
+    precedents = not_equivalent_precedents(data, key) if claims_equivalent(why) else []
+    if differs_from is None:
+        if precedents:
+            shown = "; ".join(f"{k}: {data[k][:160]}" for k in precedents)
+            raise ValueError(
+                f"{key} is called EQUIVALENT, but the same operator and line hash is "
+                f"recorded NOT EQUIVALENT at {shown}. Read that reason, then either fix the "
+                f"verdict (start the reason with 'NOT EQUIVALENT:' if that is what you mean) "
+                f"or pass --differs-from \"<precedent key>: <why this site differs>\".")
+        return why
+    if not precedents:
+        raise ValueError("--differs-from given, but this EQUIVALENT reason has no NOT "
+                         "EQUIVALENT precedent of the same shape; drop it")
+    # A key contains '::', so match a known precedent key as the prefix.
+    cited = next((k for k in precedents if differs_from.startswith(k + ":")), None)
+    if cited is None:
+        raise ValueError(f"--differs-from must start with one of {precedents} followed by "
+                         f"': <why this site differs>'")
+    because = differs_from[len(cited) + 1:].strip()
+    if not because:
+        raise ValueError("--differs-from needs a reason after the precedent key")
+    return f"{why} DIFFERS FROM {cited}: {because}"
+
+
 def add(repo_root: Path, key: str, why: str, force: bool = False,
-        timeout: float = 30.0) -> dict:
+        timeout: float = 30.0, differs_from: str | None = None) -> dict:
     validate_key(key)
     if not why or not why.strip():
         raise ValueError("--why is required and may not be blank: an allowlist entry "
@@ -108,8 +176,9 @@ def add(repo_root: Path, key: str, why: str, force: bool = False,
             raise ValueError(
                 f"{key} is already allowlisted; pass --force to replace its reason. "
                 f"Existing: {existing[:120]}...")
+        reason = _checked_reason(data, key, why, differs_from)
         before = len(data)
-        data[key] = why.strip()
+        data[key] = reason
         _dump(repo_root, data)
     return {"key": key, "action": "replaced" if existing else "added",
             "entries_before": before, "entries_after": before + (0 if existing else 1)}
@@ -141,6 +210,9 @@ def main(argv=None) -> int:
     p_add.add_argument("--why", required=True)
     p_add.add_argument("--force", action="store_true",
                        help="replace an existing reason")
+    p_add.add_argument("--differs-from", default=None,
+                       help="'<NOT EQUIVALENT precedent key>: <why this site differs>'; "
+                            "required when an EQUIVALENT reason has such a precedent")
 
     p_rm = sub.add_parser("remove", help="drop one entry")
     p_rm.add_argument("key")
@@ -156,7 +228,8 @@ def main(argv=None) -> int:
 
     try:
         if args.cmd == "add":
-            out = add(root, args.key, args.why, force=args.force, timeout=args.timeout)
+            out = add(root, args.key, args.why, force=args.force, timeout=args.timeout,
+                      differs_from=args.differs_from)
         elif args.cmd == "remove":
             out = remove(root, args.key, timeout=args.timeout)
         elif args.cmd == "get":
