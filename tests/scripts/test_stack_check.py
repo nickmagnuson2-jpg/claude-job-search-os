@@ -185,6 +185,20 @@ def test_the_branch_itself_is_never_its_own_parent(repo):
     assert sc.check(repo.path, "solo") == []
 
 
+def test_a_stray_git_dir_does_not_redirect_the_check(repo, tmp_path, monkeypatch):
+    # A hook can export GIT_DIR; `git -C <repo>` must still mean <repo> (suite_record r2 F2).
+    other = Repo(tmp_path / "other")
+    repo.branch("parent")
+    repo.commit("p1")
+    repo.branch("child")
+    repo.commit("c1")
+    repo.checkout("parent")
+    repo.commit("p2")
+    monkeypatch.setenv("GIT_DIR", os.path.join(other.path, ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", other.path)
+    assert _parents(sc.check(repo.path, "child")) == ["parent"]
+
+
 # --- message and CLI -------------------------------------------------------------------
 def test_message_names_parent_and_missing_commits(repo):
     repo.branch("parent")
@@ -225,3 +239,64 @@ def test_cli_exit_0_when_clean(repo):
 def test_cli_exit_2_on_an_unknown_tip(repo):
     r = _cli(repo, "no-such-branch")
     assert r.returncode == 2
+
+
+# --- single source of truth: land_branch and suite_record delegate, never restate ------
+import ast  # noqa: E402
+
+_TOOLS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "tools")
+CONSUMERS = ("land_branch.py", "suite_record.py")
+
+
+def _imports(path):
+    tree = ast.parse(open(path, encoding="utf-8").read())
+    names = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Import):
+            names |= {a.name for a in n.names}
+        elif isinstance(n, ast.ImportFrom) and n.module:
+            names.add(n.module)
+    return names
+
+
+@pytest.mark.parametrize("tool", CONSUMERS)
+def test_consumer_imports_stack_check(tool):
+    assert "stack_check" in _imports(os.path.join(_TOOLS_DIR, tool))
+
+
+@pytest.mark.parametrize("tool", CONSUMERS)
+def test_consumer_does_not_restate_the_rule(tool):
+    src = open(os.path.join(_TOOLS_DIR, tool), encoding="utf-8").read()
+    assert "reflog" not in src, f"{tool} reads reflogs itself; call stack_check.check instead"
+
+
+def _stale_stack(repo):
+    repo.branch("parent")
+    repo.commit("p1")
+    repo.branch("child")
+    repo.commit("c1")
+    repo.checkout("parent")
+    repo.commit("p2")
+    repo.checkout("child")
+
+
+def test_suite_record_refuses_a_stale_stack_before_running_anything(repo, capsys):
+    import suite_record
+    _stale_stack(repo)
+    from pathlib import Path
+    rc = suite_record.cmd_run(Path(repo.path), "child", "main", 60)
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert out["code"] == "stale_stack" and "parent" in out["message"]
+
+
+def test_land_branch_refuses_a_stale_stack(repo, monkeypatch):
+    import land_branch
+    _stale_stack(repo)
+    from pathlib import Path
+    monkeypatch.setattr(land_branch, "gate_dry_run", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(land_branch, "audit_check", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(land_branch, "pii_scan", lambda *a, **k: {"ok": True, "hits": [], "ambiguous": []})
+    r = land_branch.check_branch(Path(repo.path), "child", {"child": repo.path}, None, "main", "",
+                                 False)
+    assert any("stacked on unlanded branch parent" in x for x in r["refusals"]), r["refusals"]

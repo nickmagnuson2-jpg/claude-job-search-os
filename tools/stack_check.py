@@ -30,6 +30,7 @@ LIMITS (by construction, not bugs):
 """
 import argparse
 import json
+import os
 import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
@@ -50,7 +51,9 @@ class StackCheckError(RuntimeError):
 
 
 def _git(repo: str, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+    # A hook can export GIT_DIR / GIT_WORK_TREE; drop every GIT_* so `-C repo` means repo.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, env=env)
 
 
 def _resolve(repo: str, ref: str) -> str:
