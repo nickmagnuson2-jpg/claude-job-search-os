@@ -81,6 +81,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import eic_review  # noqa: E402
+import learning_state  # noqa: E402  the lessons row validator (state matrix, 2026-11-22)
+from hook_runtime import claude_project_dir  # noqa: E402
+from vault_paths import main_checkout  # noqa: E402
 
 DRAFT_NAME = "draft-v0.txt"
 SENT_NAME = "sent.txt"
@@ -277,13 +280,40 @@ def _body_of_capture(capture_id: str) -> str:
         return ""
 
 
-def _lesson_row_exists(ref: str) -> bool:
-    """True when `ref` appears inside a table row of the lessons log, not just anywhere."""
+def memory_dir() -> Path:
+    """The live memory folder of the main checkout, where a lessons row's `merged into
+    <file>` pointer must resolve (Grok r1 F2, 2026-11-22). MEMORY_DIR overrides it."""
+    override = os.environ.get("MEMORY_DIR")
+    return Path(override) if override else claude_project_dir(main_checkout(REPO_ROOT)) / "memory"
+
+
+def _lesson_row_problem(ref: str) -> str | None:
+    """None when `ref` appears inside a VALID Section 2 lessons row; else why not.
+
+    Valid means learning_state.parse_lessons_row reads exactly 5 cells and
+    learning_state.lessons_state finds no defect (a known Promoted token with its pointer,
+    a numeric Occurrences cell, a dated Date cell). A send may not cite a malformed row:
+    the row it cites is the record that the lesson was learned (2026-11-22, B2)."""
     try:
         text = lessons_path().read_text(encoding="utf-8")
     except OSError:
-        return False
-    return any(line.startswith("| ") and ref in line for line in text.split("\n"))
+        return f"not found: {lessons_path()} cannot be read"
+    rows = [line for line in text.split("\n") if line.startswith("| ") and ref in line]
+    if not rows:
+        return f"not found in a table row of {lessons_path()}; write the row first"
+    problems = []
+    for row in rows:
+        cells, defect = learning_state.parse_lessons_row(row)
+        if cells is None:
+            problems.append(defect or "not a lessons row")
+            continue
+        _disp, _due, defects = learning_state.lessons_state(cells, memory_dir=memory_dir(),
+                                                            repo_root=main_checkout(REPO_ROOT))
+        if not defects:
+            return None
+        problems.extend(defects)
+    return (f"is in a lessons row that fails validation ({'; '.join(problems)}); "
+            f"repair it with tools/lessons_write.py first")
 
 
 class CaptureError(Exception):
@@ -478,9 +508,9 @@ def _check_lesson(revised: int, edit: float, lesson_ref: str | None,
         if len(lesson_ref.strip()) < MIN_LESSON_REF:
             raise CaptureError(f"--lesson must be at least {MIN_LESSON_REF} characters "
                                f"of text from one lessons row")
-        if not _lesson_row_exists(lesson_ref):
-            raise CaptureError(f"--lesson {lesson_ref!r} not found in a table row of "
-                               f"{lessons_path()}; write the row first")
+        problem = _lesson_row_problem(lesson_ref)
+        if problem:
+            raise CaptureError(f"--lesson {lesson_ref!r} {problem}")
         return
     if no_lesson is not None and no_lesson.strip():
         return

@@ -84,8 +84,13 @@ from hook_runtime import read_payload  # noqa: E402
 # exactly while eic_review.open_reviews() is non-empty, so a change to it changes a verdict.
 # shell_writes (2026-11-01, Nick approved): the Bash write-target walk with cwd tracking that
 # check_eic_review, check_handoff_producer and check_public_pii all judge from.
+# memory_frontmatter and learning_state (2026-11-22, Nick, option A in org 72's window):
+# check_memory_frontmatter_write and check_lessons_write decide with their reader, validator
+# and vocabulary, so an unguarded edit to either changes what those guards block (the
+# 2026-08-14 self-unblocking shape). stage_vocab stays NOT because no guard decides with it.
 HOOK_LIBRARIES = ("shell_tokens", "hook_runtime", "hook_command_lint", "approval_signing",
-                  "calendar_approval", "vault_paths", "eic_review", "shell_writes")
+                  "calendar_approval", "vault_paths", "eic_review", "shell_writes",
+                  "memory_frontmatter", "learning_state")
 # Imported by a guard but deliberately NOT guarded (Nick's call, 2026-10-01: "just the
 # hook libraries"). Each is domain logic or tooling that ordinary work edits.
 NOT_HOOK_LIBRARIES = {

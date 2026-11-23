@@ -735,3 +735,76 @@ def test_latest_is_the_last_opened_even_when_its_id_sorts_first(store):
     assert sorted(ids) != ids               # some later capture sorts before an earlier one
     assert dc.resolve("latest") == ids[-1]
     assert [m["id"] for m in dc.pending()] == ids
+
+
+# --- 2026-11-22 (B2): the cited row must be a VALID Section 2 row --------------------------
+
+@pytest.mark.parametrize("row,needle", [
+    (ROW.replace("| 1 | No |", "| 1 | Someday |"), "fails validation"),
+    (ROW.replace("| 1 | No |", "| 1 | superseded |"), "fails validation"),
+    (ROW.replace("| 2026-10-22 |", "| last week |"), "fails validation"),
+    (ROW + " <!-- trailing -->", "fails validation"),
+    ("| 7 | Casey Doe / Acme in a 4-cell row | a rule | 2026-10-22 |", "fails validation"),
+])
+def test_a_lesson_reference_must_be_a_valid_row(store, row, needle):
+    _lessons(store, row)
+    cid = dc.capture(DRAFT)
+    with pytest.raises(dc.CaptureError) as exc:
+        dc.confirm(cid, "edited", sent_text=SENT_EDIT, lesson_ref="Casey Doe / Acme")
+    assert needle in str(exc.value)
+    assert "lessons_write.py" in str(exc.value)
+
+
+def test_one_valid_row_among_matches_is_enough(store):
+    _lessons(store, ROW.replace("| 1 | No |", "| 1 | Someday |") + "\n" + ROW)
+    cid = dc.capture(DRAFT)
+    meta = dc.confirm(cid, "edited", sent_text=SENT_EDIT, lesson_ref="Casey Doe / Acme")
+    assert meta["lesson_ref"] == "Casey Doe / Acme"
+
+
+def test_an_unreadable_lessons_file_is_not_found(store):
+    Path(os.environ["LESSONS_PATH"]).unlink(missing_ok=True)
+    cid = dc.capture(DRAFT)
+    with pytest.raises(dc.CaptureError) as exc:
+        dc.confirm(cid, "edited", sent_text=SENT_EDIT, lesson_ref="Casey Doe / Acme")
+    assert "cannot be read" in str(exc.value)
+
+
+@pytest.mark.parametrize("row,detail", [
+    (ROW + " <!-- trailing -->", "text after the closing pipe"),
+    (ROW.replace("| 1 | No |", "| 1 | Someday |"), "someday"),
+])
+def test_the_refusal_names_what_is_wrong_with_the_row(store, row, detail):
+    _lessons(store, row)
+    cid = dc.capture(DRAFT)
+    with pytest.raises(dc.CaptureError) as exc:
+        dc.confirm(cid, "edited", sent_text=SENT_EDIT, lesson_ref="Casey Doe / Acme")
+    assert detail in str(exc.value).lower()
+
+
+def test_a_cited_merged_row_resolves_in_the_memory_folder(store, tmp_path, monkeypatch):
+    """Grok r1 F2: a valid `merged into <file>` row could never be cited."""
+    mem = tmp_path / "memory"
+    mem.mkdir()
+    (mem / "feedback_other_rule.md").write_text("---\nname: x\n---\n", encoding="utf-8")
+    monkeypatch.setenv("MEMORY_DIR", str(mem))
+    _lessons(store, ROW.replace("| 1 | No |", "| 1 | merged into feedback_other_rule.md |"))
+    cid = dc.capture(DRAFT)
+    meta = dc.confirm(cid, "edited", sent_text=SENT_EDIT, lesson_ref="Casey Doe / Acme")
+    assert meta["lesson_ref"] == "Casey Doe / Acme"
+
+
+def test_a_cited_superseded_row_resolves_against_the_main_checkout(store, tmp_path, monkeypatch):
+    """77's finding: a pointer to a gitignored path exists only in the main checkout."""
+    main = tmp_path / "main"
+    (main / "framework").mkdir(parents=True)
+    (main / "framework" / "voice-guide.md").write_text("x", encoding="utf-8")
+    monkeypatch.setattr(dc, "main_checkout", lambda root: main)
+    monkeypatch.setenv("MEMORY_DIR", str(tmp_path / "memory"))
+    _lessons(store, ROW.replace("| 1 | No |", "| 1 | superseded by framework/voice-guide.md |"))
+    cid = dc.capture(DRAFT)
+    assert dc.confirm(cid, "edited", sent_text=SENT_EDIT, lesson_ref="Casey Doe / Acme")["lesson_ref"]
+    monkeypatch.setattr(dc, "main_checkout", lambda root: tmp_path / "nowhere")
+    cid2 = dc.capture(DRAFT.replace("role", "position"))
+    with pytest.raises(dc.CaptureError):
+        dc.confirm(cid2, "edited", sent_text=SENT_EDIT, lesson_ref="Casey Doe / Acme")
