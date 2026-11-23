@@ -356,3 +356,43 @@ def test_cli_clean_without_json_prints_nothing(repo):
 def test_cli_unknown_tip_says_why_on_stderr(repo):
     r = _cli(repo, "no-such-branch")
     assert r.returncode == 2 and "stack_check: cannot resolve 'no-such-branch'" in r.stderr
+
+
+# --- Grok r1 F4 (2026-11-23): a branch that CONTAINS the tip is never its parent ----------
+def test_an_old_sha_of_a_moved_branch_is_not_stacked_on_that_branch(repo):
+    repo.branch("solo")
+    s1 = repo.commit("s1")
+    repo.commit("s2")
+    assert sc.check(repo.path, s1) == []
+
+
+def test_a_tag_named_like_the_branch_does_not_make_the_branch_its_own_parent(repo):
+    # rev-parse resolves `child` to the tag (refs/tags before refs/heads), the branch moved on.
+    repo.branch("child")
+    repo.commit("c1")
+    repo.git("tag", "child")
+    repo.commit("c2")
+    assert sc.check(repo.path, "child") == []
+
+
+def test_a_parent_that_fast_forwarded_onto_the_child_is_not_its_stale_parent(repo):
+    repo.branch("parent")
+    repo.commit("p1")
+    repo.branch("child")
+    repo.commit("c1")
+    repo.checkout("parent")
+    repo.git("merge", "-q", "--ff-only", "child")
+    repo.commit("p2")
+    assert sc.check(repo.path, "child") == []
+
+
+def test_a_parent_whose_name_is_also_a_tag_still_refuses_a_stale_child(repo):
+    # refname:short reports such a branch as `heads/parent`; its reflog must still be read.
+    repo.git("tag", "parent")
+    repo.branch("parent")
+    repo.commit("p1")
+    repo.branch("child")
+    repo.commit("c1")
+    repo.checkout("parent")
+    repo.commit("p2")
+    assert _parents(sc.check(repo.path, "child")) == ["parent"]

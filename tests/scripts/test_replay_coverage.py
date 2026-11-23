@@ -113,7 +113,7 @@ def test_strip_env_prefix(cmd, twin):
     ("subshell_cd_write", "(cd a); ls", False),           # no write after it
 ])
 def test_detectors(name, cmd, hit):
-    assert bool(rc.CLASSES[name].detect.search(cmd)) is hit
+    assert rc.CLASSES[name].hits(cmd) is hit
 
 
 def test_an_assignment_only_inside_a_heredoc_body_is_not_a_prefix_row(tmp_path, hooks):
@@ -173,3 +173,39 @@ def test_load_corpus_reach_conserves_and_the_cli_prints_it(tmp_path, hooks):
                        capture_output=True, text=True)
     assert ("population 5 | included 2 | excluded: not a Bash call 1, empty command 1, "
             "repeated command 1") in r.stdout
+
+
+# --- Grok r1 F1/F2/F3 (2026-11-23; F5 parked): detect and twin must agree on what a prefix is -------
+@pytest.mark.parametrize("cmd,hit", [
+    ("X=1 && python3 w.py feedback_a.md", False),       # F1: an assignment statement, not a prefix
+    ("FOO=1 $HOME/bin/python3 w.py", True),             # F2: command starts with $
+    ("FOO=1 ~/bin/python3 w.py", True),
+    ("FOO=1 'python3' w.py", True),
+    ("FOO=1 \"python3\" w.py", True),
+])
+def test_env_prefix_detect(cmd, hit):
+    assert rc.CLASSES["env_prefix"].hits(cmd) is hit
+
+
+@pytest.mark.parametrize("cmd,twin", [
+    ("FOO=1 $HOME/bin/python3 w.py", "$HOME/bin/python3 w.py"),                  # F2
+    ("FOO=1 ~/bin/python3 w.py", "~/bin/python3 w.py"),
+    ("T=$(date '+%H:%M'); python3 w.py", "T=$(date '+%H:%M'); python3 w.py"),     # F3: a statement
+    ("for f in a; do\n  A=1 python3 w.py\ndone", "for f in a; do\n  python3 w.py\ndone"),  # indented
+    ("FOO=$(echo hi) python3 w.py feedback_a.md", "python3 w.py feedback_a.md"),  # F3
+    ("T=$(date '+%H:%M') python3 w.py", "python3 w.py"),                          # F3, real shape
+    ("FOO=`date +%s` python3 w.py", "python3 w.py"),
+    ("FOO=x\\ y python3 w.py", "python3 w.py"),
+    ("SB=$(mktemp -d /tmp/x.XXXX)\npython3 w.py", "SB=$(mktemp -d /tmp/x.XXXX)\npython3 w.py"),  # a statement
+])
+def test_strip_env_prefix_grok_r1(cmd, twin):
+    assert rc._strip_env_prefix(cmd) == twin
+
+
+def test_every_env_prefix_hit_has_a_twin_that_differs(tmp_path):
+    # The invariant behind F1/F2: a row counted in the class is one the twin actually changes.
+    for cmd in ["X=1 && python3 w.py", "FOO=1 $HOME/x", "A=1 B=2 python3 w.py", "ls; M=x;",
+                "for f in a; do\n  A=1 python3 -c \"\nx=[c for c in l.split('|')]\n\"\ndone",
+                "A='x\ny' python3 w.py"]:   # a value spanning lines: the regex sees it, the per-line twin cannot
+        if rc.CLASSES["env_prefix"].hits(cmd):
+            assert rc._strip_env_prefix(cmd) != cmd, cmd

@@ -48,11 +48,17 @@ from typing import Callable, Optional
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from count_report import format_line  # noqa: E402  (a count states its reach)
 
-_POS = r"(?:^|(?<=[;&|(\n])[ \t]*)"        # start of a simple command
+_POS = r"(?:^|(?<=[;&|(\n]))[ \t]*"        # start of a simple command, indentation allowed
 # A prefix assignment: the value stops at whitespace or ; & |, and a SPACE or TAB (never a
 # newline) separates it from the command. `M=x` + newline, or `M=x;`, is its own statement.
-_ASSIGN = r"[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|\"[^\"]*\"|[^\s;&|'\"])*[ \t]+"
-_ENV_PREFIX = re.compile(_POS + r"((?:" + _ASSIGN + r")+)(?=[A-Za-z./])", re.M)
+# The value: quoted strings, a whole $(...) or `...`, a backslash escape, or plain characters.
+# ( and ) are kept out of the plain class so a $(...) with spaces is never cut in half on
+# backtracking (Grok r1 F3; on the 11-22 corpus the old form cut 11 of 4658 values, 0 now).
+_ASSIGN = (r"[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|\"[^\"]*\"|\$\([^()]*\)|`[^`]*`|\\.|"
+           r"[^\s;&|'\"`\\()])*[ \t]+")
+# What follows the assignments must start a command: anything but whitespace or an operator,
+# so `$HOME/bin/x`, `~/x` and quoted names count, and `X=1 && y` (a statement) does not.
+_ENV_PREFIX = re.compile(_POS + r"((?:" + _ASSIGN + r")+)(?=[^\s;&|<>()#])", re.M)
 _HEREDOC_START = re.compile(r"<<(-?)[ \t]*['\"]?(\w+)['\"]?")
 
 
@@ -89,9 +95,16 @@ class ShapeClass:
     twin: Optional[Callable[[str], str]] = None
     note: str = ""
 
+    def hits(self, cmd: str) -> bool:
+        """Is `cmd` in this class? With a twin, ONLY when the twin changes it, so detection and
+        twin can never disagree about what the shape is (Grok r1 F1/F2, 2026-11-23)."""
+        if self.twin is not None:
+            return self.twin(cmd) != cmd
+        return bool(self.detect.search(_commands_only(cmd)))
+
 
 CLASSES = {c.name: c for c in (
-    ShapeClass("env_prefix", re.compile(_POS + _ASSIGN), _strip_env_prefix,
+    ShapeClass("env_prefix", _ENV_PREFIX, _strip_env_prefix,
                "VAR=x before a command; twin drops the assignments"),
     ShapeClass("subshell_cd_write", re.compile(r"\(\s*cd\s+[^)]*\)\s*(?:;|&&|\|\|)[^\n]*?(?:>>?|\btee\b)"),
                None, "a cd inside ( ) followed by a write outside it; no meaning-preserving twin"),
@@ -144,7 +157,7 @@ def verdict(hook_cmd: str, command: str, env: dict) -> int:
 def measure(commands, classes, relevant, old, new, env) -> list:
     rows = []
     for c in classes:
-        hit = [x for x in commands if c.detect.search(_commands_only(x)) and relevant.search(x)]
+        hit = [x for x in commands if c.hits(x) and relevant.search(x)]
         rep = {"class": c.name, "note": c.note, "n": len(hit), "unmeasured": not hit,
                "changed_old_to_new": 0, "twin": c.twin is not None}
         cache = {}

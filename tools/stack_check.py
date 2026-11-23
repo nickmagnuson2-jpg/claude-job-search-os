@@ -13,7 +13,8 @@ A replay of this rule over that night's reflogs refuses B7's tip 856a7442 at sui
 naming its parent with 5 commits missing, and finds no refusal anywhere today.
 
 THE RULE. Tip T is stacked on branch P when T contains a commit that P itself produced and that
-is not yet in main, while P's current tip is not in T. "P itself produced" = a commit recorded in
+is not yet in main, while P's current tip is not in T and T is not in P (a branch that
+contains T, e.g. T's own later history or a parent that fast-forwarded onto T, is not its parent). "P itself produced" = a commit recorded in
 P's reflog by commit, merge, rebase, cherry-pick, pull or am, so a branch that was only created
 at someone else's commit (a backup, a fresh branch) is never anyone's parent. The refusal names
 P, the newest of P's commits that T has (built_on), P's tip, and the commits T is missing.
@@ -68,8 +69,11 @@ def _is_ancestor(repo: str, a: str, b: str) -> bool:
 
 
 def _branches(repo: str) -> dict:
-    out = _git(repo, "for-each-ref", "--format=%(refname:short)\t%(objectname)", "refs/heads").stdout
-    return dict(line.split("\t", 1) for line in out.splitlines() if "\t" in line)
+    # Full refname: refname:short turns `child` into `heads/child` when a tag shares the name,
+    # and the reflog lookup below would then read a branch that does not exist (Grok r1 F4).
+    out = _git(repo, "for-each-ref", "--format=%(refname)\t%(objectname)", "refs/heads").stdout
+    return {ref[len("refs/heads/"):]: sha for ref, _, sha in
+            (line.partition("\t") for line in out.splitlines()) if sha}
 
 
 def own_commits(repo: str, branch: str) -> list:
@@ -91,8 +95,9 @@ def check(repo: str, tip: str, main: str = "main") -> list:
     main_sha = _resolve(repo, main)
     refusals = []
     for name, parent_tip in sorted(_branches(repo).items()):
-        if _is_ancestor(repo, parent_tip, main_sha) or _is_ancestor(repo, parent_tip, tip_sha):
-            continue  # landed, or already contained
+        if (_is_ancestor(repo, parent_tip, main_sha) or _is_ancestor(repo, parent_tip, tip_sha)
+                or _is_ancestor(repo, tip_sha, parent_tip)):
+            continue  # landed, already contained, or it contains the tip (a descendant)
         built_on = next((c for c in own_commits(repo, name)
                          if not _is_ancestor(repo, c, main_sha) and _is_ancestor(repo, c, tip_sha)),
                         None)
