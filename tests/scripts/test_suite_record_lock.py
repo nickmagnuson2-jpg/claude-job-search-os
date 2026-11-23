@@ -221,3 +221,21 @@ def test_a_negative_wait_is_a_usage_error(sr, repo, lockdir, capsys):
         sr.main(["--repo-root", str(repo), "run", "--branch", "x", "--wait", "-1"])
     assert e.value.code == 2
 
+
+
+def test_the_holder_record_is_removed_when_the_run_ends(sr, repo, lockdir, tmp_parent, capsys):
+    _branch(repo, "feat", {"tests/test_feat.py": PASSING})
+    code, out = _run(sr, repo, capsys, "--branch", "feat", "--base", "main")
+    assert code == 0, out
+    assert not sr.holder_path(repo / LEDGER).exists()
+
+
+@pytest.mark.parametrize("content", [None, "not json", "[1, 2]", '"a string"'])
+def test_an_absent_or_unusable_holder_record_reads_as_empty(sr, repo, lockdir, content):
+    hp = sr.holder_path(repo / LEDGER)
+    hp.parent.mkdir(parents=True, exist_ok=True)
+    if content is None:
+        hp.unlink(missing_ok=True)
+    else:
+        hp.write_text(content, encoding="utf-8")
+    assert sr.read_holder(repo / LEDGER) == {}
