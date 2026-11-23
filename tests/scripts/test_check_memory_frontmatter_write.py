@@ -207,6 +207,24 @@ def test_a_loop_body_is_judged_by_its_real_command(mem):
     assert code == 2 and "a redirect from `sort`" in err
 
 
+def test_a_tilde_path_append_is_not_read_as_an_in_place_write(mem, tmp_path):
+    """The append's redirect keeps `~`; the whole-command scan expands it. Both must be
+    counted as the same write (replay ks5pbZ, a prose append blocked in a draft)."""
+    tilde = "~/" + str(mem.relative_to(tmp_path))
+    cmd = f"cat >> {tilde}/feedback_widget_rule.md <<'EOF'\n\nmore prose\nEOF"
+    env = {**os.environ, "HOME": str(tmp_path), "PYTHONPATH": str(TOOLS),
+           "MEMORY_HOOK_DIR": str(mem), "MEMORY_HOOK_REPO": str(TOOLS.parent),
+           "PYTHONIOENCODING": "utf-8"}
+    payload = {**bash(cmd), "cwd": str(tmp_path)}
+    p = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(payload),
+                       capture_output=True, text=True, env=env, timeout=60)
+    assert p.returncode == 0, p.stderr
+    bad = cmd.replace("more prose", "promoted: someday").replace(">>", ">")
+    p = subprocess.run([sys.executable, str(HOOK)], input=json.dumps({**bash(bad), "cwd": str(tmp_path)}),
+                       capture_output=True, text=True, env=env, timeout=60)
+    assert p.returncode == 2, p.stderr
+
+
 def test_echo_append_and_create(mem):
     assert hook(bash(f'echo "more prose" >> {mem}/feedback_widget_rule.md'), mem)[0] == 0
     assert hook(bash(f'echo "no frontmatter" > {mem}/feedback_widget_rule.md'), mem)[0] == 2
@@ -226,6 +244,197 @@ def test_unvalidated_writers_are_blocked(mem, cmd, needle):
     code, err = hook(bash(cmd.format(m=mem)), mem)
     assert code == 2, err
     assert needle in err
+
+
+# Grok install-r2 F1: a leading VAR=value hid the interpreter, so the form CLAUDE.md
+# requires (PYTHONIOENCODING=utf-8 python3 ...) was never judged.
+@pytest.mark.parametrize("cmd", [
+    "PYTHONIOENCODING=utf-8 python3 -c \"open('{m}/feedback_widget_rule.md','w').write('x')\"",
+    "PYTHONIOENCODING=utf-8 python3 - <<'PY'\np='{m}/feedback_widget_rule.md'\nopen(p,'w').write('x')\nPY",
+    "env PYTHONIOENCODING=utf-8 python3 -c \"open('{m}/feedback_widget_rule.md','w').write('x')\"",
+    "A=1 B=2 PYTHONIOENCODING=utf-8 python3 -c \"open('{m}/feedback_widget_rule.md','w').write('x')\"",
+    "env A=1 B=2 python3 - <<'PY'\nopen('{m}/feedback_widget_rule.md','w').write('x')\nPY",
+    # A wrapper option value (`nobody`) is also a possible command position; the
+    # interpreter must still be found behind it.
+    "sudo -u nobody python3 -c \"open('{m}/feedback_widget_rule.md','w').write('x')\"",
+])
+def test_an_assignment_prefix_does_not_hide_the_interpreter(mem, cmd):
+    code, err = hook(bash(cmd.format(m=mem)), mem)
+    assert code == 2, err
+    assert "script that writes" in err
+
+
+@pytest.mark.parametrize("cmd", [
+    "PYTHONIOENCODING=utf-8 python3 - <<'PY'\nprint(open('{m}/feedback_widget_rule.md').read())\nPY",
+    "PYTHONIOENCODING=utf-8 python3 {tools}/memory_write.py --help",
+    "LC_ALL=C sort {m}/feedback_widget_rule.md > /tmp/sorted.txt",
+])
+def test_a_prefixed_read_or_sanctioned_writer_is_allowed(mem, cmd):
+    code, err = hook(bash(cmd.format(m=mem, tools=TOOLS)), mem)
+    assert code == 0, err
+
+
+def test_a_prefixed_redirect_is_judged_by_its_real_command(mem):
+    ok = f"LC_ALL=C printf '\\n## Note 2026-11-22\\n' >> {mem}/feedback_widget_rule.md"
+    code, err = hook(bash(ok), mem)
+    assert code == 0, err
+    bad = f'LC_ALL=C echo "no frontmatter" > {mem}/feedback_widget_rule.md'
+    code, err = hook(bash(bad), mem)
+    assert code == 2, err
+
+
+# cd into the memory folder, then a write by bare name (data audit item 1, 2026-11-22):
+# 121 replay calls, all allowed before; 78 of the allowed hand-edit occurrences.
+@pytest.mark.parametrize("cmd", [
+    "cd {m} && python3 - <<'PY'\np='feedback_widget_rule.md'\ns=open(p).read()\n"
+    "open(p,'w').write(s.replace('occurrences: 2','occurrences: 3'))\nPY",
+    "M={m}; cd \"$M\" && PYTHONIOENCODING=utf-8 python3 -c \"open('feedback_widget_rule.md','w').write('x')\"",
+    "cd {m} && sed -i '' 's/occurrences: 2/occurrences: 3/' feedback_widget_rule.md",
+    "cd {m}/ && echo 'no frontmatter' > feedback_widget_rule.md",
+    "cd {m} && cp /tmp/x.md feedback_widget_rule.md",
+    "cd /tmp; cd {m}; printf 'x' | tee feedback_widget_rule.md",
+    # `cd -` restores the earlier dir, so a relative cd after it resolves from there
+    # (mutation: the `-` case was untested).
+    "cd {p}; cd /tmp; cd - && cd memory && echo 'no frontmatter' > feedback_widget_rule.md",
+    # a relative cd resolves against the dir the last cd left, not the call's cwd
+    "cd {p} && cd memory && echo 'no frontmatter' > feedback_widget_rule.md",
+    # replay U5oJe6: a sed -i bump and a prose append to the SAME bare name.
+    # replay hJAMpo: a helper that writes every rule file passed to it by bare name.
+    "cd {m} && python3 - <<'PY'\nimport pathlib\ndef bump(p):\n    t=pathlib.Path(p).read_text()\n"
+    "    pathlib.Path(p).write_text(t.replace('occurrences: 2','occurrences: 3'))\n"
+    "bump('feedback_widget_rule.md')\nPY",
+    "cd {m}/ && sed -i '' 's/occurrences: 2/occurrences: 3/' feedback_widget_rule.md && "
+    "cat >> feedback_widget_rule.md <<'EOF'\n\n## Fire 3\nEOF",
+])
+def test_a_write_after_cd_into_memory_is_judged(mem, cmd):
+    code, err = hook(bash(cmd.format(m=mem, p=mem.parent)), mem, cwd="/tmp")
+    assert code == 2, err
+
+
+@pytest.mark.parametrize("cmd", [
+    "cd {m} && echo 'more prose' >> feedback_widget_rule.md",
+    "cd {m} && cat feedback_widget_rule.md",
+    "cd {m} && python3 - <<'PY'\nprint(open('feedback_widget_rule.md').read())\nPY",
+    "cd /tmp && echo 'no frontmatter' > feedback_widget_rule.md",
+    # org 72's `cd -` case, with a file the hook does not guard: allowed
+    "M={m}; cd $M && ls; cd - && echo x > notes-7b.txt",
+    # in-place writers to files outside memory (mutation: `if scope(nt)` forced true lived)
+    "sed -i '' 's/a/b/' /tmp/notes-7b.md",
+    "echo x | tee /tmp/notes-7b.md",
+    "cd /tmp && sed -i '' 's/a/b/' feedback_widget_rule.md",
+])
+def test_a_write_resolved_outside_memory_or_valid_is_allowed(mem, cmd):
+    code, err = hook(bash(cmd.format(m=mem)), mem, cwd="/tmp")
+    assert code == 0, err
+
+
+# Codex combined F1 (P0): a cd that may not run in this shell (a subshell, an untaken
+# branch, the right side of a failed &&) must not move where a later write lands.
+@pytest.mark.parametrize("cmd", [
+    "(cd /tmp && true); echo 'no frontmatter' > feedback_widget_rule.md",
+    "if false; then cd /tmp; fi; echo 'no frontmatter' > feedback_widget_rule.md",
+    "false && cd /tmp; echo 'no frontmatter' > feedback_widget_rule.md",
+    "(cd /tmp && true); sed -i '' 's/occurrences: 2/occurrences: 3/' feedback_widget_rule.md",
+    "(cd /tmp); python3 -c \"open('feedback_widget_rule.md','w').write('x')\"",
+])
+def test_a_cd_that_may_not_run_does_not_move_the_write(mem, cmd):
+    code, err = hook(bash(cmd), mem, cwd=str(mem))
+    assert code == 2, err
+
+
+# Codex combined F2 (P1): Path(<name>) where the name is bound once to a literal is
+# judged by that literal, as open(<name>, 'w') already was.
+@pytest.mark.parametrize("script", [
+    "from pathlib import Path\nprint(Path('{m}/feedback_widget_rule.md').read_text())\n"
+    "out = '/tmp/result-7b.md'\nPath(out).write_text('ok')",
+    "import pathlib\nprint(open('{m}/feedback_widget_rule.md').read())\n"
+    "out = '/tmp/result-7b.md'\npathlib.Path(out).write_text('ok')",
+])
+def test_a_path_of_a_name_bound_to_a_literal_is_judged_by_the_literal(mem, script):
+    cmd = "python3 - <<'PY'\n" + script.format(m=mem) + "\nPY"
+    code, err = hook(bash(cmd), mem)
+    assert code == 0, err
+
+
+@pytest.mark.parametrize("cmd", [
+    "M={m}; cd $M && ls; cd - && echo x > feedback_widget_rule.md",
+    "cd {m} && cd /tmp && echo x > feedback_widget_rule.md",
+])
+def test_a_rule_name_written_after_leaving_memory_is_still_judged(mem, cmd):
+    """KNOWN, MEASURED OVER-BLOCK. A relative write is judged against every dir the
+    command named, because the walk does not model subshells or branches (Codex
+    combined F1, P0). So a rule-file name written after leaving memory is judged as if
+    in memory. Replay, 4,136 distinct Bash calls: the same 397 blocked with or without
+    this, 0 calls differ. REOPEN on the first session blocked writing a non-memory file
+    this way; the fix there models subshell and branch scope."""
+    code, err = hook(bash(cmd.format(m=mem)), mem, cwd="/tmp")
+    assert code == 2, err
+
+
+def test_a_non_rule_name_after_an_unresolvable_cd_is_allowed(mem):
+    """Scope B (measured: A and B differ on 0 replay calls). After a cd the hook cannot
+    resolve, a relative cd stays unresolved, and only a rule-file or lessons.md NAME is
+    blocked. Resolving the second cd from the call's cwd would invent a dir."""
+    cmd = "cd \"$WT\" && cd memory && echo x > notes-7b.md"
+    code, err = hook(bash(cmd), mem, cwd=str(mem.parent))
+    assert code == 0, err
+
+
+def test_a_relative_script_file_is_found_from_the_dir_cd_left(mem, tmp_path):
+    """`cd d && python3 patch.py` reads d/patch.py, not cwd/patch.py."""
+    d = tmp_path / "scripts"
+    d.mkdir()
+    (d / "patch.py").write_text(f"open('{mem}/feedback_widget_rule.md','w').write('x')\n",
+                                encoding="utf-8")
+    code, err = hook(bash(f"cd {d} && python3 patch.py"), mem, cwd="/tmp")
+    assert code == 2 and "script that writes" in err
+
+
+# Codex combined-r2 F1 (P1): a name reassigned by ANY later binding is not judged by
+# its first literal (r2 had this for open(out, 'w') too).
+@pytest.mark.parametrize("write", ["Path(out).write_text('x')", "open(out, 'w').write('x')"])
+@pytest.mark.parametrize("rebind", [
+    "out = str(Path('{m}/feedback_widget_rule.md'))",
+    "for out in ['{m}/feedback_widget_rule.md']: pass",
+    "with open('{m}/feedback_widget_rule.md') as out: pass\nout = out.name",
+])
+def test_a_name_rebound_after_its_literal_stays_opaque(mem, write, rebind):
+    script = ("from pathlib import Path\nout = '/tmp/result-7b.md'\n"
+              + rebind.format(m=mem) + "\n" + write)
+    code, err = hook(bash("python3 - <<'PY'\n" + script + "\nPY"), mem)
+    assert code == 2, err
+
+
+def test_a_relative_cd_from_a_known_dir_keeps_a_valid_append_valid(mem):
+    """`cd memory` from the memory folder's parent is a known dir, so a prose append is
+    judged as an append, not blocked as a write after an unknown cd."""
+    cmd = "cd memory && echo 'more prose' >> feedback_widget_rule.md"
+    code, err = hook(bash(cmd), mem, cwd=str(mem.parent))
+    assert code == 0, err
+
+
+def test_an_in_place_bump_is_judged_when_the_same_file_is_also_appended(mem):
+    """r2 skipped the sed -i because the append's redirect had marked the path handled."""
+    f = mem / "feedback_widget_rule.md"
+    cmd = (f"sed -i '' 's/occurrences: 2/occurrences: 3/' {f} && "
+           f"cat >> {f} <<'EOF'\n\n## Fire 3\nEOF")
+    code, err = hook(bash(cmd), mem)
+    assert code == 2 and "in-place writer" in err
+
+
+@pytest.mark.parametrize("cmd", [
+    "cd \"$WT\" && python3 -c \"open('feedback_widget_rule.md','w').write('x')\"",
+    "cd $(dirname {m}/x) && echo 'no frontmatter' > feedback_widget_rule.md",
+    "cd \"$WT\" && cp /tmp/x.md feedback_widget_rule.md",
+    "cd \"$WT\" && sed -i '' 's/occurrences: 2/occurrences: 3/' feedback_widget_rule.md",
+    # a relative cd after an unknown one is still unknown (not the call's cwd)
+    "cd \"$WT\" && cd memory && echo 'more prose' >> feedback_widget_rule.md",
+    "cd {m} && pushd /tmp && popd && echo 'more prose' >> feedback_widget_rule.md",
+])
+def test_a_rule_name_written_after_an_unresolvable_cd_is_blocked(mem, cmd):
+    code, err = hook(bash(cmd.format(m=mem)), mem, cwd=str(mem.parent))
+    assert code == 2, err
+    assert "cd" in err
 
 
 def test_a_script_file_outside_tools_is_read(mem, tmp_path):

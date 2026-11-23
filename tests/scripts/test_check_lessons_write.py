@@ -170,6 +170,45 @@ def test_reads_and_the_sanctioned_writer_are_allowed(lessons, cmd):
     assert code == 0, err
 
 
+@pytest.mark.parametrize("cmd", [
+    "PYTHONIOENCODING=utf-8 python3 - <<'PY'\np='{f}'\nt=open(p).read()\nopen(p,'w').write(t)\nPY",
+    "PYTHONIOENCODING=utf-8 python3 -c \"open('{f}','a').write('| x |')\"",
+    "env A=1 B=2 python3 -c \"open('{f}','a').write('| x |')\"",
+])
+def test_an_assignment_prefix_does_not_hide_the_interpreter(lessons, cmd):
+    """Grok install-r2 F1: the shared walk read PYTHONIOENCODING=utf-8 as the program."""
+    code, err = hook(bash(cmd.format(f=lessons)), lessons)
+    assert code == 2, err
+    assert "script that writes" in err
+
+
+def test_a_script_that_only_mentions_lessons_is_blocked_today(lessons):
+    """PINS A KNOWN OVER-BLOCK (P1, parked by org 72, 2026-11-22). A script that names
+    memory/lessons.md and writes through a target the hook cannot resolve (a Path(...)
+    binding, a reassigned name) is blocked, even when it writes another file. A string
+    literal target is already judged by its value. 8 of the 78 calls the prefix fix newly
+    blocked in the replay have this shape. REOPEN when a session is blocked writing a
+    non-memory file because its script only mentions a memory path; the fix there
+    resolves the write target (Path(...) and reassignment), and this test then flips."""
+    cmd = ("PYTHONIOENCODING=utf-8 python3 - <<'PY'\n"
+           "from pathlib import Path\n"
+           "# rows like memory/lessons.md Section 2\n"
+           "p = Path('/tmp/notes-out.md')\n"
+           "p.write_text('x')\nPY")
+    code, err = hook(bash(cmd), lessons)
+    assert code == 2 and "script that writes" in err
+
+
+@pytest.mark.parametrize("cmd", [
+    "cd {d} && python3 -c \"open('lessons.md','a').write('| x |')\"",
+    "cd {r} && PYTHONIOENCODING=utf-8 python3 - <<'PY'\np='lessons.md'\nopen(p,'w').write(open(p).read())\nPY",
+])
+def test_a_write_after_cd_next_to_lessons_is_judged(lessons, cmd):
+    """data audit item 1: a cd, then the file by bare name."""
+    code, err = hook(bash(cmd.format(d=lessons.parent, r=lessons.parent)), lessons)
+    assert code == 2, err
+
+
 def test_unreadable_payload_fails_open(lessons):
     env = {**os.environ, "PYTHONPATH": str(TOOLS), "LESSONS_HOOK_PATH": str(lessons)}
     p = subprocess.run([sys.executable, str(HOOK)], input="[]", capture_output=True, text=True,

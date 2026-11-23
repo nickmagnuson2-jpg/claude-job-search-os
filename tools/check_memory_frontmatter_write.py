@@ -49,6 +49,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -56,7 +57,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hook_runtime import read_payload, claude_project_dir  # noqa: E402
 from vault_paths import main_checkout  # noqa: E402
 from shell_tokens import simple_commands, tokenize  # noqa: E402
-from check_public_pii import extract_write_targets, command_assignments, _expand_vars  # noqa: E402
+from check_public_pii import (extract_write_targets, command_assignments,  # noqa: E402
+                              _expand_vars, _command_positions, _WRAPPERS)
 import memory_frontmatter as mf  # noqa: E402
 
 TOOLS_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
@@ -80,7 +82,10 @@ _INTERP_VERSIONED = re.compile(r"^python3\.\d+$")
 _OPAQUE_WRITE = re.compile(r"os\.replace|os\.rename|shutil\.(copy|move)|\.rename\(|"
                            r"writeFileSync|writeFile\(|appendFileSync")
 _OPEN_FOR_WRITE = re.compile(r"open\(\s*([^,()]*(?:\([^()]*\))?[^,()]*)\s*,\s*['\"][wax+]")
-_WRITE_METHOD = re.compile(r"((?:Path\(\s*['\"][^'\"]*['\"]\s*\))|[\w.\[\]]+)\.write_(?:text|bytes)\(")
+# Receivers: Path('literal'); a Path built from a name, `pathlib.Path(p)` (replay hJAMpo,
+# a bump helper writing each rule file it is passed), which is opaque; or a name.
+_WRITE_METHOD = re.compile(r"((?:Path\(\s*['\"][^'\"]*['\"]\s*\))|[\w.]*Path\([^()'\"]*\)|[\w.\[\]]+)"
+                           r"\.write_(?:text|bytes)\(")
 _NAME_ASSIGN = re.compile(r"^[ \t]*([A-Za-z_]\w*)[ \t]*=[ \t]*(['\"])([^'\"\n]+)\2[ \t]*$", re.M)
 _LITERAL = re.compile(r"\s*(?:Path\(\s*)?(['\"])([^'\"]+)\1\s*\)?\s*")
 _COPIERS = frozenset({"cp", "mv", "install", "rsync"})
@@ -164,6 +169,15 @@ class Action:
     content: str = ""
 
 
+def _bound_once(name: str, inline: str) -> bool:
+    """`name` is bound exactly once in the script: a plain `=`, a `for name in`, or an
+    `as name`. A later rebinding by any expression makes the earlier literal unsafe to
+    trust (Codex combined-r2 F1: `out = str(Path(rule))` after `out = '/tmp/x'`)."""
+    n = re.escape(name)
+    return len(re.findall(rf"^[ \t]*{n}[ \t]*=(?!=)|\bfor[ \t]+{n}[ \t]+in\b|\bas[ \t]+{n}\b",
+                          inline, re.M)) == 1
+
+
 def script_writes(inline: str, cwd: str, scope, names_scope) -> bool:
     """True when an interpreter script may write a file `scope` accepts. A write whose
     target is a string literal is judged by that literal; a write through a variable, a
@@ -183,10 +197,13 @@ def script_writes(inline: str, cwd: str, scope, names_scope) -> bool:
         binds.setdefault(m.group(1), []).append(m.group(3))
     paths = []
     for t in targets:
+        # `Path(out)` / `pathlib.Path(out)`: judged by `out` (Codex combined F2).
+        wrapped = re.fullmatch(r"\s*[\w.]*Path\(\s*([A-Za-z_]\w*)\s*\)\s*", t)
+        t = wrapped.group(1) if wrapped else t
         lit = _LITERAL.fullmatch(t)
         if lit:
             paths.append(lit.group(2))
-        elif len(binds.get(t.strip(), [])) == 1 and not re.search(
+        elif len(binds.get(t.strip(), [])) == 1 and _bound_once(t.strip(), inline) and not re.search(
                 r"\b" + re.escape(t.strip()) + r"\s*(\+=|\.|\[)", inline):
             paths.append(binds[t.strip()][0])
         else:
@@ -271,22 +288,91 @@ def expanded_content(content: str, literal: bool, env: dict) -> str | None:
     return values[0] if len(values) == 1 else None
 
 
+def _program_index(words: list[str]) -> int:
+    """Index of the word the shell runs, past leading assignments and wrappers."""
+    positions = sorted(_command_positions(words))
+    for k in positions:
+        if _is_interpreter(os.path.basename(words[k])):
+            return k
+    return next((k for k in positions if os.path.basename(words[k]) not in _WRAPPERS),
+                len(words))
+
+
+def _is_interpreter(prog: str) -> bool:
+    return prog in INTERPRETERS or bool(_INTERP_VERSIONED.match(prog))
+
+
+# A file name either hook guards (a rule file, or lessons.md). Used only after a `cd` the
+# hook cannot resolve, where a bare name could be in either folder.
+_SCOPE_NAME = re.compile(r"^(?:(?:feedback|reference|project|user)_[\w.\-]*|lessons)\.md$")
+_MD_LITERAL = re.compile(r"""['"]([\w./\-]+\.md)['"]""")
+
+
+def _cd_target(words: list[str], env: dict, cur: str | None, prev: str | None,
+               cwd: str) -> tuple[str | None, str | None]:
+    """(new dir, previous dir) after `cd`/`pushd`. None is a dir the hook cannot know: an
+    unresolved variable or substitution, `cd -` with no earlier dir, more than one value."""
+    args = [w for w in words[1:] if not re.fullmatch(r"-[LPe@]+", w)]
+    if args == ["-"]:
+        return prev, cur
+    vals = _expand(args[0], env) if args else [HOME]
+    if len(vals) != 1 or "$" in vals[0] or "`" in vals[0]:
+        return None, cur
+    v = vals[0]
+    if cur is None and not (os.path.isabs(v) or v.startswith("~")):
+        return None, cur
+    return _norm(v, cur if cur is not None else cwd), cur
+
+
 def bash_actions(command: str, cwd: str, scope, names_scope) -> list[Action]:
     """Every write this command makes to a path `scope` accepts, with its shape.
     `names_scope(text)` says whether script text names such a path."""
     env = command_assignments(command)
     literals = _literal_texts(command)
     out: list[Action] = []
-    handled: set[str] = set()
+    # Where a relative path can land (data audit item 1: 121 replay calls cd into the
+    # memory folder and write a rule file by bare name). `dirs` is the starting dir plus
+    # every dir a cd names, and a relative write is judged against ALL of them: the walk
+    # does not model subshells, untaken branches or a failed `&&`, so a cd there may not
+    # have moved the shell (Codex combined F1). `cur` follows the cds in order, only to
+    # resolve a relative or `cd -` target. None: a cd the hook cannot resolve.
+    cur: str | None = cwd
+    prev: str | None = None
+    dirs = {cwd}
+    unknown = False                 # some cd could not be resolved
+
+    def at(path: str) -> str:
+        """`path` resolved: in a guarded file from any dir it could be in, if one is.
+        (An absolute or `~` path resolves the same from every dir.)"""
+        found = [q for q in (_norm(path, d) for d in sorted(dirs)) if scope(q)]
+        return found[0] if found else _norm(path, cur if cur is not None else cwd)
+    # Redirect targets, judged above against their own dir. Counted, not a set: the scan
+    # below lists each write once, and `sed -i ... f && cat >> f` names f twice.
+    redirected: Counter[str] = Counter()
     for sc in simple_commands(command):
         words = list(sc.words)
         while words and words[0] in _COMPOUND_PREFIX:      # `do printf ...`, `then cat ...`
             words.pop(0)
+        # Leading VAR=value words and wrappers (env, sudo) are not the program: the form
+        # CLAUDE.md requires, `PYTHONIOENCODING=utf-8 python3 ...`, was read as the
+        # program "PYTHONIOENCODING=utf-8" and never judged (Grok install-r2 F1). The
+        # PII hook's own command-position reader decides; an interpreter wins, then the
+        # first position that is not a wrapper.
+        words = words[_program_index(words):]
         prog = os.path.basename(words[0]) if words else ""
+        if prog in ("cd", "pushd"):
+            cur, prev = _cd_target(words, env, cur, prev, cwd)
+            if cur is None:
+                unknown = True
+            else:
+                dirs.add(cur)
+        elif prog == "popd":            # the stack is not tracked: the dir is unknown
+            cur, prev, unknown = None, cur, True
+        here = cur if cur is not None else cwd
         body = next((r.body for r in sc.redirections
                      if r.op in ("<<", "<<-") and r.body is not None), None)
         here_str = next((r.target for r in sc.redirections if r.op == "<<<"), None)
-        if prog in INTERPRETERS or _INTERP_VERSIONED.match(prog):
+        if _is_interpreter(prog):
             args = words[1:]
             inline = (body or "") + (here_str or "")
             if "-c" in args or "-e" in args:
@@ -294,30 +380,47 @@ def bash_actions(command: str, cwd: str, scope, names_scope) -> list[Action]:
             else:
                 script = next((w for w in args if not w.startswith("-")), None)
                 if script:
-                    sf = Path(_norm(script, cwd))
+                    sf = Path(_norm(script, here))
                     if sf.parent not in (TOOLS_DIR, REPO_ROOT / "tools"):
                         inline += _read(sf) or ""
             # An argument naming a rule file, or the memory folder itself (a script that
             # joins the folder with a file name it holds: replay 2026-10-14, `python3 - "$M"`).
-            arg_hits = any(scope(_norm(x, cwd)) or scope(os.path.join(_norm(x, cwd), "x.md"))
-                           for w in args for x in _expand(w, env))
-            if inline and (names_scope(inline) or arg_hits) and script_writes(inline, cwd, scope,
-                                                                               names_scope):
+            arg_hits = any(scope(_norm(x, d)) or scope(os.path.join(_norm(x, d), "x.md"))
+                           for w in args for x in _expand(w, env) for d in sorted(dirs))
+            # A relative name the script opens, resolved against the dir `cd` left.
+            bare = [m.group(1) for m in _MD_LITERAL.finditer(inline)]
+            bare_hits = any(scope(_norm(b, d)) for b in bare for d in sorted(dirs))
+            if inline and (names_scope(inline) or arg_hits or bare_hits) and any(
+                    script_writes(inline, d, scope, names_scope) for d in sorted(dirs)):
                 out.append(Action("(script)", f"blocked:a {prog} script that writes the file"))
+            elif (inline and unknown
+                  and any(_SCOPE_NAME.match(os.path.basename(b)) for b in bare)
+                  and script_writes(inline, "", lambda q: True, names_scope)):
+                out.append(Action("(script)", f"blocked:a {prog} script that writes a rule "
+                                  "file by name after a cd the hook cannot resolve"))
         if prog in _COPIERS and len(words) > 1:
             for d in _expand(words[-1], env):
-                nd = _norm(d, cwd)
-                into_dir = Path(nd) == memory_dir() and prog != "rsync"
-                if scope(nd) or into_dir:
+                nd = at(d)
+                into_dir = prog != "rsync" and any(Path(_norm(d, x)) == memory_dir()
+                                                   for x in sorted(dirs))
+                if unknown and not os.path.isabs(d) and _SCOPE_NAME.match(os.path.basename(d)):
+                    out.append(Action(d, f"blocked:{prog} to a rule file after a cd the hook "
+                                      "cannot resolve"))
+                elif scope(nd) or into_dir:
                     out.append(Action(nd, f"blocked:{prog} into the memory folder"))
         for r in sc.redirections:
             if r.op not in (">", ">>", ">|"):
                 continue
             for t in _expand(r.target, env):
-                nt = _norm(t, cwd)
-                if not scope(nt):
+                redirected[at(t)] += 1
+                lost = (unknown and not os.path.isabs(t) and not t.startswith("~")
+                        and _SCOPE_NAME.match(os.path.basename(t)))
+                if lost:
+                    out.append(Action(t, "blocked:a redirect to a rule file after a cd the "
+                                      "hook cannot resolve"))
+                nt = at(t)
+                if lost or not scope(nt):
                     continue
-                handled.add(nt)
                 content = None
                 if prog == "cat" and body is not None:
                     content = expanded_content(body, body in literals, env)
@@ -334,9 +437,22 @@ def bash_actions(command: str, cwd: str, scope, names_scope) -> list[Action]:
                     continue
                 out.append(Action(nt, "append" if r.op == ">>" else "create", content))
     for t in extract_write_targets(command):
-        nt = _norm(t, cwd)
-        if scope(nt) and nt not in handled:
-            out.append(Action(nt, "blocked:an in-place writer (sed -i, tee, dd)"))
+        seen = next((k for k in [t, *(_norm(t, d) for d in sorted(dirs))] if redirected[k] > 0),
+                    None)
+        if seen is not None:
+            redirected[seen] -= 1
+            continue
+        # Any dir the command was in: this scan does not know which command wrote.
+        for d in sorted(dirs):
+            nt = _norm(t, d)
+            if scope(nt):
+                out.append(Action(nt, "blocked:an in-place writer (sed -i, tee, dd)"))
+                break
+        else:
+            if (unknown and not os.path.isabs(t) and not t.startswith("~")
+                    and _SCOPE_NAME.match(os.path.basename(t))):
+                out.append(Action(t, "blocked:an in-place writer to a rule file after a cd "
+                                  "the hook cannot resolve"))
     return out
 
 
