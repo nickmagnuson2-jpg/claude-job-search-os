@@ -91,8 +91,6 @@ def check(repo: str, tip: str, main: str = "main") -> list:
     main_sha = _resolve(repo, main)
     refusals = []
     for name, parent_tip in sorted(_branches(repo).items()):
-        if name in (tip, main) or parent_tip == tip_sha:
-            continue
         if _is_ancestor(repo, parent_tip, main_sha) or _is_ancestor(repo, parent_tip, tip_sha):
             continue  # landed, or already contained
         built_on = next((c for c in own_commits(repo, name)

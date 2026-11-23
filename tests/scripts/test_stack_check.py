@@ -300,3 +300,59 @@ def test_land_branch_refuses_a_stale_stack(repo, monkeypatch):
     r = land_branch.check_branch(Path(repo.path), "child", {"child": repo.path}, None, "main", "",
                                  False)
     assert any("stacked on unlanded branch parent" in x for x in r["refusals"]), r["refusals"]
+
+
+# --- mutation kills, 2026-11-23 (stack_check: 10 survivors of 51) ----------------------
+def test_own_commits_lists_a_commit_once_when_the_reflog_repeats_it(repo):
+    repo.branch("p")
+    x = repo.commit("x")
+    repo.git("reset", "-q", "--hard", "HEAD~1")    # reset: not an own action
+    repo.git("merge", "-q", "--ff-only", x)        # merge: own action, same sha again
+    assert sc.own_commits(repo.path, "p") == [x]
+
+
+def _moved_parent(repo, n_missing):
+    repo.branch("parent")
+    repo.commit("p0")
+    repo.branch("child")
+    repo.commit("c1")
+    repo.checkout("parent")
+    for i in range(n_missing):
+        repo.commit(f"p{i + 1}")
+
+
+def test_message_singular_and_no_ellipsis_for_one_missing(repo):
+    _moved_parent(repo, 1)
+    msg = sc.format_refusals("child", sc.check(repo.path, "child"))
+    assert "1 commit missing" in msg and " ..." not in msg
+
+
+def test_message_plural_and_ellipsis_past_five_missing(repo):
+    _moved_parent(repo, 6)
+    msg = sc.format_refusals("child", sc.check(repo.path, "child"))
+    assert "6 commits missing" in msg and " ..." in msg
+
+
+def test_message_no_ellipsis_at_exactly_five_missing(repo):
+    _moved_parent(repo, 5)
+    msg = sc.format_refusals("child", sc.check(repo.path, "child"))
+    assert "5 commits missing" in msg and " ..." not in msg
+
+
+def test_cli_refusal_without_json_goes_to_stderr_as_text(repo):
+    _moved_parent(repo, 1)
+    r = _cli(repo, "child")
+    assert r.returncode == 1
+    assert r.stdout == "" and "REFUSED: child" in r.stderr
+
+
+def test_cli_clean_without_json_prints_nothing(repo):
+    repo.branch("a")
+    repo.commit("a1")
+    r = _cli(repo, "a")
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+
+
+def test_cli_unknown_tip_says_why_on_stderr(repo):
+    r = _cli(repo, "no-such-branch")
+    assert r.returncode == 2 and "stack_check: cannot resolve 'no-such-branch'" in r.stderr

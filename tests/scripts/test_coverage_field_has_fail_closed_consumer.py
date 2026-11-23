@@ -431,6 +431,10 @@ REGISTRY: dict[tuple[str, str, str | None], object] = {
     # exits 0 and ran nothing, so it records no pass (2026-11-16, found on the merged tree).
     ("suite_record.py", "skipped", None): [
         Branch("suite_record.py", "cmd_run", reads="skipped", closes="exit")],
+    # replay_coverage.py: a shape class with 0 relevant rows in the corpus (codify #27,
+    # 2026-11-23). The CLI exits 1 on it, so a replay that never saw the shape cannot pass.
+    ("replay_coverage.py", "unmeasured", None): [
+        Branch("replay_coverage.py", "main", reads="unmeasured", closes="exit")],
     ("calibration_review.py", "skipped", None): [
         Branch("calibration_review.py", "main", reads="status", literal="ok", closes="exit")],
 

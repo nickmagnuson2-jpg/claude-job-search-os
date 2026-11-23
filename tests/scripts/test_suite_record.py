@@ -578,3 +578,27 @@ def test_cleanup_target_is_fixed_before_the_suite_runs(sr, repo, tmp_path, tmp_p
     assert sorted(p.name for p in (repo / ".git" / "worktrees").iterdir()) == ["elsewhere"]
     assert len(_worktrees(repo)) == 2
     assert list(tmp_parent.iterdir()) == []
+
+
+# --- mutation kills, 2026-11-23 (codify #3 wiring: 3 survivors of 128) -----------------
+def test_run_bad_ref_message_names_the_ref_that_is_missing(sr, repo, tmp_parent, capsys):
+    code, out = _run(sr, repo, capsys, "no-such-branch", "--base", "main")
+    assert code == 1 and out["message"].startswith("no-such-branch is not a commit")
+
+
+def test_run_a_stack_check_error_is_a_git_error(sr, repo, tmp_parent, capsys, monkeypatch):
+    _branch(repo, "feat", {"tests/test_feat.py": PASSING})
+
+    def boom(*a, **k):
+        raise sr.stack_check.StackCheckError("injected stack failure")
+    monkeypatch.setattr(sr.stack_check, "check", boom)
+    code, out = _run(sr, repo, capsys, "feat", "--base", "main")
+    assert code == 1 and out["code"] == "git_error" and "injected stack failure" in out["message"]
+
+
+def test_script_imports_stack_check_without_its_dir_on_sys_path(tmp_path):
+    # -I keeps the script's own directory off sys.path, as runpy does; the module's own
+    # sys.path.insert is then the only way `import stack_check` resolves (cf. outreach Codex r2 F2).
+    r = subprocess.run([sys.executable, "-I", str(TOOL), "--help"], capture_output=True,
+                       text=True, cwd=tmp_path, timeout=60)
+    assert r.returncode == 0, r.stderr
