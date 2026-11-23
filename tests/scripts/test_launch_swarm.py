@@ -262,3 +262,55 @@ def test_a_rule_whose_text_differs_from_the_template_is_refused(run_dir):
     t = filled_template().replace("**Exa: at most $2 per session**", "**Exa: spend what you like**")
     p = write_brief(run_dir, t)
     assert any("rule 9" in x and "template" in x for x in ls.brief_check(p, org="proj-org"))
+
+
+# ---------------------------------------------------------------- mutation r1 survivors (1586c717)
+
+def test_missing_organizer_line_names_the_missing_line(run_dir):
+    p = write_brief(run_dir, filled_template().replace("Organizer: **proj-org**", "Lead: proj-org"))
+    problems = ls.brief_check(p, org="proj-org")
+    assert "no 'Organizer: **<name>**' line" in problems
+    assert not any("names None" in x for x in problems)
+
+
+def test_missing_needs_nick_line_is_refused(run_dir):
+    t = re.sub(r"^Needs Nick:.*\n", "", filled_template(), flags=re.M)
+    p = write_brief(run_dir, t)
+    assert "no 'Needs Nick: `<path>`' line" in ls.brief_check(p, org="proj-org")
+
+
+def test_a_missing_rule_is_reported_as_missing(run_dir):
+    p = write_brief(run_dir, filled_template().replace("\n16. ", "\nsixteen. "))
+    problems = ls.brief_check(p, org="proj-org")
+    assert "rule 16 is missing under '## Rules for every session'" in problems
+    assert not any(x.startswith("rule 16 does not match") for x in problems)
+
+
+def test_one_section_owning_a_path_alone_passes(run_dir):
+    t = re.sub(r"(- \*\*Owns:\*\*) filled", r"\1 `output/x/only.md`", filled_template())
+    p = write_brief(run_dir, t)
+    assert ls.brief_check(p, org="proj-org") == []
+
+
+def test_open_window_asks_terminal_to_run_the_command(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ls.subprocess, "run", lambda args, **kw: calls.append(args))
+    ls.open_window("echo hi")
+    assert calls and calls[0][0] == "osascript" and calls[0][-1] == "echo hi"
+
+
+def test_cli_refusal_says_it_is_refusing(run_dir, capsys, monkeypatch):
+    monkeypatch.setattr(ls, "open_window", lambda cmd: None)
+    p = write_brief(run_dir, filled_template())
+    ls.main([str(p), "--org", "proj-wrong"])
+    assert "refusing to launch" in capsys.readouterr().err
+
+
+def test_cli_reports_each_opened_window_and_paces_them(run_dir, monkeypatch, capsys):
+    sleeps = []
+    monkeypatch.setattr(ls, "open_window", lambda cmd: None)
+    monkeypatch.setattr(ls.time, "sleep", lambda s: sleeps.append(s))
+    p = write_brief(run_dir, filled_template())
+    assert ls.main([str(p), "--org", "proj-org", "--repo", str(run_dir.parents[1])]) == 0
+    assert "opened S1" in capsys.readouterr().out
+    assert sleeps == [2]
