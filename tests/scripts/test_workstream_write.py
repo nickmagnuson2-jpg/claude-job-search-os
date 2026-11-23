@@ -497,3 +497,30 @@ def test_add_next_cli_end_to_end_uses_the_real_date(wsn, tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     from datetime import date
     assert json.loads(r.stdout)["item"]["date"] == date.today().isoformat()
+
+
+def test_only_the_done_when_message_asks_for_the_observable_result(ww, wsn, capsys):
+    _, out = _add(ww, capsys, wsn, done_when="short")
+    assert out["message"] == ("--done-when must be at least 15 characters stating the "
+                              "observable result that means done")
+    _, out = _add(ww, capsys, wsn, action="short")
+    assert out["message"] == "--action must be at least 15 characters"
+
+
+def test_an_insert_that_does_not_reparse_to_old_plus_new_is_refused(ww, wsn, capsys,
+                                                                     monkeypatch):
+    # The verification after the text insertion is the last line of defence: if the
+    # re-parse ever disagrees with old items + the new one, nothing is written.
+    real, calls = ww._ws._read_next, []
+
+    def drops_the_new_item(lines, end, today):
+        calls.append(1)
+        items, reasons = real(lines, end, today)
+        return (items[:-1] if len(calls) == 2 else items), reasons
+
+    monkeypatch.setattr(ww._ws, "_read_next", drops_the_new_item)
+    before = wsn.read_bytes()
+    code, out = _add(ww, capsys, wsn)
+    assert code == 1 and out["code"] == "insert_unverified"
+    assert "nothing was written" in out["message"]
+    assert wsn.read_bytes() == before
