@@ -254,3 +254,29 @@ def test_cli_end_to_end_stamps_the_real_clock(ws, tmp_path):
     out = json.loads(r.stdout)
     stamp = datetime.strptime(out["heading"][3:19], "%Y-%m-%d %H:%M").astimezone()
     assert lo <= stamp <= hi
+
+
+def test_error_messages_are_the_message_not_the_args_tuple(ww, ws, capsys):
+    j = ws.parent / "x.txt"
+    j.write_text("x", encoding="utf-8")
+    code, out = _call(ww, capsys, "add-section", str(j), "--title", "t", "--body", "b")
+    assert out["message"] == f"{j} is not a .md file"
+
+
+def test_the_file_descriptor_is_closed_after_each_write(ww, ws, capsys):
+    def open_fds():
+        return len(os.listdir("/dev/fd"))
+    _call(ww, capsys, "add-section", str(ws), "--title", "warm", "--body", "b")
+    before = open_fds()
+    for i in range(40):
+        _call(ww, capsys, "add-section", str(ws), "--title", f"t{i}", "--body", "b")
+    assert open_fds() - before < 5
+
+
+def test_a_short_write_is_reported_not_claimed_ok(ww, ws, capsys, monkeypatch):
+    real = os.write
+    monkeypatch.setattr(ww.os, "write", lambda fd, data: real(fd, data[:5]))
+    code, out = _call(ww, capsys, "add-section", str(ws), "--title", "t", "--body", "b")
+    monkeypatch.undo()
+    assert code == 1 and out["code"] == "short_write"
+    assert out["message"].startswith("wrote 5 of ")
