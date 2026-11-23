@@ -19,7 +19,8 @@ Forked from raphaotten/claude-interview-coach (MIT / CC BY 4.0).
 - The file was last changed in 5ebfb4f6 and is present through b2495952, so git history
   holds it if it is ever wanted back. `tests/scripts/test_retired_hooks.py` keeps it unwired,
   off disk and out of every registry.
-- `hook_runtime.last_assistant_text` stays: `check_stale_file_claim.py` still uses it.
+- `hook_runtime.last_assistant_text` stays: `check_stale_file_claim.py` and
+  `check_derived_ratio.py` still use it.
 
 ## 2026-11-05: One reply logged once, diff-scoped mutation runs, private names out of tracked files
 
