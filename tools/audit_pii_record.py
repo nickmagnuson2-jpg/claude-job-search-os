@@ -19,9 +19,11 @@ LIMIT: Claude writes the record, so it proves the semantic pass RAN to a clean v
 that tree. It does not prove the pass was any good. (Nick, 2026-11-05.)
 
 FROM A LINKED WORKTREE (2026-11-22, 3 fires in one day): the CLI uses the MAIN checkout's
-ledger, the one the push gate reads. `record` writes there; `check` passes only on main's
-rows, and a record held only by the worktree's copy fails with code
-recorded_only_in_worktree. The library functions (read_rows, has_clean_record,
+ledger, the one merge-push's gate reads. `record` writes there and also to the worktree's
+copy, which a push from the worktree and land_branch step 5 read; `check` passes only on
+main's rows, and a record held only by the worktree's copy fails with code
+recorded_only_in_worktree. A linked worktree whose main cannot be found exits 2
+(main_checkout_unresolved) and writes nothing. The library functions (read_rows, has_clean_record,
 append_waiver) still use the root they are given: land_branch's merge-push preview runs the
 guard inside a throwaway worktree whose copy holds rows main does not have yet.
 """
@@ -35,7 +37,6 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from vault_paths import main_checkout  # a file read, no git call; tools/ is on the path
 
 LEDGER = Path("tools") / ".audit-pii-ledger.jsonl"
 
@@ -58,14 +59,24 @@ def commit_of(root: Path, sha: str) -> str | None:
     return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
 
 
-def is_linked_worktree(root: Path) -> bool:
-    """git's own answer: a linked worktree's git dir differs from the common dir. Covers
-    layouts the file-read resolver cannot place (--separate-git-dir, submodule worktrees),
-    which must refuse rather than fall back to this worktree's copy (Codex r1 F1)."""
-    r = subprocess.run(["git", "-C", str(root), "rev-parse", "--path-format=absolute",
-                        "--git-dir", "--git-common-dir"], capture_output=True, text=True)
-    lines = r.stdout.splitlines()
-    return r.returncode == 0 and len(lines) == 2 and Path(lines[0]) != Path(lines[1])
+class MainUnresolved(Exception):
+    """`root` is a linked worktree whose main checkout cannot be found."""
+
+
+def resolve_main(root: Path) -> Path:
+    """The main checkout's root, or `root` itself when it is one.
+
+    codex_verify._main_checkout is the resolver the review ledger already uses
+    (mirror_to_main, finding_write, the open-P0 line), so both ledgers agree on
+    "main". It rejects a --separate-git-dir holder (Grok r1 F2) and raises for a linked
+    worktree it cannot place (Codex r1 F1). Imported here, not at module top, so the
+    push guard that imports this module's library functions does not load it."""
+    import codex_verify as cv
+    try:
+        main = cv._main_checkout(Path(root).resolve())
+    except RuntimeError as e:
+        raise MainUnresolved(str(e)) from None
+    return Path(main) if main else Path(root)
 
 
 def read_rows(root: Path) -> list[dict]:
@@ -130,23 +141,27 @@ def main(argv: list[str] | None = None) -> int:
     if tree is None:
         return _out({"status": "error", "code": "not_a_commit",
                      "message": f"{args.tip} is not a commit in {root}"}, 1)
-    main = main_checkout(root)        # `root` itself unless it is a linked worktree
-    if main.resolve() == root.resolve() and is_linked_worktree(root):
+    try:
+        main = resolve_main(root)
+    except MainUnresolved as e:
         return _out({"status": "error", "code": "main_checkout_unresolved",
-                     "message": f"{root} is a linked worktree whose main checkout cannot be "
-                                "found from its .git file; the push gate reads main's ledger, "
-                                "so run this from the main checkout"}, 2)
+                     "message": f"{e}; the push gate reads main's ledger, so run this from "
+                                "the main checkout"}, 2)
+    in_worktree = main.resolve() != root.resolve()
     ledger = str(main / LEDGER)
     if args.command == "record":
-        append_row(main, {"kind": "audit", "verdict": "clean", "tree": tree, "tip": args.tip,
-                          "recorded": _now(), "files_scanned": args.files,
-                          "accepted": args.accept})
+        row = {"kind": "audit", "verdict": "clean", "tree": tree, "tip": args.tip,
+               "recorded": _now(), "files_scanned": args.files, "accepted": args.accept}
+        append_row(main, row)
+        if in_worktree:
+            # The worktree's copy too: a push run from the worktree, and land_branch
+            # step 5's dry run, read it (the hook's root is --show-toplevel) (Grok r1 F1).
+            append_row(root, row)
         return _out({"status": "ok", "action": "record", "tree": tree, "tip": args.tip,
                      "ledger": ledger}, 0)
     try:
         ok = has_clean_record(main, tree)
-        stranded = (not ok and main.resolve() != root.resolve()
-                    and has_clean_record(root, tree))
+        stranded = not ok and in_worktree and has_clean_record(root, tree)
     except LedgerError as e:
         return _out({"status": "error", "code": "ledger_unreadable", "message": str(e)}, 2)
     if stranded:
@@ -156,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
         fix = f"PYTHONIOENCODING=utf-8 {fix}"
         return _out({"status": "ok", "action": "check", "tree": tree, "recorded": False,
                      "code": "recorded_only_in_worktree", "ledger": ledger,
-                     "message": "recorded only in this worktree's copy, which the push gate "
+                     "message": "recorded only in this worktree's copy, which merge-push's gate "
                                 f"does not read; re-record from the main checkout: {fix}"}, 1)
     return _out({"status": "ok", "action": "check", "tree": tree, "recorded": ok,
                  "ledger": ledger}, 0 if ok else 1)

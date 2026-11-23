@@ -77,8 +77,19 @@ def test_record_from_a_worktree_lands_in_the_main_ledger(main_and_worktree):
     assert r.returncode == 0, r.stdout + r.stderr
     got = _rows(main / AUDIT)
     assert [(g["kind"], g["tree"]) for g in got] == [("audit", _git(wt, "rev-parse", "HEAD^{tree}"))]
-    assert not (wt / AUDIT).exists()
     assert json.loads(r.stdout)["ledger"] == str(main / AUDIT)
+
+
+def test_record_from_a_worktree_also_keeps_the_worktree_copy(main_and_worktree):
+    """Grok r1 F1: a push run FROM the worktree, and land_branch step 5's dry run, read
+    the worktree's copy (the hook's root is --show-toplevel). Writing main only made a
+    fresh record pass step 6 and fail step 5."""
+    main, wt = main_and_worktree
+    tip = _git(wt, "rev-parse", "HEAD")
+    tree = _git(wt, "rev-parse", "HEAD^{tree}")
+    assert _cli(wt, "record", "--tip", tip).returncode == 0
+    assert rec.has_clean_record(wt, tree) and rec.has_clean_record(main, tree)
+    assert _rows(wt / AUDIT) == _rows(main / AUDIT)
 
 
 def test_check_from_a_worktree_sees_a_record_held_only_by_main(main_and_worktree):
@@ -249,3 +260,21 @@ def test_an_unresolvable_worktree_with_spaces_in_its_git_dir_still_refuses(tmp_p
     r = _cli(wt, "record", "--tip", "HEAD")
     assert r.returncode == 2 and json.loads(r.stdout)["code"] == "main_checkout_unresolved"
     assert not (wt / AUDIT).exists()
+
+
+def test_a_separate_git_dir_holder_is_not_taken_for_the_main_checkout(tmp_path):
+    """Grok r1 F2: with --separate-git-dir=<holder>/.git the file-read resolver named
+    <holder>, which holds no checkout, and the record landed in <holder>/tools."""
+    main = tmp_path / "main"
+    holder = tmp_path / "holder"
+    holder.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main", f"--separate-git-dir={holder / '.git'}",
+                    str(main)], check=True)
+    (main / "x.txt").write_text("x\n", encoding="utf-8")
+    _git(main, "add", "-A")
+    _git(main, "commit", "-q", "-m", "one")
+    wt = tmp_path / "wt"
+    _git(main, "worktree", "add", "-q", "-b", "feature", str(wt))
+    r = _cli(wt, "record", "--tip", "HEAD")
+    assert r.returncode == 2 and json.loads(r.stdout)["code"] == "main_checkout_unresolved"
+    assert not (holder / AUDIT).exists() and not (wt / AUDIT).exists()
