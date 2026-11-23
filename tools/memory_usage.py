@@ -25,7 +25,8 @@ Known limits, all on the side of a lower count except the first: cat, head, tail
 of a rule file count whenever the result is non-empty, since they print whenever the file
 exists; inside a compound command a failed one is not told apart from another command's output.
 grep -o, -l, -c and -q count nothing. In a compound command a line printed by another
-command that happens to match a grep's pattern keeps that grep counted.
+command that happens to match a grep's pattern, or that is exactly as long as a `cut -c1-N`
+after the grep, keeps that grep counted; a match that sed or a field cut rewrote is missed.
 
 Each event keeps its session; a session's breadth is its count of distinct files entered.
 Breadth is provenance, not deletion: broad (audit) sessions keep their events, but whether
@@ -430,23 +431,25 @@ CUT_WIDTH = re.compile(r"-[cb]\s*\d*-(\d+)")
 
 def _line_matcher(stages: list, i: int, toks: list[str]):
     """A test for whether a result line may be stage i's output, judged by its pattern.
-    tr or sed after the search rewrite its lines, so any line passes. cut -c/-b ...-N can cut
-    the match off, so a line of N characters or more passes; a shorter one was not cut and
-    must match. A pattern the scan cannot evaluate passes every line."""
-    width = None
+    After tr the case may have changed, so the pattern is matched ignoring case. After
+    cut -c/-b ...-N a line of exactly N characters may have had the match cut off, so it
+    passes. After sed or a field cut a rewritten match is missed (a lower count, never a
+    higher one). A pattern the scan cannot evaluate passes every line (the stated residual).
+    (Grok final confirmation F1: accepting any line after tr, sed or cut let a grep that
+    matched nothing count from another command's output.)"""
+    width, ignore_case = None, False
     for raw, t in stages[i + 1:]:
         verb = t[0].split("/")[-1] if t else ""
-        if verb in ("tr", "sed"):
-            return lambda line: True
+        ignore_case |= verb == "tr"
         if verb == "cut":
             m = CUT_WIDTH.search(raw)
-            if not m:
-                return lambda line: True
-            width = min(width or 10**9, int(m.group(1)))
+            width = min(width or 10**9, int(m.group(1))) if m else width
     rx = _search_pattern(toks)
     if rx is COUNTS_ANYWAY:
         return lambda line: True
-    return lambda line: (width is not None and len(line) >= width) or bool(rx.search(LINE_PREFIX.sub("", line)))
+    if ignore_case:
+        rx = re.compile(rx.pattern, rx.flags | re.I)
+    return lambda line: len(line) == width or bool(rx.search(LINE_PREFIX.sub("", line)))
 
 
 def evidenced_search_prints(command: str, text: str, stems: set[str]) -> set[str]:
