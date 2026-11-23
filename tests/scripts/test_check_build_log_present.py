@@ -158,6 +158,37 @@ def test_a_build_file_under_scripts_that_is_not_python_is_still_gated(repo):
     assert write(repo, "output/acme/scripts/page.html")
 
 
+# --- overnight swarm staging folders (codify #4, 2026-11-23) --------------------
+# Brief rule 5 stages guard changes under output/overnight-<run>/<section>-staging/.
+# Those folders are never a reader build, but the gate treated overnight-<run> as a
+# company slug and blocked .py staging (2 fires: S4, S5). The exemption is narrow: the
+# slug must start with overnight- AND the FIRST folder inside it must end in -staging.
+
+@pytest.mark.parametrize("rel", [
+    "output/overnight-112226/S2-staging/check_x.py",
+    "output/overnight-112226/S5-staging/guard/tools/check_y.py",
+    "output/overnight-112226/S4-staging/pleasantry/hook_copy.py",
+    "output/overnight-990101/S9-staging/page.html",
+])
+def test_overnight_section_staging_folders_pass(repo, rel):
+    assert write(repo, rel) is None
+    assert cbl.build_slug(rel) is None
+
+
+@pytest.mark.parametrize("rel", [
+    "output/overnight-112226/log_gaps.py",             # the run folder itself
+    "output/overnight-112226/S2-work/x.py",            # a section folder that is not staging
+    "output/overnight-112226/staging/x.py",            # no -staging suffix
+    "output/overnight-112226/S2-work/S2-staging/x.py", # staging must be the FIRST inner folder
+    "output/overnight-112226/x-staging.py",            # a file named like it, not a folder
+    "output/memory-hygiene/b2-guard-staging/x.py",     # -staging under a non-overnight slug
+    "output/acme/S2-staging/x.py",                     # a company folder
+    "output/overnightly/S2-staging/x.py",              # prefix needs the hyphen
+])
+def test_staging_exemption_stays_narrow(repo, rel):
+    assert write(repo, rel)
+
+
 def test_other_tools_are_ignored(repo):
     assert cbl.decide("Read", {"file_path": "output/acme/page.html"}, root=repo) is None
     assert cbl.decide("Read", {"notebook_path": "output/acme/m.ipynb"}, root=repo) is None
