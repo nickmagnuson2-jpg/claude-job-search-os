@@ -121,14 +121,40 @@ def render(title: str, body: str, now: datetime) -> tuple[str, str]:
     return heading, block
 
 
+def newest_next_date(text: str, today) -> str | None:
+    """The newest item date in a VALID json next block, else None (no table, no block, or a
+    block workstream_state refuses: those files are not this check's to judge)."""
+    header = _ws.read_header(text)
+    if not header["table"]:
+        return None
+    items, reasons = _ws._read_next(_ws._visible_lines(text), header["end"], today)
+    if reasons:
+        return None
+    return max(i["date"] for i in items)
+
+
+def stale_next_message(target, newest: str, today: str) -> str:
+    return (f"the newest next item in {target} is dated {newest}, older than today ({today}): "
+            f"run `tools/workstream_write.py add-next {target} --action ... --done-when ...` "
+            "first")
+
+
 def add_section(path: Path, title: str, body: str) -> dict:
     target = check_target(path)
     title = check_title(title)
     body = check_body(body)
     try:
         with file_lock(target, timeout=LOCK_TIMEOUT_S):
+            now = _now()
+            # STALE NEXT (Nick, 2026-11-23, codify #5): a dated section newer than the header's
+            # newest next item is the shape that failed S3's 07:59 suite. Refused here because
+            # this heading never appears in a command the guard could read.
+            today = now.date().isoformat()
+            newest = newest_next_date(target.read_text(encoding="utf-8"), now.date())
+            if newest is not None and newest < today:
+                raise WriteError("stale_next", stale_next_message(target, newest, today))
             # Stamped inside the lock, so sections from serialized writers stay in clock order.
-            heading, block = render(title, body, _now())
+            heading, block = render(title, body, now)
             data = block.encode("utf-8")
             if target.stat().st_size and not _ends_with_newline(target):
                 data = b"\n" + data

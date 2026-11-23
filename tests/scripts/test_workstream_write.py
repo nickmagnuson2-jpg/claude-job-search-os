@@ -524,3 +524,48 @@ def test_an_insert_that_does_not_reparse_to_old_plus_new_is_refused(ww, wsn, cap
     assert code == 1 and out["code"] == "insert_unverified"
     assert "nothing was written" in out["message"]
     assert wsn.read_bytes() == before
+
+
+# ============================================================ add-section: stale next block
+# Origin (Nick, 2026-11-23, codify #5 via org f1): a dated section written while the header's
+# newest json-next item is older than it is the shape that failed S3's 07:59 suite. The guard
+# blocks it for cat >>; add-section refuses it itself, since its heading never appears in a
+# command for the guard to read.
+
+def test_add_section_refuses_when_the_newest_next_item_is_older_than_today(ww, wsn, capsys):
+    before = wsn.read_bytes()  # newest next item 2026-11-20, clock 2026-11-21
+    code, out = _call(ww, capsys, "add-section", str(wsn), "--title", "S5: x", "--body", "b")
+    assert code == 1 and out["code"] == "stale_next"
+    assert out["message"] == (
+        f"the newest next item in {wsn.resolve()} is dated 2026-11-20, older than today "
+        f"(2026-11-21): run `tools/workstream_write.py add-next {wsn.resolve()} --action ... "
+        "--done-when ...` first")
+    assert wsn.read_bytes() == before
+
+
+def test_add_section_passes_after_add_next(ww, wsn, capsys):
+    assert _add(ww, capsys, wsn)[0] == 0
+    code, out = _call(ww, capsys, "add-section", str(wsn), "--title", "S5: x", "--body", "b")
+    assert code == 0, out
+    assert _check(wsn)["reasons"] == []
+
+
+def test_add_section_with_a_next_item_dated_today_passes(ww, wsn, capsys):
+    wsn.write_text(WS_TEXT.replace('"2026-11-20"', '"2026-11-21"'), encoding="utf-8")
+    assert _call(ww, capsys, "add-section", str(wsn), "--title", "t", "--body", "b")[0] == 0
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda t: t.replace("```json next", "```json"),           # no next block (exempt files)
+    lambda t: t.replace("| Field | Value |", "| F | V |"),    # no header table
+    lambda t: t.replace('"Second item', '"Second item\\x'),   # broken JSON: not ours to judge
+])
+def test_add_section_does_not_judge_a_file_without_a_valid_next_block(ww, wsn, capsys, mutate):
+    wsn.write_text(mutate(WS_TEXT), encoding="utf-8")
+    assert _call(ww, capsys, "add-section", str(wsn), "--title", "t", "--body", "b")[0] == 0
+
+
+def test_newest_next_date_reads_workstream_state(ww):
+    assert ww.newest_next_date(WS_TEXT, FIXED.date()) == "2026-11-20"
+    assert ww.newest_next_date(WS_TEXT.replace("```json next", "```json"), FIXED.date()) is None
+    assert ww.newest_next_date("no table", FIXED.date()) is None
