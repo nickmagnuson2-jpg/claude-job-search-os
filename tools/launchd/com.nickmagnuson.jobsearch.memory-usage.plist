@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nickmagnuson.jobsearch.memory-usage</string>
+
+    <!-- Nightly: when did each memory rule file's text last enter a session?
+         Reads session transcripts, writes memory-usage.jsonl in the memory folder.
+         Never writes frontmatter. Spec: output/memory-hygiene/112226-state-matrix.md. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/python3</string>
+        <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/memory_usage.py</string>
+        <string>--project-dir</string>
+        <string>/Users/mag/.claude/projects/-Users-mag-Documents-Obsidian-30-projects-job-search</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONIOENCODING</key>
+        <string>utf-8</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/mag/Documents/Obsidian/30-projects/job-search</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>40</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/memory-usage.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/memory-usage.err</string>
+</dict>
+</plist>

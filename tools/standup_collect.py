@@ -84,6 +84,10 @@ def commands(target_date: str, read_only: bool = False,
         # which no surface printed. Summary only; the full record list stays in the tool.
         "learning_ledger": ["tools/learning_ledger.py", "--memory-dir", memory, *r,
                             "--json", "--summary"],
+        # B4 (2026-11-22): the nightly memory_usage scan's one-line freshness summary. Reads
+        # the file the scan wrote; never runs the scan itself.
+        "memory_freshness": ["tools/memory_usage.py", "--project-dir",
+                             str(claude_project_dir(root or REPO_ROOT)), "--standup"],
     }
 
 
