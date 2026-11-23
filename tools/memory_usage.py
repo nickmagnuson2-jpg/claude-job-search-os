@@ -406,7 +406,7 @@ def evidenced_search_prints(command: str, text: str, stems: set[str]) -> set[str
     that", then "measure it where you need to to make the better decision"). Another command's
     output can make the result non-empty when the grep matched nothing, so a grep there counts
     only when some result line matches the grep's own pattern. Measured on one snapshot of 406
-    such greps re-run against the rule files: removes 33 of 48 no-match overcounts and loses 15
+    such greps re-run against the rule files: removes 36 of 48 no-match overcounts and loses 7
     of 358 real reads. A pattern the scan cannot evaluate keeps the simpler rule. A grep that
     is the whole command keeps the simpler rule in classify_bash: a non-empty result is a match."""
     pipes = _pipelines(command)
@@ -420,8 +420,6 @@ def evidenced_search_prints(command: str, text: str, stems: set[str]) -> set[str
                 continue
             files = _search_file_args(" ".join(toks))
             names = _names_in_memory(" ".join(files), stems) if files else set()
-            if not names:
-                continue
             rx = _search_pattern(toks)
             if rx is COUNTS_ANYWAY or any(rx.search(line) for line in lines):
                 found |= names
@@ -581,9 +579,6 @@ def collect(project_dir: Path, stems: set[str], exclude_sessions: Iterable[str] 
                             if stem:
                                 if text.strip():   # an empty result put no text in context
                                     add(session, stem, "read", day, (stem, "read", tid))
-                            # Another file's text is not grep output: on real data its
-                            # `x.md:<n>` lines were citations, not rule text.
-                            continue
                         if name == "Bash" and text.strip():
                             printed, _written, refs = classify_bash(inp.get("command", ""), stems)
                             printed |= evidenced_search_prints(inp.get("command", ""), text, stems)

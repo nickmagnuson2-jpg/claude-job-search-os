@@ -12,6 +12,7 @@ writes the live memory folder.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from datetime import date
 from pathlib import Path
@@ -831,7 +832,7 @@ def test_substitutions(text, bodies):
 # "yeah I want to fix that", then "measure it where you need to to make the better decision": inside a
 # compound command another command's output makes a non-empty result no proof that a grep matched.
 # A grep there counts only when a result line matches its own pattern (measured on the snapshot:
-# removes 33 of 48 no-match overcounts and loses 15 of 358 real reads).
+# removes 36 of 48 no-match overcounts and loses 7 of 358 real reads).
 
 R = f"{MP}feedback_alpha_rule.md"
 B = f"{MP}reference_beta_fact.md"
@@ -881,3 +882,85 @@ def test_a_grep_in_a_compound_command_whose_pattern_matches_no_result_line_is_no
 def test_a_grep_in_a_compound_command_whose_pattern_matches_a_line_or_cannot_be_read_is_a_print(tmp_path, cmd, out):
     res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", out)])
     assert ("feedback_alpha_rule", "bash_print") in _chans(res.events)
+
+
+
+# ---------------------------------------------------------------------------- mutation (7a6b20df)
+
+@pytest.mark.parametrize("cmd,pattern", [
+    ("grep -n -- -x f", "(?:-x)"),                      # after --, the first word is the pattern
+    ("grep -e a -- f", "(?:a)"),                         # -e gave it: the word after -- is a file
+    ("grep --regexp=a f", "(?:a)"),
+    ("grep --regexp a f", "(?:a)"),
+    ("grep --max-count 3 pat f", "(?:pat)"),             # a long option's value is not the pattern
+    ("grep --max-count=3 pat f", "(?:pat)"),
+    ("grep -A 2 pat f", "(?:pat)"),                      # nor a short option's value
+    ("grep -A2 pat f", "(?:pat)"),
+    ("grep -nA2 pat f", "(?:pat)"),
+    ("grep -epat f", "(?:pat)"),
+    ("grep -n -e pat f", "(?:pat)"),
+    ("grep -ne pat f", "(?:pat)"),
+    ("grep -e a -e b f", "(?:a)|(?:b)"),
+    ("grep 'a+b' f", "(?:a\\+b)"),                       # basic regex: + is literal
+    ("grep 'a\\+b' f", "(?:a+b)"),
+    ("grep -E 'a+b' f", "(?:a+b)"),
+    ("grep -F 'a.b' f", "(?:a\\.b)"),
+])
+def test_search_pattern_reads_the_pattern(cmd, pattern):
+    assert mu._search_pattern(cmd.split()).pattern == pattern   # words as _stage_tokens gives them, quotes kept
+
+
+@pytest.mark.parametrize("toks", [
+    ["grep", "'unbalanced", "f"],                        # shell quoting it cannot parse
+    ["grep", "-E", "(", "f"],                            # Python cannot compile it
+    ["grep", "--"],                                      # no pattern
+])
+def test_search_pattern_it_cannot_evaluate_counts_anyway(toks):
+    assert mu._search_pattern(toks) is mu.COUNTS_ANYWAY
+
+
+@pytest.mark.parametrize("toks", [["grep", "-n", "-e"], ["grep", "--regexp"]])
+def test_an_option_missing_its_pattern_gives_an_empty_pattern(toks):
+    assert mu._search_pattern(toks).pattern == "(?:)"
+
+
+def test_search_pattern_ignores_case_only_when_asked():
+    assert mu._search_pattern(["grep", "-i", "a", "f"]).flags & re.I
+    assert not mu._search_pattern(["grep", "a", "f"]).flags & re.I
+    assert not mu._search_pattern(["rg", "-S", "A", "f"]).flags & re.I   # smart case: an upper letter
+
+
+STEMS_ALPHA = {"feedback_alpha_rule"}
+
+
+@pytest.mark.parametrize("cmd,text,found", [
+    (f"grep -n alpha {R}", "3:alpha", set()),                                 # whole command: not this rule's job
+    (f"grep alpha {R} > /dev/null; echo alpha", "alpha", set()),              # its stdout never reached the result
+    (f"grep alpha {R} | wc -l; echo alpha", "1\nalpha", set()),
+    (f"cat {R}; echo alpha", "alpha", set()),                                 # not a search
+    (f"grep -n alpha {R}; echo ---", "3:alpha\n---", STEMS_ALPHA),
+    (f"grep -n alpha {MP}notes.md; echo ---", "3:alpha\n---", set()),        # not a rule file
+])
+def test_evidenced_search_prints(cmd, text, found):
+    assert mu.evidenced_search_prints(cmd, text, set(STEMS)) == found
+
+
+@pytest.mark.parametrize("cmd,i,reaches", [
+    (f"cat {R} > out.txt", 0, False),
+    (f"cat {R} | wc -l", 0, False),
+    (f"cat {R} | head -3", 0, True),
+    (f"cat {R} | sed -n 1,3p", 0, True),
+    (f"cat {R} | sed -i '' 's/a/b/' other.txt", 0, False),                # sed -i writes, prints nothing
+    (f"cat {R} | grep -c a", 0, False),
+    (f"cat {R} | grep a", 0, True),
+])
+def test_reaches_result(cmd, i, reaches):
+    assert mu._reaches_result(mu._pipelines(cmd)[0], i) is reaches
+
+
+@pytest.mark.parametrize("text,bodies", [
+    ("x $(a \\)) y", ["a \\)"]),                        # an escaped ) does not close the body
+    ('x $(echo "a)b")', ['echo "a)b"']),               # nor a ) inside quotes
+])
+def test_substitutions_escapes_and_quotes(text, bodies):
+    assert mu._substitutions(text) == bodies
