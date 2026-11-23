@@ -981,6 +981,8 @@ FAKE = "memory/feedback_alpha_rule.md:3:not rule text"
     f"ls memory | xargs grep -n alpha > /tmp/o; printf '{FAKE}\\n'",
     f"x=$(grep -rn alpha memory/) > /dev/null; printf '{FAKE}\\n'",
     f"grep -rn zzz memory/; printf '{FAKE}\\n'",                    # the grep's pattern is not in the line
+    f"grep -rn rule memory/ >/dev/null; printf '{FAKE}\\n'",        # its pattern matches, but its output is gone
+    "grep -rn rule memory/ > /tmp/out.txt",                          # a whole command whose output is gone
 ])
 def test_a_grep_line_needs_a_reaching_search_whose_pattern_it_matches(tmp_path, cmd):
     res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", FAKE)])
