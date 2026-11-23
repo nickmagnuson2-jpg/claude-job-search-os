@@ -355,3 +355,16 @@ def test_a_backlog_row_without_a_numeric_rank_is_refused(run_dir, row):
 
 def test_the_backlog_header_and_separator_rows_are_not_checked_as_items(run_dir):
     assert ls.brief_check(write_brief(run_dir, filled_template()), org="proj-org") == []
+
+
+# ---------------------------------------------------------------- rules 4 and 17 additions (2026-11-23) travel by rule text
+
+@pytest.mark.parametrize("n, sentence", [
+    (4, "each agent gets an explicit private scratch path"),
+    (17, "Only a P0 gets a fix; a P1 is parked with a reason unless org or Nick rules otherwise."),
+])
+def test_a_brief_missing_a_rule_addition_is_refused(run_dir, n, sentence):
+    t = filled_template()
+    assert sentence in t
+    p = write_brief(run_dir, t.replace(sentence, "", 1))
+    assert any(x.startswith(f"rule {n} does not match") for x in ls.brief_check(p, org="proj-org"))

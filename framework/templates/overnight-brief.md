@@ -44,7 +44,7 @@ Ranked by value to the search before any section is written: live processes firs
 1. **Check in with the org by SendMessage** at start (name + section), at each commit, when blocked, when done, and at least every 30 minutes. Silence for 30+ minutes is chased; 60 is flagged.
 2. **Timestamps come from `date`**, never an estimate. Log in dated `##` sections in your section's log file (named per section below).
 3. **No sends, no pushes, no applications.** Do not write `data/job-pipeline.md`, `data/scan-targets.yaml`, the company queue or `data/inbox.md`. Drafts only through `/follow-up`, `/cold-outreach`, `/draft-email`, stopping before send.
-4. **Code only in a worktree** under `~/Library/Caches/claude-worktrees/`. Mutation `--max-hours 2` unless the section says otherwise. Codex then Grok, serially, fully staged. Ask the org for the suite slot.
+4. **Code only in a worktree** under `~/Library/Caches/claude-worktrees/`. Mutation `--max-hours 2` unless the section says otherwise. Codex then Grok, serially, fully staged. Ask the org for the suite slot. A section that runs parallel subagents runs at most 20 at once; each agent gets an explicit private scratch path, every other scratchpad path is forbidden to it, and each agent writes a provenance file of the scratch paths it touched.
 5. **Guard-protected files** (`tools/check_*.py`, `.claude/settings.json`, `CLAUDE.md`, anything `check_guard_edit_approval` blocks): stage the change under `output/overnight-<MMDDYY>/<section>-staging/` with INSTALL.md and a sha256 baseline. Do not ask another session to apply it. The org installs onto the section's branch and commits; THEN the builder runs Codex + Grok (`--bar`) on that installed tip, then the suite. Reviews of the staged copy do not count for the push. Any repair after install is a new staged baseline, a new install commit and both reviews again.
 6. **Memory tier:** only the sections named for it write it, only after the org says so, only through the writers (`record_fire` / `memory_write`). Everyone else proposes lessons to `output/lessons-<MMDD>/<session>-<ref>.md`.
 7. **Questions for Nick go only through `tools/decision_write.py add`** (with `--lean`, `--rests-on`, `--if-nothing`), after checking `data/goals.md`, RULING lines in `data/workstreams/*.md` and the decision queue. The morning page lists them.
@@ -57,7 +57,7 @@ Ranked by value to the search before any section is written: live processes firs
 14. **Ask why, and is there a better way, before building:** every build plan, design lean or pilot names Why (conversations / applications / speed, with evidence) and Alternatives considered (2+, including services Nick already has) and why the chosen one wins. The org rejects plans without both lines. Send the plan to the org before the first code commit.
 15. **Next items are add-only:** never rewrite, reorder or delete another entry's text in a workstream file, by hand or by script; add a new dated entry that supersedes it. Never edit a STATE-BLOCK.
 16. **Suite slot = a live "go now" from the org only**, granted after `pgrep -fl "suite_record|pytest"` shows nothing running. "Free whenever you're ready" is not a grant. Release it by message when done.
-17. **Review staging:** `git add` every new file before a review (never `git add -N`), run models one after another, and check the `tree` field of your ledger rows; a `tree: null` row does not count.
+17. **Review staging:** `git add` every new file before a review (never `git add -N`), run models one after another, and check the `tree` field of your ledger rows; a `tree: null` row does not count. Review rounds: one Codex + one Grok; a third only for a P0. Only a P0 gets a fix; a P1 is parked with a reason unless org or Nick rules otherwise.
 18. **Close-out:** when the org calls the close-out, run /lessons-learned in proposal mode to `output/lessons-<MMDD>/<session>-<ref>.md` and report an inventory, one line per piece of work and where it lives. Nothing is removed before every session has answered.
 
 ## Sections
@@ -69,6 +69,7 @@ Ranked by value to the search before any section is written: live processes firs
 - **Input:** <files, rulings, with paths>
 - **Do:** <steps>
 - **Owns:** <every file or path this section writes; no other section writes them>
+- **Scratch isolation:** <only if the section runs parallel subagents: the scratch root, one private path per agent, and where each agent's provenance file goes; otherwise 'none'>
 - **Log file:** `data/workstreams/<file>.md`
 - **Done when:** <the named files that exist, with every listed field filled>
 
