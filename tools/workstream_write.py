@@ -3,6 +3,7 @@
 the clock by this script, never typed.
 
     add-section FILE --title TITLE (--body-file PATH | --body TEXT | --body-file -)
+    add-next    FILE --action TEXT --done-when TEXT
 
 Writes, at the end of FILE:
 
@@ -21,6 +22,17 @@ two writer calls serialize) and appends with one O_APPEND write, the same primit
 uses, so a lock-unaware `cat >>` running at the same moment is never lost. A whole-file
 read-modify-write could drop it.
 
+ADD-NEXT appends one {"date", "action", "done_when"} item to the ```json next block under the
+header table. The date is today's, from the clock: workstream_state refuses an item dated after
+today, and an item dated before today is already stale, so there is no --date. The file is
+parsed by workstream_state's own reader (imported, never copied, so the writer and the check
+that failed S3's suite on 2026-11-23 cannot disagree); a block that is already invalid is
+refused rather than appended to. The item is inserted as text just before the list's closing
+`]`: no existing item is re-serialized, reordered or touched, and the result is re-parsed and
+checked to equal the old items plus the new one, with every original byte still in place. The
+read-modify-write runs under inbox_lock.atomic_update, which retries when a lock-unaware writer
+(a `cat >>`) changes the file mid-transform.
+
 Scope: FILE must already exist, end in .md, and sit in a directory named data/workstreams.
 Creating a workstream is a registry decision, not a log entry.
 
@@ -38,7 +50,13 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from inbox_lock import LockTimeout, file_lock  # noqa: E402
+from inbox_lock import ConcurrentModification, LockTimeout, atomic_update, file_lock  # noqa: E402
+import workstream_state as _ws  # noqa: E402
+
+# The workstream_state names add-next reuses. Private ones by org f1's ruling (2026-11-23), so
+# no other branch touches workstream_state.py; test_every_workstream_state_name_the_writer_
+# imports_still_exists fails by name if one is renamed.
+STATE_NAMES = ("_visible_lines", "read_header", "_read_next", "NEXT_FENCE", "MIN_ACTION")
 
 HEADING_FMT = "## {stamp} by `date` | {title}"
 STAMP_FMT = "%Y-%m-%d %H:%M"
@@ -126,6 +144,68 @@ def add_section(path: Path, title: str, body: str) -> dict:
     return {"status": "ok", "file": str(target), "heading": heading, "bytes": written}
 
 
+def _check_text(field: str, value: str) -> str:
+    if len(value.strip()) < _ws.MIN_ACTION:
+        raise WriteError(f"short_{field}",
+                         f"--{field.replace('_', '-')} must be at least {_ws.MIN_ACTION} "
+                         "characters" + (" stating the observable result that means done"
+                                         if field == "done_when" else ""))
+    return value
+
+
+def _insert_item(text: str, item: dict, today) -> str:
+    """`text` with `item` appended to its next block, or WriteError. Pure: no I/O."""
+    header = _ws.read_header(text)
+    if not header["table"]:
+        raise WriteError("no_header_table", "no '| Field | Value |' header table, so there "
+                         "is no next block to append to")
+    lines = _ws._visible_lines(text)
+    items, reasons = _ws._read_next(lines, header["end"], today)
+    if reasons:
+        raise WriteError("next_block_invalid", "the next block is already invalid, fix it "
+                         "first: " + "; ".join(reasons))
+    start = next(i for i, ln in enumerate(lines) if ln.strip() == _ws.NEXT_FENCE)
+    close = next(k for k in range(start + 1, len(lines)) if lines[k].strip() == "```")
+    raw = text.splitlines(keepends=True)
+    before, block, after = "".join(raw[:start + 1]), "".join(raw[start + 1:close]), \
+        "".join(raw[close:])
+    k = block.rindex("]")
+    head = block[:k].rstrip()
+    rendered = "\n".join("  " + ln for ln in
+                         json.dumps(item, indent=2, ensure_ascii=False).splitlines())
+    insertion = ",\n" + rendered
+    new = before + head + insertion + block[len(head):] + after
+    # Verify, never assume: same items plus one, and every original byte still in place.
+    new_items, new_reasons = _ws._read_next(_ws._visible_lines(new),
+                                            _ws.read_header(new)["end"], today)
+    if new_reasons or new_items != items + [item] or new.replace(insertion, "", 1) != text:
+        raise WriteError("insert_unverified", "the appended block did not re-parse to the "
+                         "old items plus the new one; nothing was written: "
+                         + "; ".join(new_reasons))
+    return new
+
+
+def add_next(path: Path, action: str, done_when: str) -> dict:
+    target = check_target(path)
+    action, done_when = _check_text("action", action), _check_text("done_when", done_when)
+    seen = {}
+
+    def transform(text: str) -> str:
+        now = _now()
+        item = {"date": now.date().isoformat(), "action": action, "done_when": done_when}
+        seen["item"] = item
+        return _insert_item(text, item, now.date())
+
+    try:
+        res = atomic_update(target, transform, timeout=LOCK_TIMEOUT_S)
+    except LockTimeout as e:
+        raise WriteError("lock_timeout", str(e)) from None
+    except ConcurrentModification as e:
+        raise WriteError("concurrent_modification", str(e)) from None
+    return {"status": "ok", "file": str(target), "item": seen["item"],
+            "attempts": res["attempts"]}
+
+
 def _ends_with_newline(path: Path) -> bool:
     with path.open("rb") as f:
         f.seek(-1, os.SEEK_END)
@@ -152,9 +232,16 @@ def main(argv: list[str] | None = None) -> int:
     src = add.add_mutually_exclusive_group(required=True)
     src.add_argument("--body-file")
     src.add_argument("--body")
+    nxt = sub.add_parser("add-next")
+    nxt.add_argument("file")
+    nxt.add_argument("--action", required=True)
+    nxt.add_argument("--done-when", required=True)
     args = ap.parse_args(argv)
     try:
-        result = add_section(Path(args.file), args.title, _read_body(args))
+        if args.command == "add-next":
+            result = add_next(Path(args.file), args.action, args.done_when)
+        else:
+            result = add_section(Path(args.file), args.title, _read_body(args))
     except WriteError as e:
         print(json.dumps({"status": "error", "code": e.code, "message": str(e)},
                          ensure_ascii=False))

@@ -280,3 +280,220 @@ def test_a_short_write_is_reported_not_claimed_ok(ww, ws, capsys, monkeypatch):
     monkeypatch.undo()
     assert code == 1 and out["code"] == "short_write"
     assert out["message"].startswith("wrote 5 of ")
+
+
+# ============================================================================ add-next
+# Origin (2026-11-23, org f1 / Nick): S3's suite failed at 07:59 on a header Next date that had
+# gone stale, and the repair was a hand-written python edit: a typed date and no lock. add-next
+# appends one item to the ```json next block with today's date from the clock, under
+# inbox_lock.atomic_update, parsed by workstream_state's own reader so the two cannot disagree.
+
+WS_TEXT = """# Workstream: demo
+
+| Field | Value |
+|---|---|
+| **Status** | ACTIVE |
+| **Owner** | s5 |
+| **Value** | V2 |
+| **Size** | S |
+| **Blocker** | none |
+| **Files** | `new:tools/x.py` |
+
+```json next
+[
+  {
+    "date": "2026-11-09",
+    "action": "An old grandfathered item with no done_when at all"
+  },
+  {
+    "date": "2026-11-20",
+    "action": "Second item, the newest before this test runs",
+    "done_when": "a dated section says it is done"
+  }
+]
+```
+
+## 2026-11-21 10:00 by `date` | a section newer than every next item
+- body
+"""
+
+
+@pytest.fixture
+def wsn(tmp_path):
+    d = tmp_path / "repo" / "data" / "workstreams"
+    d.mkdir(parents=True)
+    f = d / "demo.md"
+    f.write_text(WS_TEXT, encoding="utf-8")
+    return f
+
+
+def _state():
+    sys.path.insert(0, str(TOOLS))
+    try:
+        return importlib.import_module("workstream_state")
+    finally:
+        sys.path.remove(str(TOOLS))
+
+
+def _check(path):
+    st = _state()
+    return st.check_workstream("demo", path.read_text(encoding="utf-8"), today=FIXED.date(),
+                               root=path.parents[2], question_state=lambda q: None,
+                               branch_state=lambda b: None)
+
+
+def _items(path):
+    st = _state()
+    text = path.read_text(encoding="utf-8")
+    items, reasons = st._read_next(st._visible_lines(text), st.read_header(text)["end"],
+                                   FIXED.date())
+    assert reasons == []
+    return items
+
+
+NEW = {"action": "Rebase the writer branch on main and rerun the suite",
+       "done_when": "a PASS row for the new tip is in tools/.suite-ledger.jsonl"}
+
+
+def _add(ww, capsys, path, **kw):
+    a = {**NEW, **kw}
+    return _call(ww, capsys, "add-next", str(path), "--action", a["action"],
+                 "--done-when", a["done_when"])
+
+
+def test_add_next_appends_one_item_dated_today_from_the_clock(ww, wsn, capsys):
+    before = _items(wsn)
+    code, out = _add(ww, capsys, wsn)
+    assert code == 0, out
+    after = _items(wsn)
+    assert after == before + [{"date": "2026-11-21", **NEW}]
+    assert out["status"] == "ok"
+    assert out["item"] == {"date": "2026-11-21", **NEW}
+    assert out["file"] == str(wsn.resolve())
+
+
+def test_add_next_never_touches_an_existing_byte(ww, wsn, capsys):
+    original = wsn.read_text(encoding="utf-8")
+    _add(ww, capsys, wsn)
+    new = wsn.read_text(encoding="utf-8")
+    inserted = (',\n  {\n    "date": "2026-11-21",\n    "action": "' + NEW["action"] +
+                '",\n    "done_when": "' + NEW["done_when"] + '"\n  }')
+    assert inserted in new
+    assert new.replace(inserted, "", 1) == original
+
+
+def test_the_written_file_passes_check_workstream(ww, wsn, capsys):
+    # Before: the newest next item (11-20) is older than the newest dated section (11-21),
+    # the stale-header shape that failed S3's suite. After add-next: no reasons.
+    assert any("older than the newest dated section" in r for r in _check(wsn)["reasons"])
+    _add(ww, capsys, wsn)
+    assert _check(wsn)["reasons"] == []
+
+
+def test_quotes_backslashes_and_unicode_round_trip(ww, wsn, capsys):
+    action = 'Fix the "stale" header \\ in café notes, then rerun'
+    code, out = _add(ww, capsys, wsn, action=action)
+    assert code == 0, out
+    assert _items(wsn)[-1]["action"] == action
+
+
+def test_a_concurrent_cat_append_during_add_next_survives(ww, wsn, capsys, monkeypatch):
+    real_now, fired = ww._now, []
+
+    def now_with_interleaved_append():
+        if not fired:
+            fired.append(1)
+            with wsn.open("a", encoding="utf-8") as f:
+                f.write("\n## 2026-11-21 18:46 by `date` | other session via cat >>\n- theirs\n")
+        return real_now()
+
+    monkeypatch.setattr(ww, "_now", now_with_interleaved_append)
+    code, out = _add(ww, capsys, wsn)
+    assert code == 0, out
+    text = wsn.read_text(encoding="utf-8")
+    assert "- theirs" in text
+    assert _items(wsn)[-1]["action"] == NEW["action"]
+    assert out["attempts"] == 2
+
+
+def test_a_writer_that_keeps_changing_the_file_is_refused_by_name(ww, wsn, capsys, monkeypatch):
+    real_now = ww._now
+
+    def always_interleave():
+        with wsn.open("a", encoding="utf-8") as f:
+            f.write("- another lock-unaware line\n")
+        return real_now()
+
+    monkeypatch.setattr(ww, "_now", always_interleave)
+    code, out = _add(ww, capsys, wsn)
+    assert code == 1 and out["code"] == "concurrent_modification"
+    assert NEW["action"] not in wsn.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("mutate,code_,fragment", [
+    (lambda t: t.replace("| Field | Value |", "| F | V |"), "no_header_table", "header table"),
+    (lambda t: t.replace("```json next", "```json"), "next_block_invalid", "missing next block"),
+    (lambda t: t.replace('"Second item', '"Second item\\x'), "next_block_invalid",
+     "not strict JSON"),
+    (lambda t: t.replace('"2026-11-20"', '"2026-12-31"'), "next_block_invalid",
+     "is after today"),
+])
+def test_a_broken_block_is_refused_and_left_untouched(ww, wsn, capsys, mutate, code_, fragment):
+    wsn.write_text(mutate(WS_TEXT), encoding="utf-8")
+    before = wsn.read_bytes()
+    code, out = _add(ww, capsys, wsn)
+    assert code == 1 and out["code"] == code_
+    assert fragment in out["message"]
+    assert wsn.read_bytes() == before
+
+
+@pytest.mark.parametrize("field,value", [("action", "too short"), ("done_when", "short"),
+                                         ("action", "   " + "x" * 3 + "   ")])
+def test_a_short_action_or_done_when_is_refused(ww, wsn, capsys, field, value):
+    before = wsn.read_bytes()
+    code, out = _add(ww, capsys, wsn, **{field: value})
+    assert code == 1 and out["code"] == f"short_{field}"
+    assert "15" in out["message"]
+    assert wsn.read_bytes() == before
+
+
+def test_add_next_targets_only_existing_workstream_files(ww, wsn, capsys, tmp_path):
+    code, out = _add(ww, capsys, wsn.parent / "missing.md")
+    assert code == 1 and out["code"] == "no_such_workstream"
+    other = tmp_path / "elsewhere.md"
+    other.write_text(WS_TEXT, encoding="utf-8")
+    code, out = _add(ww, capsys, other)
+    assert code == 1 and out["code"] == "not_a_workstream"
+    assert other.read_text(encoding="utf-8") == WS_TEXT
+
+
+def test_add_next_has_no_date_argument_and_requires_done_when(ww, wsn):
+    with pytest.raises(SystemExit) as e:
+        ww.main(["add-next", str(wsn), "--action", NEW["action"], "--done-when",
+                 NEW["done_when"], "--date", "2026-11-21"])
+    assert e.value.code == 2
+    with pytest.raises(SystemExit) as e:
+        ww.main(["add-next", str(wsn), "--action", NEW["action"]])
+    assert e.value.code == 2
+
+
+def test_every_workstream_state_name_the_writer_imports_still_exists(ww):
+    # The writer reuses workstream_state's own parser (private names, by org f1's ruling) so
+    # the two cannot disagree. A rename there must fail HERE, by name, not at runtime.
+    st = _state()
+    assert ww.STATE_NAMES == ("_visible_lines", "read_header", "_read_next", "NEXT_FENCE",
+                              "MIN_ACTION")
+    missing = [n for n in ww.STATE_NAMES if not hasattr(st, n)]
+    assert not missing, f"workstream_state no longer defines {missing}; workstream_write.py " \
+                        "imports them for add-next"
+
+
+def test_add_next_cli_end_to_end_uses_the_real_date(wsn, tmp_path):
+    env = {**os.environ, "JOBSEARCH_LOCK_DIR": str(tmp_path / "locks"),
+           "PYTHONIOENCODING": "utf-8"}
+    r = subprocess.run([sys.executable, str(TOOL), "add-next", str(wsn), "--action",
+                        NEW["action"], "--done-when", NEW["done_when"]],
+                       capture_output=True, text=True, env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    from datetime import date
+    assert json.loads(r.stdout)["item"]["date"] == date.today().isoformat()
