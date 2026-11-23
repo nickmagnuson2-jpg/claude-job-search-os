@@ -1106,3 +1106,11 @@ def test_a_cut_line_of_exactly_the_cut_width_counts(tmp_path):
     cmd = "grep -rn PIPESTATUS memory/ | cut -c1-40; echo ---"
     res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", line + "\n---")])
     assert ("feedback_alpha_rule", "grep_line") in _chans(res.events)
+
+
+
+def test_only_cut_sets_a_line_width(tmp_path):
+    """`head -c -6` looks like a cut range but cuts no line: a 6-character line is not evidence."""
+    cmd = f"grep -n zzz {R} | head -c -6; echo abcdef"
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", "abcdef")])
+    assert ("feedback_alpha_rule", "bash_print") not in _chans(res.events)
