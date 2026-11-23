@@ -30,7 +30,6 @@
   "tools/check_prep_doc_format.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/check_public_pii.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/check_replace_all_safety.py": "pre-existing at 2026-10-23, convert when next touched",
-  "tools/check_save_claims.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/check_scanner_examined_something.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/check_script_error_logged.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/check_stale_file_claim.py": "pre-existing at 2026-10-23, convert when next touched",

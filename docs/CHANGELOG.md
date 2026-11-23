@@ -5,6 +5,22 @@ Format: newest entries at the top.
 
 Forked from raphaotten/claude-interview-coach (MIT / CC BY 4.0).
 
+## 2026-11-23: check_save_claims retired
+
+- **The Stop hook `check_save_claims.py` is removed, with its two test files and its
+  registry entries.** 2026-11-23: 0 true positives in 44 blocks. That count covers every block
+  it made from 2026-08-31 to 2026-11-23, and two independent readers labelled the blocks
+  without seeing each other's labels. Every block was a false positive:
+  - a real file in a root the hook did not check (sibling repo, memory folder, skills, scratchpad)
+  - a sentence that was not a completion claim (a proposal, to-do, negation or example)
+  - a tokenizer cut, a library name, or another subject's action
+  Each block cost a turn. Patching it over eleven weeks moved the false-positive shapes
+  around without producing a single true catch. Ruling: Nick, 2026-11-23.
+- The file was last changed in 5ebfb4f6 and is present through b2495952, so git history
+  holds it if it is ever wanted back. `tests/scripts/test_retired_hooks.py` keeps it unwired,
+  off disk and out of every registry.
+- `hook_runtime.last_assistant_text` stays: `check_stale_file_claim.py` still uses it.
+
 ## 2026-11-05: One reply logged once, diff-scoped mutation runs, private names out of tracked files
 
 **One reply is logged once (PR #19, dedupe-inbound)**

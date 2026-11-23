@@ -79,7 +79,6 @@ GRANDFATHERED = frozenset([
     "tools/check_prep_doc_format.py",
     "tools/check_public_pii.py",
     "tools/check_replace_all_safety.py",
-    "tools/check_save_claims.py",
     "tools/check_scanner_examined_something.py",
     "tools/check_script_error_logged.py",
     "tools/check_stale_file_claim.py",

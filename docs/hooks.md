@@ -52,7 +52,6 @@ Most hooks block the tool call outright (exit code 2), and Claude sees the reaso
 | `check_screenshot_path.py` | PreToolUse on Bash | Fires on a hand-typed macOS screenshot filename with a regular space before AM/PM (the real name uses U+202F) |
 | `check_workflow_scriptpath.py` | PreToolUse on Workflow | Guards against running a cached snapshot of a workflow script instead of the file on disk |
 | `check_module_imports.py` | PostToolUse on Write/Edit/MultiEdit | Imports a Python module right after it is edited and warns if the import raises |
-| `check_save_claims.py` | Stop | Catches a reply that says a file was written when no write happened, and a reply that says a file is missing or does not exist when a file by that name is on disk (in the repo, a sibling repo, `.claude/skills/`, or the memory folders). Conditionals and questions are skipped |
 | `check_stale_file_claim.py` | Stop | Catches a reply that says a named file was not touched this session when the filesystem says it was |
 | `check_derived_ratio.py` | Stop | Blocks a reply that states a ratio or percentage worked out in chat, in one of the shapes it lists ("12 of 40 (30%)", "7 of the 22, or 31.8%"), when neither a tool's output nor the user's message carries it. Quoted ratios and stated targets pass. The fix is to compute it in a script and quote the output |
 
