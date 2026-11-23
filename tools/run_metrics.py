@@ -66,7 +66,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from hook_runtime import claude_project_dir  # tools/ is sys.path[0] for a script run; tests add it
+# tools/ is sys.path[0] only for a script run; this line keeps `import tools.run_metrics` working
+# (tests/scripts/test_shared_module_package_import.py).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from hook_runtime import claude_project_dir  # noqa: E402
 
 
 

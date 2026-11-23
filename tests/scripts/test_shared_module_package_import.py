@@ -103,6 +103,7 @@ TOOLS = (
     "reader_review",
     "remember_apply",
     "remember_classify",
+    "run_metrics",
     "scan_jobs",
     "scan_transcript_failures",
     "source_check",
