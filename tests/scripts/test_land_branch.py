@@ -330,6 +330,20 @@ def test_an_audit_refusal_carries_the_tools_own_fix_instruction(repo, monkeypatc
     assert "audit_pii_record: re-record from the main checkout: X" in r["refusals"]
 
 
+
+def test_audit_message_is_found_past_trailing_non_object_lines(repo, monkeypatch):
+    """The message comes from the last JSON object line. A later line that is not JSON,
+    or is JSON but not an object, is skipped rather than ending the search or crashing."""
+    branch(repo, "feat", {"f.py": "x = 1\n"})
+    monkeypatch.setenv("LB_AUDIT_RC", "1")
+    monkeypatch.setenv("LB_AUDIT_OUT", "\n".join([
+        json.dumps({"code": "recorded_only_in_worktree", "message": "fix: Y"}),
+        "[1]",
+        "a trailing log line",
+    ]))
+    r = by_name(lb.check(repo["root"], ["feat"], gh=gh_local_main(repo)))["feat"]
+    assert "audit_pii_record: fix: Y" in r["refusals"]
+
 def test_pii_hit_refuses_and_is_listed(repo, monkeypatch):
     branch(repo, "feat", {"f.py": "x = 1\n"})
     monkeypatch.setenv("LB_PII_MODE", "hit")
