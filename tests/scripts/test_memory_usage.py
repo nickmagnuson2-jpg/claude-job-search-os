@@ -824,3 +824,60 @@ def test_a_substitution_or_xargs_without_a_line_printing_grep_is_not_a_source(tm
 ])
 def test_substitutions(text, bodies):
     assert mu._substitutions(text) == bodies
+
+
+
+# ---------------------------------------------------------------------------- Nick ruling (2026-11-22)
+# "yeah I want to fix that", then "measure it where you need to to make the better decision": inside a
+# compound command another command's output makes a non-empty result no proof that a grep matched.
+# A grep there counts only when a result line matches its own pattern (measured on the snapshot:
+# removes 33 of 48 no-match overcounts and loses 15 of 358 real reads).
+
+R = f"{MP}feedback_alpha_rule.md"
+B = f"{MP}reference_beta_fact.md"
+
+
+@pytest.mark.parametrize("cmd,out", [
+    (f"grep -n X {R}; echo ---; cat other.txt", "---\nother file text"),             # no match
+    (f"grep X {R}; echo ---", "---"),
+    (f"grep -n X {R}; grep -n Y notes.txt", "4:Y in notes"),                       # the other grep's line
+    (f"grep -n X {R}; cat -n other.txt", "1\tother"),
+    (f"grep -H X {R}; echo ---", "---"),
+    (f"echo start; grep -n X {R} | head -3", "start"),
+    (f"grep -n ALPHA {R}; echo ---", "3:alpha here\n---"),                         # case matters without -i
+    (f"grep -nF 'a.b' {R}; echo ---", "1:axb\n---"),                               # -F is literal
+    (f"grep -n 'a\\|b' {R}; echo ---", "1:c\n---"),
+    (f"grep -nE 'q(x|y)' {R}; echo ---", "1:qz\n---"),
+    (f"rg -n 'q+' {R}; echo ---", "1:x\n---"),
+    (f"grep -n zzz {R}; grep -n alpha {B}", "3:alpha here"),                       # line belongs to beta's grep
+])
+def test_a_grep_in_a_compound_command_whose_pattern_matches_no_result_line_is_not_a_print(tmp_path, cmd, out):
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", out)])
+    assert ("feedback_alpha_rule", "bash_print") not in _chans(res.events)
+
+
+@pytest.mark.parametrize("cmd,out", [
+    (f"grep -n X {R}; echo ---; cat other.txt", "12:X here\n---\nother"),
+    (f"echo start; grep -n X {R} | head -3", "start\n3:X"),
+    (f"grep X {R}; echo ---", "X matched line\n---"),                              # plain single-file grep
+    (f"grep -H X {R}; echo ---", f"{R}:X here\n---"),
+    (f"grep -in ALPHA {R}; echo ---", "3:alpha here\n---"),
+    (f"grep -n --ignore-case ALPHA {R}; echo ---", "3:alpha here\n---"),
+    (f"rg -nS alpha {R}; echo ---", "3:ALPHA here\n---"),                         # rg smart case
+    (f"grep -nF 'a.b' {R}; echo ---", "1:a.b\n---"),
+    (f"grep -n 'a\\|b' {R}; echo ---", "1:b\n---"),                               # BRE alternation
+    (f"grep -n 'a+' {R}; echo ---", "1:a+\n---"),                                  # BRE + is literal
+    (f"grep -nE 'q(x|y)' {R}; echo ---", "1:qy\n---"),
+    (f"grep -n -e zzz -e alpha {R}; echo ---", "3:alpha\n---"),
+    (f"grep -n alpha {R}; grep -n zzz {B}", "3:alpha here"),
+    (f"grep -n \"$k\" {R}; echo ---", "---"),                                       # unknown pattern: counts
+    (f"grep -nv alpha {R}; echo ---", "---"),                                       # -v: counts
+    (f"grep -n -f pats.txt {R}; echo ---", "---"),
+    (f"grep -n '[[:space:]]x' {R}; echo ---", "---"),                               # Python cannot read it: counts
+    (f"grep -n X {R}", "anything"),                                                # standalone: unchanged
+    (f"M={MP}; grep X $M/feedback_alpha_rule.md", "X line"),                       # assignments are not commands
+    (f"cat {R}; echo ---", "---"),                                                 # cat: unchanged
+])
+def test_a_grep_in_a_compound_command_whose_pattern_matches_a_line_or_cannot_be_read_is_a_print(tmp_path, cmd, out):
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", out)])
+    assert ("feedback_alpha_rule", "bash_print") in _chans(res.events)

@@ -7,15 +7,25 @@ gaps: output/analysis/112226-memory-transcript-analysis.md.
 The signal is CONTEXT ENTRY, not use: a transcript shows that a rule's text entered a
 session, never that the rule was applied. Four channels count:
 - read: a Read tool call on the file whose result is not an error;
-- bash_print: a Bash segment whose command word prints a file (cat, head, tail, sed, less,
-  more, bat, awk, nl, grep, rg) naming the file, with non-empty output;
-- grep_line: a grep output line in a non-Read tool result, `<path>/<stem>.md:<line>:<text>`
-  (or `-` separators), whose path opens the line and leads to a memory file;
+- bash_print: a Bash pipeline stage whose command word prints a file (cat, head, tail, sed,
+  less, more, bat, awk, nl, grep, rg) naming the rule's own .md file, whose stdout reaches the
+  result (no redirect, and only pass-through filters after it), with non-empty output. A grep
+  or rg inside a compound command also needs a result line that matches its own pattern
+  (Nick, 2026-11-22);
+- grep_line: a grep output line `<path>/<stem>.md:<line>:<text>` (or `-` separators), whose
+  path opens the line and leads to a memory file, in the result of the Grep tool or of a Bash
+  command with a grep/rg that prints lines (also via xargs or inside $( ));
 - file_attachment: a `file` attachment carrying the file.
 Excluded, because no text entered or the reference is ambiguous: writes (Edit, Write,
 MultiEdit, redirects, sed -i, cp/mv/rm/touch/tee), names in listings, prompts, system
 reminders, hook messages, edit notices and always-loaded files (MEMORY.md / CLAUDE.md), and
 Python heredocs (counted as a known gap, `heredoc_refs`).
+
+Known limits, all on the side of a lower count except the first: cat, head, tail, sed and awk
+of a rule file count whenever the result is non-empty, since they print whenever the file
+exists; inside a compound command a failed one is not told apart from another command's output.
+grep -o, -l, -c and -q count nothing. In a compound command a line printed by another
+command that happens to match a grep's pattern keeps that grep counted.
 
 Each event keeps its session; a session's breadth is its count of distinct files entered.
 Breadth is provenance, not deletion: broad (audit) sessions keep their events, but whether
@@ -299,7 +309,9 @@ def classify_bash(command: str, stems: set[str]) -> tuple[set[str], set[str], in
     heredoc_refs = sum(len(_names(m.group(2), stems)) for m in HEREDOC.finditer(command))
     printed: set[str] = set()
     written: set[str] = set()
-    for stages in _pipelines(command):
+    pipes = _pipelines(command)
+    compound = _is_compound(pipes)
+    for stages in pipes:
         for i, (seg, toks) in enumerate(stages):
             if not toks:
                 continue
@@ -311,9 +323,109 @@ def classify_bash(command: str, stems: set[str]) -> tuple[set[str], set[str], in
                 found = _names_in_memory(seg, stems)
             if REDIRECT_TO_RULE.search(seg) or (verb == "sed" and "-i" in toks) or verb in WRITE_VERBS:
                 written |= found
-            elif verb in PRINT_VERBS and _reaches_result(stages, i):
-                printed |= found
+            elif verb in PRINT_VERBS and _reaches_result(stages, i) and not (compound and verb in SEARCH_VERBS):
+                printed |= found   # a grep in a compound command needs evidence: evidenced_search_prints
     return printed, written, heredoc_refs
+
+
+def _is_compound(pipes: list) -> bool:
+    """More than one command that runs something (assignments and cd alone do not)."""
+    return sum(1 for stages in pipes if any(toks for _raw, toks in stages)) > 1
+
+
+COUNTS_ANYWAY = object()   # a pattern the scan cannot evaluate: the grep counts as before
+
+
+def _search_pattern(toks: list[str]):
+    """The compiled pattern of a grep/rg stage, or COUNTS_ANYWAY when it cannot be evaluated
+    here: a shell variable, -f (patterns in a file), -v (prints the lines that do NOT match),
+    or syntax Python's re does not read (POSIX classes). Those keep the simpler rule."""
+    try:
+        argv = shlex.split(" ".join(toks))
+    except ValueError:
+        return COUNTS_ANYWAY
+    verb = argv[0].split("/")[-1]
+    g = _GRAMMAR[verb]
+    pats, flags, operand, i = [], set(), None, 1
+    while i < len(argv):
+        t = argv[i]
+        if t == "--":
+            if not pats and i + 1 < len(argv):
+                operand = argv[i + 1]
+            break
+        if t.startswith("--"):
+            name, has_value = t.split("=", 1)[0], "=" in t
+            value = t.split("=", 1)[1] if has_value else (argv[i + 1] if i + 1 < len(argv) else "")
+            if name == "--regexp":
+                pats.append(value)
+            flags |= {"--ignore-case": {"i"}, "--fixed-strings": {"F"}, "--extended-regexp": {"E"},
+                      "--perl-regexp": {"P"}, "--invert-match": {"v"}, "--file": {"f"},
+                      "--smart-case": {"S"}}.get(name, set())
+            if name in g["value_long"] and not has_value:
+                i += 1
+        elif t.startswith("-") and len(t) > 1:
+            for j, ch in enumerate(t[1:], 1):
+                if ch in g["value_short"]:
+                    flags.add(ch)
+                    value = t[j + 1:] or (argv[i + 1] if i + 1 < len(argv) else "")
+                    if ch == "e":
+                        pats.append(value)
+                    if j == len(t) - 1:
+                        i += 1
+                    break
+                flags.add(ch)
+        elif operand is None and not pats:
+            operand = t
+        i += 1
+    if not pats and operand is not None:
+        pats = [operand]
+    if not pats or flags & {"v", "f"} or any("$" in p or "`" in p or re.search(r"\[:\w+:\]", p) for p in pats):
+        return COUNTS_ANYWAY
+    out = []
+    for p in pats:
+        if "F" in flags:
+            p = re.escape(p)
+        elif verb == "grep" and not flags & {"E", "P"}:
+            # basic regex: \| \( \) \{ \} \+ \? are operators, the bare characters are literal
+            p = re.sub(r"\\([|(){}+?])", "\x00\\1", p)
+            p = re.sub(r"(?<!\x00)([|(){}+?])", r"\\\1", p).replace("\x00", "")
+        out.append(p)
+    ignore = "i" in flags or (verb == "rg" and "S" in flags and not any(c.isupper() for c in "".join(pats)))
+    try:
+        return re.compile("|".join(f"(?:{p})" for p in out), re.I if ignore else 0)
+    except re.error:
+        return COUNTS_ANYWAY
+
+
+# A result line's own text: without the `path:` and `N:` prefixes grep adds.
+LINE_PREFIX = re.compile(r"^\s*(?:\S*?\.md[:-])?(?:\d+[:-])?")
+
+
+def evidenced_search_prints(command: str, text: str, stems: set[str]) -> set[str]:
+    """Rules a grep/rg in a compound command printed (Nick, 2026-11-22: "yeah I want to fix
+    that", then "measure it where you need to to make the better decision"). Another command's
+    output can make the result non-empty when the grep matched nothing, so a grep there counts
+    only when some result line matches the grep's own pattern. Measured on one snapshot of 406
+    such greps re-run against the rule files: removes 33 of 48 no-match overcounts and loses 15
+    of 358 real reads. A pattern the scan cannot evaluate keeps the simpler rule. A grep that
+    is the whole command keeps the simpler rule in classify_bash: a non-empty result is a match."""
+    pipes = _pipelines(command)
+    if not _is_compound(pipes):
+        return set()
+    lines = [LINE_PREFIX.sub("", line) for line in text.splitlines()]
+    found: set[str] = set()
+    for stages in pipes:
+        for i, (_raw, toks) in enumerate(stages):
+            if not toks or toks[0].split("/")[-1] not in SEARCH_VERBS or not _reaches_result(stages, i):
+                continue
+            files = _search_file_args(" ".join(toks))
+            names = _names_in_memory(" ".join(files), stems) if files else set()
+            if not names:
+                continue
+            rx = _search_pattern(toks)
+            if rx is COUNTS_ANYWAY or any(rx.search(line) for line in lines):
+                found |= names
+    return found
 
 
 XARGS_VALUE = {"-I", "-n", "-P", "-L", "-s", "-E", "-d", "-J", "-R", "-S"}
@@ -474,6 +586,7 @@ def collect(project_dir: Path, stems: set[str], exclude_sessions: Iterable[str] 
                             continue
                         if name == "Bash" and text.strip():
                             printed, _written, refs = classify_bash(inp.get("command", ""), stems)
+                            printed |= evidenced_search_prints(inp.get("command", ""), text, stems)
                             heredoc_refs += refs
                             if failed:
                                 # A failed compound command may still have printed the file:
