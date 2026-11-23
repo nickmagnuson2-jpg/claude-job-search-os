@@ -37,6 +37,12 @@ shares one ledger:
 Exit codes: run 0 recorded / 1 not recorded. check 0 pass on record / 1 none (incl. a merge
 conflict) / 2 usage error, bad ref, or unreadable ledger.
 
+LOCK (C2, 2026-11-23): `run` holds inbox_lock.file_lock on the shared ledger for the whole run,
+and pytest inherits the lock fd, so the slot stays held until pytest itself exits. A second
+`run` refuses with code suite_locked and names the holder, or queues with --wait SECONDS.
+`check` never takes the lock. LIMIT: only copies of this file that carry the lock take it. A
+worktree branched before C2 landed runs unlocked until it rebases (Grok 585ac8c5 F2).
+
 LIMIT: the suite runs on tracked files only. Gitignored trees (data/, output/) are absent in
 the temp worktree. It is a linked worktree, so tests marked live_data skip there
 (tests/conftest.py skips them when .git is a file); on a fresh clone they would run.
