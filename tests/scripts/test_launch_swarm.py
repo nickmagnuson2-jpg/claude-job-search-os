@@ -338,3 +338,20 @@ def test_an_invalid_backlog_row_is_refused(run_dir, row, why):
     p = write_brief(run_dir, _backlog_row(filled_template(), row))
     problems = ls.brief_check(p, org="proj-org")
     assert any("backlog row 1" in x and why in x for x in problems)
+
+
+# ---------------------------------------------------------------- Codex r3 F1 (P0): every table row in the backlog is checked
+
+@pytest.mark.parametrize("row", [
+    "|  | an item | banana | `output/x/y.md:3` | S1 |",
+    "| first | an item | speed | `output/x/y.md:3` | S9 |",
+    "| 1. | an item | speed |  | S1 |",
+])
+def test_a_backlog_row_without_a_numeric_rank_is_refused(run_dir, row):
+    t = filled_template().replace("| 1 | filled | speed |", row + "\n| 1 | filled | speed |", 1)
+    p = write_brief(run_dir, t)
+    assert any("backlog row" in x and "rank" in x for x in ls.brief_check(p, org="proj-org"))
+
+
+def test_the_backlog_header_and_separator_rows_are_not_checked_as_items(run_dir):
+    assert ls.brief_check(write_brief(run_dir, filled_template()), org="proj-org") == []

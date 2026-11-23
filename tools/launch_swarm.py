@@ -163,11 +163,14 @@ def brief_check(path: Path, org: str, template: Path = TEMPLATE) -> list:
     if "Ranked backlog" in b.headings and not BACKLOG_ROW_RE.search(backlog):
         problems.append("'## Ranked backlog' has no ranked row ('| 1 | <item> | ...'); rank the backlog before the sections")
     section_ids = {s.id for s in b.sections}
-    for line in backlog.splitlines():
-        if not BACKLOG_ROW_RE.match(line):
-            continue
+    table = [ln for ln in backlog.splitlines() if ln.strip().startswith("|")]
+    # Every table row after the header and separator is an item (Codex r3 F1: a row
+    # whose rank is empty or not a number used to skip all row checks).
+    for n, line in enumerate(table[2:] if len(table) >= 2 else [], start=1):
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        rank = cells[0]
+        rank = cells[0] if cells[0].isdigit() else f"#{n}"
+        if not cells[0].isdigit():
+            problems.append(f"backlog row {rank}: rank {cells[0]!r} is not a number")
         # Rank | Item | Moves | Evidence | Section (Codex r2 F1: each row is checked, not only its presence)
         moves, evidence, section = (cells + ["", "", "", "", ""])[2:5]
         if not _moves_ok(moves):
