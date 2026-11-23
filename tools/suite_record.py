@@ -58,7 +58,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from inbox_lock import LockTimeout, file_lock, lock_path_for  # noqa: E402
+from inbox_lock import LockTimeout, file_lock, held_fd, lock_path_for  # noqa: E402
 
 TOOL_VERSION = "1"
 LEDGER = Path("tools") / ".suite-ledger.jsonl"
@@ -198,14 +198,20 @@ def _tail(log: Path, n: int = 15) -> str:
         return ""
 
 
-def _run_pytest(wt: Path, junit: Path, log: Path, timeout: int) -> int | None:
-    """pytest's returncode, or None on timeout (the whole process group is killed)."""
+def _run_pytest(wt: Path, junit: Path, log: Path, timeout: int,
+                keep_fds: tuple[int, ...] = ()) -> int | None:
+    """pytest's returncode, or None on timeout (the whole process group is killed).
+
+    keep_fds: the suite lock's fd, inherited by pytest. flock belongs to the open file
+    description, so while pytest holds its copy the lock outlives this process: killing the
+    named holder no longer frees the slot while its pytest keeps running (Grok 585ac8c5 F3)."""
     argv = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
             f"--junitxml={junit}"]
     env = child_env()
     with log.open("wb") as out:
         proc = subprocess.Popen(argv, cwd=wt, env=env, stdout=out, stderr=subprocess.STDOUT,
-                                stdin=subprocess.DEVNULL, start_new_session=True)
+                                stdin=subprocess.DEVNULL, start_new_session=True,
+                                pass_fds=keep_fds)
         try:
             return proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -220,6 +226,18 @@ def _run_pytest(wt: Path, junit: Path, log: Path, timeout: int) -> int | None:
 # the kernel releases it when a run exits or crashes and no stale lock can outlive its run.
 # The holder record sits next to the lock file, outside the repo, and is read only to NAME
 # the holder in a refusal; it never decides who holds the lock.
+
+def _alive(pid) -> bool:
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
 
 def holder_path(ledger: Path) -> Path:
     lock = lock_path_for(ledger)
@@ -280,6 +298,9 @@ def cmd_run(root: Path, branch: str, base: str, timeout: int, wait: float = 0) -
         h = e.holder
         who = (f"pid {h.get('pid', '?')} on branch {h.get('branch', '?')}, "
                f"started {h.get('started_at', '?')}") if h else "a run that has not named itself yet"
+        if h and not _alive(h.get("pid")):
+            who += (" (that process has exited; its pytest is still running and holds the "
+                    "lock until it finishes)")
         return _fail("suite_locked", f"another suite is running: {who}. Retry later, or pass "
                      "--wait SECONDS to queue behind it.", holder=h, branch=branch,
                      waited_s=wait)
@@ -319,7 +340,8 @@ def _run_locked(root: Path, common_git: Path, ledger: Path, branch: str, base: s
         admin = admin_dir(wt, common_git)
         junit, log = tmp / "junit.xml", tmp / "pytest.log"
         start = time.monotonic()
-        rc = _run_pytest(wt, junit, log, timeout)
+        fd = held_fd(ledger)
+        rc = _run_pytest(wt, junit, log, timeout, keep_fds=(fd,) if fd is not None else ())
         duration = round(time.monotonic() - start, 1)
         if rc is None:
             return _fail("timeout", f"timeout after {timeout} s", duration_s=duration, **ids)

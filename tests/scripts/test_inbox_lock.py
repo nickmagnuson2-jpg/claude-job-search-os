@@ -604,3 +604,15 @@ def test_a_logging_failure_never_breaks_the_lock(tmp_path, monkeypatch):
     monkeypatch.setattr(inbox_lock.os, "getpid", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
     with inbox_lock.file_lock(tmp_path / "target.md") as lf:
         assert lf.exists()
+
+
+def test_held_fd_is_the_kernel_fd_only_inside_the_lock(tmp_path, monkeypatch):
+    monkeypatch.setenv("JOBSEARCH_LOCK_DIR", str(tmp_path / "locks"))
+    import inbox_lock as il
+    target = tmp_path / "f.txt"
+    assert il.held_fd(target) is None
+    with il.file_lock(target, timeout=0):
+        fd = il.held_fd(target)
+        assert isinstance(fd, int) and fd >= 0
+        os.fstat(fd)  # a real, open descriptor
+    assert il.held_fd(target) is None

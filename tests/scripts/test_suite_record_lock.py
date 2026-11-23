@@ -180,9 +180,9 @@ def test_the_holder_record_names_this_run_while_it_runs(sr, repo, lockdir, tmp_p
     seen = {}
     real = sr._run_pytest
 
-    def spy(wt, junit, log, timeout):
+    def spy(wt, junit, log, timeout, keep_fds=()):
         seen["holder"] = sr.read_holder(repo / LEDGER)
-        return real(wt, junit, log, timeout)
+        return real(wt, junit, log, timeout, keep_fds)
 
     monkeypatch.setattr(sr, "_run_pytest", spy)
     code, out = _run(sr, repo, capsys, "--branch", "feat", "--base", "main")
@@ -239,3 +239,82 @@ def test_an_absent_or_unusable_holder_record_reads_as_empty(sr, repo, lockdir, c
     else:
         hp.write_text(content, encoding="utf-8")
     assert sr.read_holder(repo / LEDGER) == {}
+
+
+# ---- Grok 585ac8c5 F3: killing the named holder must not free the slot while its pytest runs
+
+def test_killing_the_holder_keeps_the_lock_until_its_pytest_exits(sr, repo, lockdir, tmp_path,
+                                                                  tmp_parent, capsys):
+    started, done = tmp_path / "started", tmp_path / "done"
+    slow = ("import time, pathlib\n"
+            "def test_slow():\n"
+            f"    pathlib.Path({str(started)!r}).write_text('x')\n"
+            "    time.sleep(4)\n"
+            f"    pathlib.Path({str(done)!r}).write_text('x')\n")
+    _branch(repo, "slow", {"tests/test_slow.py": slow})
+    _branch(repo, "feat", {"tests/test_feat.py": PASSING})
+    env = {**os.environ, "JOBSEARCH_LOCK_DIR": str(lockdir), "PYTHONIOENCODING": "utf-8"}
+    parent = subprocess.Popen([sys.executable, str(TOOLS / "suite_record.py"), "--repo-root",
+                               str(repo), "run", "--branch", "slow", "--base", "main"],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+    try:
+        deadline = time.monotonic() + 60
+        while not started.exists():
+            assert time.monotonic() < deadline, "slow test never started"
+            time.sleep(0.05)
+        parent.kill()
+        parent.wait()
+        code, out = _run(sr, repo, capsys, "--branch", "feat", "--base", "main")
+        assert code == 1 and out["code"] == "suite_locked"
+        assert out["holder"]["pid"] == parent.pid
+        assert "has exited; its pytest is still running" in out["message"]
+        deadline = time.monotonic() + 60
+        while not done.exists():
+            assert time.monotonic() < deadline, "slow test never finished"
+            time.sleep(0.05)
+        time.sleep(0.5)  # let the orphaned pytest exit and drop its copy of the fd
+        code, out = _run(sr, repo, capsys, "--branch", "feat", "--base", "main", "--wait", "30")
+        assert code == 0, out
+    finally:
+        if parent.poll() is None:
+            parent.kill()
+
+
+def test_a_live_holder_is_not_described_as_exited(sr, repo, lockdir, tmp_parent, capsys):
+    _branch(repo, "feat", {"tests/test_feat.py": PASSING})
+    holder = _hold(repo, lockdir, 30)
+    try:
+        _, out = _run(sr, repo, capsys, "--branch", "feat", "--base", "main")
+    finally:
+        holder.kill()
+        holder.wait()
+    assert "has exited" not in out["message"]
+
+
+@pytest.mark.parametrize("pid,alive", [(None, False), (0, False), (-5, False), ("12", False),
+                                       (os.getpid(), True), (2 ** 22 + 12345, False)])
+def test_alive(sr, pid, alive):
+    assert sr._alive(pid) is alive
+
+
+def test_alive_treats_a_process_we_may_not_signal_as_alive(sr, monkeypatch):
+    def denied(pid, sig):
+        raise PermissionError
+    monkeypatch.setattr(sr.os, "kill", denied)
+    assert sr._alive(1) is True
+
+
+def test_pytest_receives_the_held_lock_fd(sr, repo, lockdir, tmp_parent, capsys, monkeypatch):
+    _branch(repo, "feat", {"tests/test_feat.py": PASSING})
+    seen = {}
+    real = sr._run_pytest
+
+    def spy(wt, junit, log, timeout, keep_fds=()):
+        seen["fds"] = keep_fds
+        seen["held"] = sr.held_fd(repo / LEDGER)
+        return real(wt, junit, log, timeout, keep_fds)
+
+    monkeypatch.setattr(sr, "_run_pytest", spy)
+    code, out = _run(sr, repo, capsys, "--branch", "feat", "--base", "main")
+    assert code == 0, out
+    assert isinstance(seen["held"], int) and seen["fds"] == (seen["held"],)

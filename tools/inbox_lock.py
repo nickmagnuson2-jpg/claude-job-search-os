@@ -248,6 +248,16 @@ def _entry_for(lock_file: Path) -> dict:
 # file_lock
 # ---------------------------------------------------------------------------
 
+def held_fd(path: str | os.PathLike) -> int | None:
+    """The kernel-lock fd this process holds for `path` inside a file_lock block, else None.
+
+    For a caller that must hand the lock to a child process (subprocess pass_fds): flock
+    belongs to the open file description, so a child holding a copy keeps the lock held if
+    this process dies first (suite_record, C2)."""
+    entry = _registry.get(str(lock_path_for(path)))
+    return None if entry is None else entry["fd"]
+
+
 @contextmanager
 def file_lock(
     path: str | os.PathLike,
