@@ -426,12 +426,15 @@ def _search_pattern(toks: list[str]):
 
 # A result line's own text: without the `path:` and `N:` prefixes grep adds.
 LINE_PREFIX = re.compile(r"^(?:\s*\S*?\.md[:-])?(?:\d+[:-])?")   # leading spaces are the line's own
+# A tr that converts case (a-z / A-Z ranges or the upper/lower classes); any other tr keeps it.
+CASE_TR = re.compile(r"a-z|A-Z|\[:(?:upper|lower):\]")
 CUT_WIDTH = re.compile(r"-[cb]\s*\d*-(\d+)")
 
 
 def _line_matcher(stages: list, i: int, toks: list[str]):
     """A test for whether a result line may be stage i's output, judged by its pattern.
-    After tr the case may have changed, so the pattern is matched ignoring case. After
+    After a tr that converts case the pattern is matched ignoring case (Codex confirm3 F1:
+    any tr did this before); after another tr a rewritten match is missed. After
     cut -c/-b ...-N a line of exactly N characters may have had the match cut off, so it
     passes. After sed or a field cut a rewritten match is missed (a lower count, never a
     higher one). A pattern the scan cannot evaluate passes every line (the stated residual).
@@ -440,7 +443,7 @@ def _line_matcher(stages: list, i: int, toks: list[str]):
     width, ignore_case = None, False
     for raw, t in stages[i + 1:]:
         verb = t[0].split("/")[-1] if t else ""
-        ignore_case |= verb == "tr"
+        ignore_case |= verb == "tr" and bool(CASE_TR.search(raw))
         if verb == "cut":
             m = CUT_WIDTH.search(raw)
             width = min(width or 10**9, int(m.group(1))) if m else width

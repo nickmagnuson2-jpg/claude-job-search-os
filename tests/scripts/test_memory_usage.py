@@ -1114,3 +1114,24 @@ def test_only_cut_sets_a_line_width(tmp_path):
     cmd = f"grep -n zzz {R} | head -c -6; echo abcdef"
     res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", "abcdef")])
     assert ("feedback_alpha_rule", "bash_print") not in _chans(res.events)
+
+
+
+# Codex confirm3 F1: only a case-converting tr makes the pattern check ignore case.
+@pytest.mark.parametrize("cmd,out,counts", [
+    (f"grep -n zzz {R} | tr x y; echo ZZZ", "ZZZ", False),
+    (f"grep -n zzz {R} | tr -d x; echo ZZZ", "ZZZ", False),
+    (f"grep -n zzz {R} | tr a-z A-Z; echo ---", "3:ZZZ\n---", True),
+    (f"grep -n ZZZ {R} | tr A-Z a-z; echo ---", "3:zzz\n---", True),
+    (f"grep -n zzz {R} | tr '[:lower:]' '[:upper:]'; echo ---", "3:ZZZ\n---", True),
+])
+def test_only_a_case_converting_tr_ignores_case(tmp_path, cmd, out, counts):
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", out)])
+    assert (("feedback_alpha_rule", "bash_print") in _chans(res.events)) is counts
+
+
+def test_a_grep_line_after_a_tr_that_keeps_case_stays_case_sensitive(tmp_path):
+    cmd = "grep -rn zzz memory/ | tr x y; printf 'memory/feedback_alpha_rule.md:3:ZZZ\\n'"
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}),
+                           _tool_result("t1", "memory/feedback_alpha_rule.md:3:ZZZ")])
+    assert [e for e in res.events if e.channel == "grep_line"] == []
