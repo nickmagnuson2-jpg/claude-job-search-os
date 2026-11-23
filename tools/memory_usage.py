@@ -62,7 +62,7 @@ WRITE_VERBS = {"mv", "cp", "rm", "touch", "tee"}
 # Filters that pass the printed text on to the result (B4 confirmation, Codex F1 / Grok F2): a
 # print piped into anything else (wc, md5, python) or with stdout redirected to a file puts a
 # count or nothing in context, not the rule. grep/rg pass only when they print lines.
-PASS_THROUGH = {"head", "tail", "cut", "sed", "cat", "nl"}
+PASS_THROUGH = {"head", "tail", "cut", "sed", "cat", "nl", "tr"}
 # stdout sent to a file: `>f`, `>>f`, `1>f`, `&>f`. Not `2>f` (stderr) or `>&2` (still shown).
 STDOUT_REDIRECT = re.compile(r"(?:^|[^0-9&>])>>?(?!&)\s*\S|(?:^|\s)1>>?(?!&)\s*\S|&>")
 REDIRECT_TO_RULE = re.compile(r">\s*\S*(?:feedback|reference|project|user)_")
@@ -227,10 +227,36 @@ def _search_file_args(segment: str) -> list[str] | None:
     return args if explicit_pattern else args[1:]
 
 
+def _words(stage: str) -> list[str]:
+    """A stage's words, split at whitespace outside quotes. Quotes and backslashes are kept,
+    so a later shlex.split reads the word as the shell would: `'^  a'` keeps both spaces."""
+    words, cur, quote, i = [], "", None, 0
+    while i < len(stage):
+        c = stage[i]
+        if c == "\\" and quote != "'":
+            cur += stage[i:i + 2]
+            i += 2
+            continue
+        if quote:
+            quote = None if c == quote else quote
+        elif c in "'\"":
+            quote = c
+        elif c.isspace():
+            if cur:
+                words.append(cur)
+            cur, i = "", i + 1
+            continue
+        cur += c
+        i += 1
+    if cur:
+        words.append(cur)
+    return words
+
+
 def _stage_tokens(stage: str) -> list[str]:
     """A pipeline stage's words from its command word on: variable assignments, cd and the
     options of env and time are skipped (Codex r3 F3)."""
-    toks = stage.strip().split()
+    toks = _words(stage)
     while toks and (re.match(r"^\w+=", toks[0]) or toks[0] in ("cd", "time", "env")):
         if toks[0] in ("env", "time"):   # their own options precede the command
             toks = toks[1:]
@@ -398,7 +424,29 @@ def _search_pattern(toks: list[str]):
 
 
 # A result line's own text: without the `path:` and `N:` prefixes grep adds.
-LINE_PREFIX = re.compile(r"^\s*(?:\S*?\.md[:-])?(?:\d+[:-])?")
+LINE_PREFIX = re.compile(r"^(?:\s*\S*?\.md[:-])?(?:\d+[:-])?")   # leading spaces are the line's own
+CUT_WIDTH = re.compile(r"-[cb]\s*\d*-(\d+)")
+
+
+def _line_matcher(stages: list, i: int, toks: list[str]):
+    """A test for whether a result line may be stage i's output, judged by its pattern.
+    tr or sed after the search rewrite its lines, so any line passes. cut -c/-b ...-N can cut
+    the match off, so a line of N characters or more passes; a shorter one was not cut and
+    must match. A pattern the scan cannot evaluate passes every line."""
+    width = None
+    for raw, t in stages[i + 1:]:
+        verb = t[0].split("/")[-1] if t else ""
+        if verb in ("tr", "sed"):
+            return lambda line: True
+        if verb == "cut":
+            m = CUT_WIDTH.search(raw)
+            if not m:
+                return lambda line: True
+            width = min(width or 10**9, int(m.group(1)))
+    rx = _search_pattern(toks)
+    if rx is COUNTS_ANYWAY:
+        return lambda line: True
+    return lambda line: (width is not None and len(line) >= width) or bool(rx.search(LINE_PREFIX.sub("", line)))
 
 
 def evidenced_search_prints(command: str, text: str, stems: set[str]) -> set[str]:
@@ -412,7 +460,7 @@ def evidenced_search_prints(command: str, text: str, stems: set[str]) -> set[str
     pipes = _pipelines(command)
     if not _is_compound(pipes):
         return set()
-    lines = [LINE_PREFIX.sub("", line) for line in text.splitlines()]
+    lines = text.splitlines()
     found: set[str] = set()
     for stages in pipes:
         for i, (_raw, toks) in enumerate(stages):
@@ -420,8 +468,8 @@ def evidenced_search_prints(command: str, text: str, stems: set[str]) -> set[str
                 continue
             files = _search_file_args(" ".join(toks))
             names = _names_in_memory(" ".join(files), stems) if files else set()
-            rx = _search_pattern(toks)
-            if rx is COUNTS_ANYWAY or any(rx.search(line) for line in lines):
+            accept = _line_matcher(stages, i, toks)
+            if any(accept(line) for line in lines):
                 found |= names
     return found
 
@@ -465,13 +513,25 @@ def _substitutions(text: str) -> list[str]:
     return bodies
 
 
-def search_prints_lines(command: str) -> bool:
-    """Whether a Bash command has a grep/rg stage that prints lines, the only Bash source of
-    grep-shaped output that is a file's own text (B4 confirmation, Codex F2 / Grok F1, F3).
-    A grep run by xargs or inside $( ) counts: its lines reach the result as well."""
-    texts = [command] + _substitutions(command)
-    return any(_prints_lines(_after_xargs(toks))
-               for text in texts for stages in _pipelines(text) for _raw, toks in stages)
+def search_line_patterns(command: str) -> list:
+    """Line tests (see _line_matcher) for the grep/rg stages in a Bash command that print lines AND whose output
+    reaches the result (also when run by xargs or inside a $( ) of a stage that reaches it).
+    Empty: the command cannot be the source of a grep-shaped line in its result (B4
+    confirmation, Codex F2 / Grok F1, F3; final round Codex F1). In a command that is not
+    compound every such stage accepts any line, since all of its result is that output."""
+    pipes = _pipelines(command)
+    compound = _is_compound(pipes)
+    found = []
+    for stages in pipes:
+        for i, (raw, toks) in enumerate(stages):
+            if not _reaches_result(stages, i):
+                continue
+            cands = [(stages, i, _after_xargs(toks))] + [
+                (st, j, t) for body in _substitutions(raw) for st in _pipelines(body)
+                for j, (_r, t) in enumerate(st) if _reaches_result(st, j)]
+            found += [_line_matcher(st, j, t) if compound else (lambda line: True)
+                      for st, j, t in cands if _prints_lines(t)]
+    return found
 
 
 def _result_text(content) -> str:
@@ -480,7 +540,9 @@ def _result_text(content) -> str:
     return content or ""
 
 
-def _grep_lines(text: str, stems: set[str]) -> set[str]:
+def _grep_lines(text: str, stems: set[str], patterns: list | None = None) -> set[str]:
+    """Rules whose grep output lines appear in a result. With `patterns` (one line test per
+    source search, see search_line_patterns), a line counts only when one of them accepts it."""
     hits = set()
     for line in text.splitlines():
         m = GREP_LINE.search(line)
@@ -488,7 +550,9 @@ def _grep_lines(text: str, stems: set[str]) -> set[str]:
             rest = m.group(4).strip()
             # Without a `<n>:` line number, text starting with a digit is a citation
             # (`x.md:89,269`), not grep output.
-            if rest and not (m.group(3) is None and rest[0].isdigit()):
+            if rest and not (m.group(3) is None and rest[0].isdigit()) and (
+                    patterns is None
+                    or any(accept(line) for accept in patterns)):
                 hits.add(m.group(2))
     return hits
 
@@ -593,8 +657,9 @@ def collect(project_dir: Path, stems: set[str], exclude_sessions: Iterable[str] 
                         # Grep-shaped lines are a file's text only from a search that prints
                         # lines; a checker, a cat of a report or a subagent can print the same
                         # shape about a rule it never read (B4 confirmation).
-                        if name == "Grep" or (name == "Bash" and search_prints_lines(inp.get("command", ""))):
-                            for stem in _grep_lines(text, stems):
+                        patterns = search_line_patterns(inp.get("command", "")) if name == "Bash" else None
+                        if name == "Grep" or patterns:
+                            for stem in _grep_lines(text, stems, patterns):
                                 add(session, stem, "grep_line", day, (stem, "grep_line", tid))
                 else:  # attachment
                     att = rec.get("attachment") or {}

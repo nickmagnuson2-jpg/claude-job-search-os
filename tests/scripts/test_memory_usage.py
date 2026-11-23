@@ -953,6 +953,7 @@ def test_evidenced_search_prints(cmd, text, found):
     (f"cat {R} | sed -i '' 's/a/b/' other.txt", 0, False),                # sed -i writes, prints nothing
     (f"cat {R} | grep -c a", 0, False),
     (f"cat {R} | grep a", 0, True),
+    (f"cat {R} | tr '\\n' ' '", 0, True),                                  # real case: a loop joining lines
 ])
 def test_reaches_result(cmd, i, reaches):
     assert mu._reaches_result(mu._pipelines(cmd)[0], i) is reaches
@@ -964,3 +965,105 @@ def test_reaches_result(cmd, i, reaches):
 ])
 def test_substitutions_escapes_and_quotes(text, bodies):
     assert mu._substitutions(text) == bodies
+
+
+
+# ---------------------------------------------------------------------------- final confirmation (2026-11-22)
+# Codex F1 (P1): grep-shaped lines need a source search whose output reaches the result; in a
+# compound command the line must match that search's pattern, as a compound grep print must.
+
+FAKE = "memory/feedback_alpha_rule.md:3:not rule text"
+
+
+@pytest.mark.parametrize("cmd", [
+    f"grep -n alpha {R} >/dev/null; printf '{FAKE}\\n'",
+    f"grep -n alpha {R} | wc -l; printf '{FAKE}\\n'",
+    f"ls memory | xargs grep -n alpha > /tmp/o; printf '{FAKE}\\n'",
+    f"x=$(grep -rn alpha memory/) > /dev/null; printf '{FAKE}\\n'",
+    f"grep -rn zzz memory/; printf '{FAKE}\\n'",                    # the grep's pattern is not in the line
+])
+def test_a_grep_line_needs_a_reaching_search_whose_pattern_it_matches(tmp_path, cmd):
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", FAKE)])
+    assert [e for e in res.events if e.channel == "grep_line"] == []
+
+
+@pytest.mark.parametrize("cmd,out", [
+    ("grep -rn rule memory/; echo ---", f"{FAKE}\n---"),                     # matches 'rule'
+    ("grep -rn zzz memory/", FAKE),                                          # whole command: any line
+    ("echo ---; ls memory | xargs grep -Hn rule", f"---\n{FAKE}"),
+    ('echo "$(grep -rn rule memory/)"; echo ---', f"{FAKE}\n---"),
+    ("grep -rn -e zzz -e rule memory/ | head -5; echo ---", f"{FAKE}\n---"),
+    ('grep -rn "$k" memory/; echo ---', f"{FAKE}\n---"),                     # pattern it cannot read
+    ("for f in memory/*.md; do echo \"$f: $(grep -m3 -E '^ *(promoted|rule):' $f | tr '\\n' ' ')\"; done; ls",
+     "memory/feedback_alpha_rule.md:   rule: x"),                            # real case 2026-11-22
+])
+def test_a_grep_line_from_a_reaching_search_counts(tmp_path, cmd, out):
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", out)])
+    assert ("feedback_alpha_rule", "grep_line") in _chans(res.events)
+
+
+
+@pytest.mark.parametrize("cmd,out", [
+    # real case: the pattern needs the line's leading spaces
+    (f"python3 x.py; grep -E '^  (occurrences|rule)' {MP}feedback_alpha_rule.md {B}",
+     "ok\nmemory/feedback_alpha_rule.md:  rule: x"),
+    # real case: cut can cut the matched text off the line
+    ("grep -rn PIPESTATUS memory/ | cut -c1-40; echo ---",
+     "memory/feedback_alpha_rule.md:29:Related\n---"),
+    ("grep -rn rule memory/ | tr a-z A-Z; echo ---", "memory/feedback_alpha_rule.md:29:RULE\n---"),
+    ("grep -rn rule memory/ | sed 's/rule/x/'; echo ---", "memory/feedback_alpha_rule.md:29:x\n---"),
+])
+def test_a_grep_line_altered_after_the_search_or_needing_its_spaces_counts(tmp_path, cmd, out):
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", out)])
+    assert ("feedback_alpha_rule", "grep_line") in _chans(res.events)
+
+
+@pytest.mark.parametrize("cmd,out", [
+    (f"grep -n PIPESTATUS {R} | cut -c1-6; echo ---", "29:Rel\n---"),
+    (f"grep -n rule {R} | tr a-z A-Z; echo ---", "3:RULE\n---"),
+])
+def test_a_compound_grep_print_altered_after_the_search_counts(tmp_path, cmd, out):
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", out)])
+    assert ("feedback_alpha_rule", "bash_print") in _chans(res.events)
+
+
+def test_head_after_a_search_keeps_the_pattern_check(tmp_path):
+    cmd = f"grep -n zzz {R} | head -3; echo ---"
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", "3:other\n---")])
+    assert ("feedback_alpha_rule", "bash_print") not in _chans(res.events)
+
+
+
+@pytest.mark.parametrize("stage,words", [
+    ("grep -E '^  (a|b)' f", ["grep", "-E", "'^  (a|b)'", "f"]),
+    ('echo "a  b" c', ["echo", '"a  b"', "c"]),
+    ("a\\ b  c", ["a\\ b", "c"]),
+    ("  x   y  ", ["x", "y"]),
+    ("", []),
+    ("it's open", ["it's open"]),
+])
+def test_words(stage, words):
+    assert mu._words(stage) == words
+
+
+
+@pytest.mark.parametrize("cmd,out,counts", [
+    (f"grep -n PIPESTATUS {R} | cut -c1-6; echo ---", "29:Rel\n---", True),          # 6 chars: may be cut
+    (f"grep -n PIPESTATUS {R} | cut -c1-60; echo ---", "29:Rel\n---", False),        # short: not cut, no match
+    (f"grep -n PIPESTATUS {R} | cut -c 1-6; echo ---", "29:Rel\n---", True),
+    (f"grep -n PIPESTATUS {R} | cut -c-6; echo ---", "29:Rel\n---", True),
+    (f"grep -n PIPESTATUS {R} | cut -d: -f1; echo ---", "29\n---", True),          # fields: cannot judge
+    (f"grep -n PIPESTATUS {R} | cut -c1-60 | cut -c1-6; echo ---", "29:Rel\n---", True),   # narrowest cut
+])
+def test_a_cut_after_a_compound_grep(tmp_path, cmd, out, counts):
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", out)])
+    assert (("feedback_alpha_rule", "bash_print") in _chans(res.events)) is counts
+
+
+
+@pytest.mark.parametrize("out", ["  rule: x\n---", "3:  rule: x\n---"])
+def test_a_single_file_grep_pattern_keeps_the_lines_leading_spaces(tmp_path, out):
+    """Real case: `grep -E '^  (occurrences|promoted)' rule.md` prints indented frontmatter lines."""
+    cmd = f"grep -nE '^  (occurrences|rule)' {R}; echo ---"
+    res = _scan(tmp_path, [_tool_use("t1", "Bash", {"command": cmd}), _tool_result("t1", out)])
+    assert ("feedback_alpha_rule", "bash_print") in _chans(res.events)
