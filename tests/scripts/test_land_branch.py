@@ -1285,8 +1285,9 @@ def test_mp_real_run_backfills_once_and_runs_suite_on_chain_tip(mp):
     assert len(_rows(main_tools / ".cross-model-ledger.jsonl")) == 1
     assert len(_rows(main_tools / ".audit-pii-ledger.jsonl")) == 1
     argv = [json.loads(x) for x in Path(os.environ["LB_ARGV_LOG"]).read_text().splitlines()]
+    # --wait: the landing suite queues behind a builder's suite (suite_record's lock, C2).
     assert ["suite", "run", "--branch", rep["chain_tip"], "--base", mp["base"],
-            "--repo-root", str(mp["root"])] in argv
+            "--wait", str(lb.SUITE_WAIT_S), "--repo-root", str(mp["root"])] in argv
 
 
 def test_mp_suite_failure_refuses_and_shows_output(mp, monkeypatch):
