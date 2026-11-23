@@ -159,8 +159,26 @@ def brief_check(path: Path, org: str, template: Path = TEMPLATE) -> list:
     if "Ranked backlog" in b.headings and "Sections" in b.headings:
         if b.headings.index("Ranked backlog") > b.headings.index("Sections"):
             problems.append("'## Ranked backlog' must come before '## Sections'")
-    if "Ranked backlog" in b.headings and not BACKLOG_ROW_RE.search(_h2_block(b.text, "Ranked backlog")):
+    backlog = _h2_block(b.text, "Ranked backlog")
+    if "Ranked backlog" in b.headings and not BACKLOG_ROW_RE.search(backlog):
         problems.append("'## Ranked backlog' has no ranked row ('| 1 | <item> | ...'); rank the backlog before the sections")
+    section_ids = {s.id for s in b.sections}
+    for line in backlog.splitlines():
+        if not BACKLOG_ROW_RE.match(line):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        rank = cells[0]
+        # Rank | Item | Moves | Evidence | Section (Codex r2 F1: each row is checked, not only its presence)
+        moves, evidence, section = (cells + ["", "", "", "", ""])[2:5]
+        if not _moves_ok(moves):
+            problems.append(f"backlog row {rank}: moves {moves!r} is not one or more of conversations, applications, speed")
+        if not evidence:
+            problems.append(f"backlog row {rank}: no evidence for its rank")
+        named = [x for x in re.split(r"[,/ ]+", section) if x]
+        missing = [x for x in named if x not in section_ids]
+        if not named or missing:
+            problems.append(f"backlog row {rank}: section {section!r} is not a section in this brief"
+                            f"{' (' + ', '.join(missing) + ')' if missing else ''}")
 
     rules = _h2_block(b.text, "Rules for every session")
     numbers = {int(n) for n in re.findall(r"^(\d+)\. ", rules, re.M)}

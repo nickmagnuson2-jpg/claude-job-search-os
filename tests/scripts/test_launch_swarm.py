@@ -28,6 +28,7 @@ def filled_template() -> str:
     t = t.replace("<org-session-name>", "proj-org").replace("<standby-session-name>", "proj-standby")
     t = t.replace("<MMDDYY>", "010126").replace("<MMDD>", "0101").replace("YYYY-MM-DD", "2026-01-01", 2)  # title and date lines; rule 12 keeps the format text
     t = t.replace("<conversations / applications / speed>", "speed")  # Codex r1 F2: a real value, not "filled"
+    t = t.replace("| <S1> |", "| S1 |")  # Codex r2 F1: a backlog row names a real section
     t = re.sub(r"<[^<>\n]*>", "filled", t)
     return t
 
@@ -314,3 +315,26 @@ def test_cli_reports_each_opened_window_and_paces_them(run_dir, monkeypatch, cap
     assert ls.main([str(p), "--org", "proj-org", "--repo", str(run_dir.parents[1])]) == 0
     assert "opened S1" in capsys.readouterr().out
     assert sleeps == [2]
+
+
+# ---------------------------------------------------------------- Codex r2 F1 (P0): backlog rows are validated
+
+def _backlog_row(t, row):
+    return re.sub(r"^\| 1 \|.*$", row, t, count=1, flags=re.M)
+
+
+def test_the_filled_template_backlog_row_is_valid(run_dir):
+    t = _backlog_row(filled_template(), "| 1 | an item | speed | `output/x/y.md:3` | S1 |")
+    p = write_brief(run_dir, t)
+    assert ls.brief_check(p, org="proj-org") == []
+
+
+@pytest.mark.parametrize("row, why", [
+    ("| 1 | an item | banana | `output/x/y.md:3` | S1 |", "moves"),
+    ("| 1 | an item | speed |  | S1 |", "evidence"),
+    ("| 1 | an item | speed | `output/x/y.md:3` | S9 |", "S9"),
+])
+def test_an_invalid_backlog_row_is_refused(run_dir, row, why):
+    p = write_brief(run_dir, _backlog_row(filled_template(), row))
+    problems = ls.brief_check(p, org="proj-org")
+    assert any("backlog row 1" in x and why in x for x in problems)
