@@ -20,7 +20,9 @@ For each branch:
      called from the branch's worktree with the refs line and push URL git would hand it.
      That hook runs the BRANCH'S OWN tools/cross_model_gate.py, exactly as a real push does,
      so this step is as trustworthy as the push itself and no more.
-  6. `tools/audit_pii_record.py check --tip <sha>`, pointed at the worktree.
+  6. `tools/audit_pii_record.py check --tip <sha>`, pointed at the worktree. The check reads
+     the MAIN checkout's audit ledger (2026-11-22): a record held only by the worktree's copy
+     is refused, and the refusal carries the tool's message naming the command to fix it.
   7. `tools/check_public_pii.py --scan --stdin-paths` over the branch's added/modified files.
   8. Optional (--suite): `tools/suite_record.py check --tip <sha>` when that tool exists;
      skipped with a notice when it does not.
@@ -61,6 +63,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from count_report import format_line  # noqa: E402  (a count states its reach)
 import merge_chain as mc  # noqa: E402  (one rule for a valid merge, shared with both gates)
+import stack_check  # noqa: E402  (codify #3: one stacking rule, shared with suite_record)
 
 ZERO = "0" * 40
 # Env vars that turn a gate dry run into a recorded waiver. A read-only check must never
@@ -304,7 +307,17 @@ def audit_check(tools: Path | None, wt: Path, tip: str) -> dict:
         return {"rc": None, "ok": False, "error": f"missing {tool}"}
     rc, out, err = run([sys.executable, str(tool), "--repo-root", str(wt), "check", "--tip", tip],
                        cwd=wt)
-    return {"rc": rc, "ok": rc == 0, "tool": str(tool), "tail": tail(out + err)}
+    message = None
+    for line in reversed(out.strip().splitlines()):
+        try:
+            payload = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(payload, dict):
+            message = payload.get("message")
+            break
+    return {"rc": rc, "ok": rc == 0, "tool": str(tool), "tail": tail(out + err),
+            "message": message}
 
 
 def changed_files(wt: Path, base: str, tip: str) -> list[str]:
@@ -411,6 +424,12 @@ def check_branch(root: Path, branch: str, worktrees: dict, gh_state: dict | None
     if stale_base:
         r["refusals"].append(stale_base)
     if main_ref:
+        try:
+            r["refusals"] += [stack_check.format_refusals(branch, [s])
+                              for s in stack_check.check(str(root), branch, main_ref)]
+        except stack_check.StackCheckError as e:
+            r["refusals"].append(f"stack check could not run: {e}")
+    if main_ref:
         m = merge_check(root, main_ref, tip)
         resolved = None
         if not m["clean"] and allowlist_ok and m["files"] == [mc.ALLOWLIST]:
@@ -438,6 +457,8 @@ def check_branch(root: Path, branch: str, worktrees: dict, gh_state: dict | None
     r["steps"]["audit"] = a
     if not a["ok"]:
         r["refusals"].append(f"audit_pii_record check rc {a['rc']}")
+        if a.get("message"):          # e.g. recorded_only_in_worktree names its own fix
+            r["refusals"].append(f"audit_pii_record: {a['message']}")
     p = pii_scan(tools, wt, changed_files(wt, main_ref or "origin/main", tip))
     r["steps"]["pii"] = p
     if p["hits"]:

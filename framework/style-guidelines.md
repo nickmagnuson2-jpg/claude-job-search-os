@@ -100,6 +100,15 @@ When drafting a thank-you / momentum note to a **founder or CEO** after a substa
 
 Origin: a founder post-call follow-up (5 Nick-directed passes). Rules in `memory/lessons.md` Section 2.
 
+### Show fit with a named build; never map the company's thesis onto Nick
+
+When a pitch or warm-intro reply needs to say why Nick fits:
+
+1. **Show it with a named thing he built, not a claim about how he works.** Name the build (a shipped site, a working system) and what it does. A line like "building with AI hands-on rather than reading about it" tells; the named build shows. When a concrete build carries the point, it overrides the corpus-validated "X rather than Y" construction.
+2. **Never construct a clever parallel between Nick's experience and the company's own thesis** (e.g. restating their tagline as a description of his past job). Nick reads these as "weird / doesn't make sense to me." State the plain, true reason he wants the role, which is often close to the company's own pitch in ordinary words.
+
+Origin: a warm-intro pitch with three Nick edits, recurring on three later drafts (4 occurrences, 2026-07-28 to 2026-10-22). Promoted from `memory/lessons.md` Section 2 on 2026-11-22. The same row's third edit (drop the scheduling link and offer times) is now the standard rule: Nick ruled on 2026-11-22 that the ask offers 2-3 concrete times, with no calendar link unless the recipient asked for one or offered theirs (voice-reference.md Structure item 4; content-rules H7).
+
 ### In-person texture in post-meeting openers
 
 When drafting a post-meeting follow-up (thank-you, momentum note, debrief reply) after Nick met the recipient in person, add **in-person texture details** to the opener before the substantive callback. Texture means small concrete details that signal Nick actually showed up and noticed: commute energy, office vibe, "seeing HQ in person," "the room," the case being enjoyable, "came away excited." These details are what Claude tends to skip as "too small to mention" — and exactly what makes the opener land as a Nick-voice thank-you rather than a templated one.

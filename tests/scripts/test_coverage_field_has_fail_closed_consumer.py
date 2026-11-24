@@ -432,6 +432,10 @@ REGISTRY: dict[tuple[str, str, str | None], object] = {
     # The all-skipped branch moved from cmd_run into _run_locked when the suite lock wrapped the run (C2, 2026-11-23).
     ("suite_record.py", "skipped", None): [
         Branch("suite_record.py", "_run_locked", reads="skipped", closes="exit")],
+    # replay_coverage.py: a shape class with 0 relevant rows in the corpus (codify #27,
+    # 2026-11-23). The CLI exits 1 on it, so a replay that never saw the shape cannot pass.
+    ("replay_coverage.py", "unmeasured", None): [
+        Branch("replay_coverage.py", "main", reads="unmeasured", closes="exit")],
     ("calibration_review.py", "skipped", None): [
         Branch("calibration_review.py", "main", reads="status", literal="ok", closes="exit")],
 

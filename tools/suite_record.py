@@ -68,6 +68,9 @@ from inbox_lock import LockTimeout, file_lock, held_fd, lock_path_for  # noqa: E
 
 TOOL_VERSION = "1"
 LEDGER = Path("tools") / ".suite-ledger.jsonl"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import stack_check  # noqa: E402  (codify #3: one rule, shared with land_branch)
+
 DEFAULT_BASE = "origin/main"
 DEFAULT_TIMEOUT = 3600
 _IDENT = {"GIT_AUTHOR_NAME": "suite_record", "GIT_AUTHOR_EMAIL": "suite_record@localhost",
@@ -319,6 +322,13 @@ def _run_locked(root: Path, common_git: Path, ledger: Path, branch: str, base: s
     if base_sha is None or tip_sha is None:
         missing = base if base_sha is None else branch
         return _fail("git_error", f"{missing} is not a commit in {root}")
+    try:
+        stale = stack_check.check(str(root), branch, base_sha)  # codify #3
+    except stack_check.StackCheckError as e:
+        return _fail("git_error", str(e))
+    if stale:
+        return _fail("stale_stack", stack_check.format_refusals(branch, stale),
+                     parents=[r.parent for r in stale])
     try:
         tree = merged_tree(root, base_sha, tip_sha)
     except Conflict as e:

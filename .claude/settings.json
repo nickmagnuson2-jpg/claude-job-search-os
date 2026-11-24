@@ -219,6 +219,10 @@
           {
             "type": "command",
             "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_lessons_write.py"
+          },
+          {
+            "type": "command",
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_workstream_heading_time.py"
           }
         ]
       },
@@ -228,6 +232,15 @@
           {
             "type": "command",
             "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_workflow_scriptpath.py"
+          }
+        ]
+      },
+      {
+        "matcher": "SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_sendmessage_checkin.py"
           }
         ]
       }
@@ -293,10 +306,6 @@
           {
             "type": "command",
             "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_changelog_currency.py"
-          },
-          {
-            "type": "command",
-            "command": "PYTHONIOENCODING=utf-8 python3 $CLAUDE_PROJECT_DIR/tools/check_save_claims.py"
           },
           {
             "type": "command",

@@ -62,6 +62,13 @@ BUILD_EXT = {".html", ".js", ".jsx", ".ts", ".tsx", ".css", ".py", ".ipynb",
 WORK_FOLDERS = {"analysis", "draft-captures", "artifact-gate", "application-workflow",
                 "table-audit", "mutation-state", "rendercv_output"}
 WORK_PREFIXES = ("codify-",)
+# Overnight swarm staging (codify #4, 2026-11-23): brief rule 5 stages guard changes under
+# output/overnight-<run>/<section>-staging/. Those folders are never a reader build, but
+# overnight-<run> read as a company slug, so .py staging was blocked (2 fires: S4, S5).
+# Narrow on purpose: the slug must start with overnight- AND the first inner folder must
+# end in -staging. Replay since 11-21: 10 blocks, 0 under such a folder.
+STAGING_SLUG_PREFIX = "overnight-"
+STAGING_FOLDER_SUFFIX = "-staging"
 
 # The field that names the target file, per tool.
 TARGET_FIELD = {"Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path",
@@ -74,6 +81,9 @@ def build_slug(rel: str) -> str | None:
         return None
     slug, inner, name = parts[1], parts[2:-1], parts[-1]
     if slug in WORK_FOLDERS or slug.startswith(WORK_PREFIXES):
+        return None
+    if (slug.startswith(STAGING_SLUG_PREFIX) and inner
+            and inner[0].endswith(STAGING_FOLDER_SUFFIX)):
         return None
     ext = os.path.splitext(name)[1].lower()
     if ext not in BUILD_EXT:

@@ -52,7 +52,7 @@ WHAT IT DOES NOT DO
     markdown blockquotes — those quote specs, users, and memory files.
   - Does not fire when the path is not the claim's immediate subject. A path
     floating elsewhere in the sentence is the top false-positive class.
-  - Does not fire on files that do not exist (that is check_save_claims.py).
+  - Does not fire on files that do not exist.
   - Does not judge whether an edit was meaningful, only whether one happened.
 
 EXIT CODES

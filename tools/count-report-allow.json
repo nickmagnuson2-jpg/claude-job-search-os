@@ -30,7 +30,6 @@
   "tools/check_prep_doc_format.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/check_public_pii.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/check_replace_all_safety.py": "pre-existing at 2026-10-23, convert when next touched",
-  "tools/check_save_claims.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/check_scanner_examined_something.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/check_script_error_logged.py": "pre-existing at 2026-10-23, convert when next touched",
   "tools/check_stale_file_claim.py": "pre-existing at 2026-10-23, convert when next touched",
@@ -137,5 +136,6 @@
   "tools/memory_write.py": "prints the result of one write to one named file (the new occurrences value after a bump, or refusal reasons); no population is counted (B2, 2026-11-22)",
   "tools/check_memory_frontmatter_write.py": "a PreToolUse hook: its stderr lists block reasons for one tool call (a count change like 'occurrences: 2 -> 3', a row defect), not a population count; staged for install by org (B2, 2026-11-22)",
   "tools/check_lessons_write.py": "a PreToolUse hook: its stderr lists block reasons for one tool call (a count change like 'occurrences: 2 -> 3', a row defect), not a population count; staged for install by org (B2, 2026-11-22)",
-  "tools/learning_cutover.py": "Counts are printed only inside the cutover report, whose header names the population they come from (the number of memory rule files hashed, their glob and folder, lessons.md, and every input file with its sha256), and each count line names its own input (232 reopen_at rows, 10 repairs, ...). Nick approves the report by its hash. B7, 2026-11-22."
+  "tools/learning_cutover.py": "Counts are printed only inside the cutover report, whose header names the population they come from (the number of memory rule files hashed, their glob and folder, lessons.md, and every input file with its sha256), and each count line names its own input (232 reopen_at rows, 10 repairs, ...). Nick approves the report by its hash. B7, 2026-11-22.",
+  "tools/workstream_write.py": "prints the result of one write to one named workstream file (the heading it wrote, or a refusal such as 'wrote N of M bytes' on a short write); no population is counted (C3, 2026-11-23)"
 }
