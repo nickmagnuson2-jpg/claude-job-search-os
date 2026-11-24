@@ -1203,9 +1203,16 @@ def open_p0_line(repo_root: Path, paths) -> str:
     WHY (feedback_stop_when_findings_shrink_while_cost_stays_flat, built 2026-10-29). Review
     loops kept running after the last P0 closed because nothing on screen said which
     findings block. The count is the gate's own (cross_model_gate.open_p0_against: open,
-    or parked without Nick's acceptance), imported so the two cannot disagree."""
+    or parked without Nick's acceptance), imported so the two cannot disagree.
+
+    From a linked worktree it reads the MAIN checkout's ledger (2026-11-22): that is where
+    the gate reads and where finding_write records dispositions, so the worktree's copy
+    over-counted (6 open P0s shown, 3 at the gate). A main checkout that cannot be found
+    raises in _main_checkout and the line says unknown."""
     try:
-        n = len(gate.open_p0_against(Path(repo_root), set(paths or [])))
+        root = Path(repo_root)
+        main = _main_checkout(root.resolve()) or root
+        n = len(gate.open_p0_against(main, set(paths or [])))
     except Exception as e:  # an unreadable ledger is reported, not shown as 0
         return f"open P0s on these paths: unknown ({type(e).__name__}); P1/P2 do not block the push"
     return f"open P0s on these paths: {n}; P1/P2 do not block the push"

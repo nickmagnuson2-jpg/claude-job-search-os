@@ -24,6 +24,7 @@ def sh(cwd, *args):
 
 AUDIT_STUB = ("import json, os, sys\n"
               "open(os.environ['LB_ARGV_LOG'], 'a').write(json.dumps(['audit', *sys.argv[1:]]) + '\\n')\n"
+              "print(os.environ.get('LB_AUDIT_OUT', ''))\n"
               "sys.exit(int(os.environ.get('LB_AUDIT_RC', '0')))\n")
 PII_STUB = """import json, os, sys
 mode = os.environ.get('LB_PII_MODE', 'clean')
@@ -83,7 +84,7 @@ def repo(tmp_path, monkeypatch):
     hook.chmod(0o755)
     monkeypatch.setenv("LB_HOOK_LOG", str(tmp_path / "hook.log"))
     monkeypatch.setenv("LB_ARGV_LOG", str(tmp_path / "argv.log"))
-    for k in ("LB_AUDIT_RC", "LB_PII_MODE", "LB_GATE_RC", "LB_SUITE_RC"):
+    for k in ("LB_AUDIT_RC", "LB_AUDIT_OUT", "LB_PII_MODE", "LB_GATE_RC", "LB_SUITE_RC"):
         monkeypatch.delenv(k, raising=False)
     return {"root": root, "base": base, "tmp": tmp_path}
 
@@ -315,6 +316,33 @@ def test_audit_failure_refuses(repo, monkeypatch):
     r = by_name(lb.check(repo["root"], ["feat"], gh=gh_local_main(repo)))["feat"]
     assert "audit_pii_record check rc 1" in r["refusals"]
 
+
+def test_an_audit_refusal_carries_the_tools_own_fix_instruction(repo, monkeypatch):
+    """A record held only by a worktree's ledger copy fails check (2026-11-22); the
+    refusal must say how to fix it, not only the exit code."""
+    branch(repo, "feat", {"f.py": "x = 1\n"})
+    monkeypatch.setenv("LB_AUDIT_RC", "1")
+    monkeypatch.setenv("LB_AUDIT_OUT", json.dumps({
+        "status": "ok", "recorded": False, "code": "recorded_only_in_worktree",
+        "message": "re-record from the main checkout: X"}))
+    r = by_name(lb.check(repo["root"], ["feat"], gh=gh_local_main(repo)))["feat"]
+    assert "audit_pii_record check rc 1" in r["refusals"]
+    assert "audit_pii_record: re-record from the main checkout: X" in r["refusals"]
+
+
+
+def test_audit_message_is_found_past_trailing_non_object_lines(repo, monkeypatch):
+    """The message comes from the last JSON object line. A later line that is not JSON,
+    or is JSON but not an object, is skipped rather than ending the search or crashing."""
+    branch(repo, "feat", {"f.py": "x = 1\n"})
+    monkeypatch.setenv("LB_AUDIT_RC", "1")
+    monkeypatch.setenv("LB_AUDIT_OUT", "\n".join([
+        json.dumps({"code": "recorded_only_in_worktree", "message": "fix: Y"}),
+        "[1]",
+        "a trailing log line",
+    ]))
+    r = by_name(lb.check(repo["root"], ["feat"], gh=gh_local_main(repo)))["feat"]
+    assert "audit_pii_record: fix: Y" in r["refusals"]
 
 def test_pii_hit_refuses_and_is_listed(repo, monkeypatch):
     branch(repo, "feat", {"f.py": "x = 1\n"})
