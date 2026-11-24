@@ -267,3 +267,203 @@ def test_an_internal_error_fails_open_and_says_so(mod, monkeypatch, capsys):
 def test_run_returns_mains_verdict(mod, monkeypatch):
     monkeypatch.setattr(mod, "main", lambda: 2)
     assert mod.run() == 2
+
+
+# ============================================================ stale next block (codify #5)
+# Origin (Nick, 2026-11-23, via org f1): S3's 07:59 suite failed because a dated section was
+# written while the header's newest json-next item was older than it. The guard blocks that
+# write and names add-next. Replay since 11-21: 24 of 210 heading writes, 7 (file, date) pairs.
+
+from datetime import date as _date, timedelta as _td
+
+TODAY = _date.today().isoformat()
+YESTERDAY = (_date.today() - _td(days=1)).isoformat()
+
+
+def _ws_file(tmp_path, newest):
+    d = tmp_path / "data" / "workstreams"
+    d.mkdir(parents=True, exist_ok=True)
+    f = d / "demo.md"
+    f.write_text(
+        "# Workstream: demo\n\n| Field | Value |\n|---|---|\n| **Status** | ACTIVE |\n\n"
+        "```json next\n[\n  {\n    \"date\": \"" + newest + "\",\n"
+        "    \"action\": \"An item long enough to be valid here\",\n"
+        "    \"done_when\": \"a test reads the newest date\"\n  }\n]\n```\n\n"
+        "## 2026-11-01 10:00 by `date` | old\n", encoding="utf-8")
+    return f
+
+
+def _bash_in(tmp_path, command):
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command},
+                          "cwd": str(tmp_path)})
+    r = subprocess.run([sys.executable, str(SCRIPT)], input=payload, capture_output=True,
+                       text=True)
+    return r.returncode, r.stderr
+
+
+STALE_DYN = "cat >> data/workstreams/demo.md <<EOF\n## $(date '+%Y-%m-%d %H:%M') by `date` | x\nEOF"
+
+
+def test_a_section_newer_than_the_newest_next_item_is_blocked(tmp_path):
+    _ws_file(tmp_path, YESTERDAY)
+    code, err = _bash_in(tmp_path, STALE_DYN)
+    assert code == 2
+    assert "BLOCKED (check_workstream_heading_time): stale next block" in err
+    assert f"newest next item is dated {YESTERDAY}" in err
+    assert f"a section dated {TODAY}" in err
+    assert ("run `tools/workstream_write.py add-next data/workstreams/demo.md --action ... "
+            "--done-when ...` first") in err
+
+
+def test_a_section_on_the_newest_next_date_passes(tmp_path):
+    _ws_file(tmp_path, TODAY)
+    code, err = _bash_in(tmp_path, STALE_DYN)
+    assert code == 0 and err == ""
+
+
+@pytest.mark.parametrize("heading", [
+    "## $T by `date` | x",                      # T from $(date) in the same command
+    "## ${T} by `date` | x",
+])
+def test_a_run_time_date_variable_is_dated_today(tmp_path, heading):
+    _ws_file(tmp_path, YESTERDAY)
+    cmd = (f"T=$(date '+%Y-%m-%d %H:%M'); cat >> data/workstreams/demo.md <<EOF\n{heading}\n"
+           "EOF")
+    assert _bash_in(tmp_path, cmd)[0] == 2
+    _ws_file(tmp_path, TODAY)
+    assert _bash_in(tmp_path, cmd)[0] == 0
+
+
+def test_a_literal_date_older_than_the_next_item_passes(tmp_path):
+    _ws_file(tmp_path, TODAY)
+    cmd = ("cat >> data/workstreams/demo.md <<'EOF'\n## " + YESTERDAY +
+           " | a back-dated note, no time\nEOF")
+    assert _bash_in(tmp_path, cmd)[0] == 0
+
+
+def test_a_literal_future_date_is_blocked_as_stale(tmp_path):
+    _ws_file(tmp_path, YESTERDAY)
+    cmd = "cat >> data/workstreams/demo.md <<'EOF'\n## " + TODAY + " | dated, no time\nEOF"
+    code, err = _bash_in(tmp_path, cmd)
+    assert code == 2 and "stale next block" in err
+
+
+def test_the_typed_time_block_is_reported_first(tmp_path):
+    _ws_file(tmp_path, YESTERDAY)
+    cmd = "cat >> data/workstreams/demo.md <<'EOF'\n## " + TODAY + " 18:12 | x\nEOF"
+    code, err = _bash_in(tmp_path, cmd)
+    assert code == 2 and "TYPED time" in err and "stale next block" not in err
+
+
+@pytest.mark.parametrize("body", [
+    "# Workstream: demo\n\nno table at all\n",                                  # not judged
+    "# W\n\n| Field | Value |\n|---|---|\n| **Status** | ACTIVE |\n\n## 2026-11-01 | x\n",
+])
+def test_files_without_a_valid_next_block_are_not_judged(tmp_path, body):
+    d = tmp_path / "data" / "workstreams"
+    d.mkdir(parents=True)
+    (d / "demo.md").write_text(body, encoding="utf-8")
+    assert _bash_in(tmp_path, STALE_DYN)[0] == 0
+
+
+def test_a_missing_target_file_is_not_judged(tmp_path):
+    assert _bash_in(tmp_path, STALE_DYN)[0] == 0
+
+
+def test_an_absolute_target_path_is_read(tmp_path):
+    f = _ws_file(tmp_path, YESTERDAY)
+    cmd = STALE_DYN.replace("data/workstreams/demo.md", str(f))
+    assert _bash_in(tmp_path / "elsewhere", cmd)[0] == 2
+
+
+def test_the_project_dir_is_the_fallback_base(tmp_path):
+    _ws_file(tmp_path, YESTERDAY)
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": STALE_DYN}})
+    r = subprocess.run([sys.executable, str(SCRIPT)], input=payload, capture_output=True,
+                       text=True, env={**__import__("os").environ,
+                                       "CLAUDE_PROJECT_DIR": str(tmp_path)})
+    assert r.returncode == 2
+
+
+def test_write_adding_a_section_without_bumping_next_is_blocked(tmp_path):
+    f = _ws_file(tmp_path, YESTERDAY)
+    new = f.read_text() + f"\n## {TODAY} | new section, no time\n"
+    code, err = _run("Write", {"file_path": str(f), "content": new})
+    assert code == 2 and "stale next block" in err
+
+
+def test_write_that_bumps_next_in_the_same_content_passes(tmp_path):
+    f = _ws_file(tmp_path, YESTERDAY)
+    new = f.read_text().replace(YESTERDAY, TODAY) + f"\n## {TODAY} | new section\n"
+    assert _run("Write", {"file_path": str(f), "content": new})[0] == 0
+
+
+def test_edit_adding_a_section_without_bumping_next_is_blocked(tmp_path):
+    f = _ws_file(tmp_path, YESTERDAY)
+    code, err = _run("Edit", {"file_path": str(f), "old_string": "| old\n",
+                              "new_string": f"| old\n\n## {TODAY} | new\n"})
+    assert code == 2 and "stale next block" in err
+
+
+def test_edit_whose_old_string_is_absent_is_judged_on_the_current_file(tmp_path):
+    f = _ws_file(tmp_path, TODAY)
+    assert _run("Edit", {"file_path": str(f), "old_string": "not in file",
+                         "new_string": f"## {TODAY} | x"})[0] == 0
+
+
+def test_multiedit_is_judged_after_all_edits(tmp_path):
+    f = _ws_file(tmp_path, YESTERDAY)
+    ok = _run("MultiEdit", {"file_path": str(f), "edits": [
+        {"old_string": YESTERDAY, "new_string": TODAY},
+        {"old_string": "| old\n", "new_string": f"| old\n## {TODAY} | new\n"}]})
+    assert ok[0] == 0
+    f2 = _ws_file(tmp_path, YESTERDAY)
+    bad = _run("MultiEdit", {"file_path": str(f2), "edits": [
+        {"old_string": "| old\n", "new_string": f"| old\n## {TODAY} | new\n"}]})
+    assert bad[0] == 2
+
+
+def test_heading_date_resolution(mod):
+    assert mod.heading_date("2026-11-21 18:12 | x", {}) == "2026-11-21"
+    assert mod.heading_date("$(date '+%Y-%m-%d') | x", {}) == TODAY
+    assert mod.heading_date("`date +%F` | x", {}) == TODAY
+    assert mod.heading_date("$T by x", {"T": ["$(date)"]}) == TODAY
+    assert mod.heading_date('$D by x', {"D": ['"2026-11-20 09:00"']}) == "2026-11-20"
+    assert mod.heading_date("$U by x", {}) is None   # not assigned here: not judged
+    assert mod.heading_date("Notes", {}) is None
+
+
+# ---- mutation r1 survivors (guard-next)
+
+def test_a_workstream_write_with_no_dated_heading_allows_cleanly(tmp_path):
+    _ws_file(tmp_path, YESTERDAY)
+    code, err = _bash_in(tmp_path, "cat >> data/workstreams/demo.md <<'EOF'\n- a line\nEOF")
+    assert code == 0 and err == ""
+
+
+def test_write_creating_a_new_workstream_is_judged_on_its_content(tmp_path):
+    d = tmp_path / "data" / "workstreams"
+    d.mkdir(parents=True)
+    # no typed time in the old heading, so only the stale-next rule can fire
+    src = _ws_file(tmp_path / "src", YESTERDAY).read_text().replace(" 10:00 by `date`", "")
+    new = d / "fresh.md"
+    code, err = _run("Write", {"file_path": str(new),
+                               "content": src + f"\n## {TODAY} | first section\n"})
+    assert code == 2 and "stale next block" in err
+
+
+def test_an_edit_with_an_empty_old_string_is_not_an_insertion(tmp_path):
+    f = _ws_file(tmp_path, YESTERDAY)
+    # Prepended text with a second next block would make the file unjudgeable; an empty
+    # old_string replaces nothing, so the file is judged as it stands and the section blocks.
+    prefix = ("```json next\n[]\n```\n")
+    code, err = _run("Edit", {"file_path": str(f), "old_string": "",
+                              "new_string": prefix + f"## {TODAY} | x\n"})
+    assert code == 2 and "stale next block" in err
+
+
+def test_an_edit_adding_no_dated_heading_allows_cleanly(tmp_path):
+    f = _ws_file(tmp_path, YESTERDAY)
+    code, err = _run("Edit", {"file_path": str(f), "old_string": "| old\n",
+                              "new_string": "| old\n- one more line\n"})
+    assert code == 0 and err == ""

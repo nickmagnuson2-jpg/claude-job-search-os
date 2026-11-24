@@ -31,6 +31,16 @@ reused via an exported variable; a script file that writes the heading; cp/mv of
 file onto a workstream. Times typed in messages, briefs or boards outside data/workstreams/
 are out of scope (7 of the rule's 10 fires were there).
 
+STALE NEXT (Nick, 2026-11-23, codify #5): also BLOCKED, any of the above tools adding a dated
+heading whose date is newer than the target file's newest json-next item. That is the shape
+that failed S3's 07:59 suite. The newest date comes from workstream_write.newest_next_date,
+which reads the block with workstream_state's own parser, so the guard, the writer and the
+check cannot disagree. A run-time stamp ($(date ...), a variable assigned from it) is dated
+today. A Write/Edit/MultiEdit is judged on the file as it would be after the edit, so bumping
+the next block in the same edit passes. Files with no valid next block are not judged.
+Replay since 2026-11-21: 24 of 210 heading writes, 7 (file, date) pairs, each cleared by one
+add-next.
+
 Exit 2 = block, with both fixes named. Fail open (exit 0) on a bad payload or internal error.
 """
 from __future__ import annotations
@@ -38,10 +48,12 @@ from __future__ import annotations
 import os
 import re
 import sys
+from datetime import date as _date
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hook_runtime import read_payload  # noqa: E402
+from workstream_write import newest_next_date  # noqa: E402
 
 WS_PATH = re.compile(r"data/workstreams/[^\s/'\"<>|;&()]+\.md")
 WS_FILE = re.compile(r"(?:^|/)data/workstreams/[^/]+\.md$")
@@ -75,6 +87,50 @@ Fix, either one:
      (stamps '## YYYY-MM-DD HH:MM by `date` | <X>: <what>' itself)
   2. Keep cat >>, with the stamp produced at run time: ## $(date '+%Y-%m-%d %H:%M') by `date` | <X>: <what>
 A Write or Edit tool call can only carry a literal time, so dated workstream headings never go through Write/Edit."""
+
+
+STALE_MSG = """BLOCKED (check_workstream_heading_time): stale next block in {target}: the newest next item is dated {newest}, and this adds a section dated {heading_date}.
+That is the shape that failed S3's 07:59 suite on 2026-11-23 (the header's next date went stale behind the log).
+Fix: run `tools/workstream_write.py add-next {target} --action ... --done-when ...` first, then write the section."""
+
+
+def _today() -> str:
+    return _date.today().isoformat()
+
+
+def heading_date(rest: str, assigns: dict[str, list[str]]) -> str | None:
+    """The date a heading's text (after '## ') carries: a literal date, today for a run-time
+    stamp, the date inside a literal assigned in this command, or None (not judged)."""
+    rest = rest.lstrip()
+    m = DATE.match(rest)
+    if m:
+        return m.group(0)
+    if rest.startswith("$(") or rest.startswith("`"):
+        return _today()
+    v = VAR_REF.match(rest)
+    if not v:
+        return None
+    vals = assigns.get(v.group("b") or v.group("n"), [])
+    if not vals:
+        return None
+    val = vals[-1]
+    if "$(" in val or "`" in val:
+        return _today()
+    d = DATE.search(val)
+    return d.group(0) if d else None
+
+
+def _newest(path: Path, text: str | None = None) -> str | None:
+    try:
+        text = path.read_text(encoding="utf-8") if text is None else text
+    except OSError:
+        return None
+    return newest_next_date(text, _date.today())
+
+
+def _resolve(target: str, base: Path) -> Path:
+    p = Path(target)
+    return p if p.is_absolute() else base / p
 
 
 def assignments(cmd: str) -> dict[str, list[str]]:
@@ -146,15 +202,27 @@ def writes_workstream(cmd: str) -> str | None:
     return None
 
 
-def check_bash(cmd: str) -> tuple[str, str, str] | None:
+def _full_target(cmd: str, tail: str) -> str:
+    """The whole path token that ends in `tail` (an absolute path keeps its prefix)."""
+    m = re.search(r"[^\s'\"<>|;&()=]*" + re.escape(tail), cmd)
+    return m.group(0) if m else tail
+
+
+def check_bash(cmd: str, base: Path) -> tuple | None:
     target = writes_workstream(cmd)
     if not target:
         return None
     assigns = assignments(cmd)
-    for m in HEAD_BASH.finditer(cmd):
-        why = typed_time_in_rest(m.group("rest"), assigns)
+    heads = [m.group("rest") for m in HEAD_BASH.finditer(cmd)]
+    for rest in heads:
+        why = typed_time_in_rest(rest, assigns)
         if why:
-            return target, "## " + m.group("rest").strip()[:80], why
+            return target, "## " + rest.strip()[:80], why
+    dates = [d for d in (heading_date(r, assigns) for r in heads) if d]
+    if dates:
+        newest = _newest(_resolve(_full_target(cmd, target), base))
+        if newest is not None and max(dates) > newest:
+            return ("stale", target, newest, max(dates))
     return None
 
 
@@ -163,33 +231,50 @@ def timed_headings(text: str) -> set[str]:
             if typed_time_in_rest(m.group("rest"), {})}
 
 
-def check_write_edit(tool: str, inp: dict) -> tuple[str, str, str] | None:
+def _dated_headings(text: str) -> set[str]:
+    return {m.group(0) for m in (DATE.match(h.group("rest").lstrip())
+                                 for h in HEAD_TEXT.finditer(text)) if m}
+
+
+def check_write_edit(tool: str, inp: dict) -> tuple | None:
     path = (inp.get("file_path") or "").replace("\\", "/")
     if not WS_FILE.search(path):
         return None
+    try:
+        current = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        current = ""
     if tool == "Write":
-        try:
-            old = Path(path).read_text(encoding="utf-8")
-        except OSError:
-            old = ""
-        pairs = [(old, inp.get("content") or "")]
+        pairs = [(current, inp.get("content") or "")]
+        after = inp.get("content") or ""
     elif tool == "Edit":
         pairs = [(inp.get("old_string") or "", inp.get("new_string") or "")]
     else:  # MultiEdit
         pairs = [(e.get("old_string") or "", e.get("new_string") or "")
                  for e in (inp.get("edits") or []) if isinstance(e, dict)]
+    if tool != "Write":
+        after = current
+        for old, new in pairs:
+            if old and old in after:
+                after = after.replace(old, new, 1)
     for old, new in pairs:
         added = timed_headings(new) - timed_headings(old)
         if added:
             return (path, "## " + sorted(added)[0][:80],
                     f"a {tool} tool call adds it, and a {tool} call can only carry a "
                     "literal time")
+    added_dates = set().union(*[_dated_headings(new) - _dated_headings(old)
+                                for old, new in pairs]) if pairs else set()
+    if added_dates:
+        newest = newest_next_date(after, _date.today())
+        if newest is not None and max(added_dates) > newest:
+            return ("stale", path, newest, max(added_dates))
     return None
 
 
-def evaluate(tool: str, inp: dict) -> tuple[str, str, str] | None:
+def evaluate(tool: str, inp: dict, base: Path | None = None) -> tuple | None:
     if tool == "Bash":
-        return check_bash(inp.get("command") or "")
+        return check_bash(inp.get("command") or "", base or Path.cwd())
     if tool in ("Write", "Edit", "MultiEdit"):
         return check_write_edit(tool, inp)
     return None
@@ -201,9 +286,15 @@ def main() -> int:
         return 0  # fail open: no payload, nothing to judge
     data = p.data if isinstance(p.data, dict) else {}
     inp = data.get("tool_input")
-    hit = evaluate(data.get("tool_name", ""), inp if isinstance(inp, dict) else {})
+    base = Path(data.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+    hit = evaluate(data.get("tool_name", ""), inp if isinstance(inp, dict) else {}, base)
     if not hit:
         return 0
+    if hit[0] == "stale":
+        _, target, newest, heading_date_ = hit
+        print(STALE_MSG.format(target=target, newest=newest, heading_date=heading_date_),
+              file=sys.stderr)
+        return 2
     target, heading, why = hit
     print(BLOCK_MSG.format(target=target, heading=heading, why=why), file=sys.stderr)
     return 2
