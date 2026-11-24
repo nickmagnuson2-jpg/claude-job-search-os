@@ -253,15 +253,21 @@ def test_render_says_unmeasured_only_when_unmeasured():
 
 
 def test_env_flag_is_passed_to_the_hook_and_bad_form_is_a_usage_error(tmp_path):
-    hook = tmp_path / "envhook.py"
-    hook.write_text("import os, sys\nsys.exit(2 if os.environ.get('S4_PROBE') == 'on' else 0)\n")
+    # old blocks only when S4_PROBE reaches it; new always allows. So old->new changes the
+    # verdict on the row ONLY if --env was passed through (Grok r3 F1: with one hook for both,
+    # all-0 and all-2 looked the same and dropping the env line stayed green).
+    envhook = tmp_path / "envhook.py"
+    envhook.write_text("import os, sys\nsys.exit(2 if os.environ.get('S4_PROBE') == 'on' else 0)\n")
+    allow = tmp_path / "allow.py"
+    allow.write_text("import sys\nsys.exit(0)\n")
     corpus = _corpus(tmp_path, ["A=1 python3 w.py feedback_a.md"])
-    base = ["--corpus", corpus, "--old", f"{sys.executable} {hook}", "--new",
-            f"{sys.executable} {hook}", "--relevant", REL, "--classes", "env_prefix", "--json"]
+    base = ["--corpus", corpus, "--old", f"{sys.executable} {envhook}", "--new",
+            f"{sys.executable} {allow}", "--relevant", REL, "--classes", "env_prefix", "--json"]
     out = subprocess.run([sys.executable, TOOL, *base, "--env", "S4_PROBE=on"],
                          capture_output=True, text=True)
-    assert out.returncode == 0, out.stderr          # same verdict (2) on original and twin
-    assert json.loads(out.stdout)["classes"][0]["n"] == 1
+    assert out.returncode == 0, out.stderr
+    row = json.loads(out.stdout)["classes"][0]
+    assert row["n"] == 1 and row["changed_old_to_new"] == 1
     bad = subprocess.run([sys.executable, TOOL, *base, "--env", "S4_PROBE"], capture_output=True, text=True)
     assert bad.returncode == 2 and "--env needs K=V" in bad.stderr
 

@@ -396,3 +396,31 @@ def test_a_parent_whose_name_is_also_a_tag_still_refuses_a_stale_child(repo):
     repo.checkout("parent")
     repo.commit("p2")
     assert _parents(sc.check(repo.path, "child")) == ["parent"]
+
+
+# --- land_branch wiring kills, 2026-11-23 (land_branch changed-line mutants: 2 of 3 survived) --
+def _check_branch(repo, monkeypatch, main_ref):
+    import land_branch
+    from pathlib import Path
+    monkeypatch.setattr(land_branch, "gate_dry_run", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(land_branch, "audit_check", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(land_branch, "pii_scan", lambda *a, **k: {"ok": True, "hits": [], "ambiguous": []})
+    return land_branch.check_branch(Path(repo.path), "child", {"child": repo.path}, None, main_ref,
+                                    "", False)
+
+
+def test_land_branch_runs_no_stack_check_without_a_main_ref(repo, monkeypatch):
+    _stale_stack(repo)
+    r = _check_branch(repo, monkeypatch, None)
+    assert not any("stack check" in x or "stacked on" in x for x in r["refusals"]), r["refusals"]
+
+
+def test_land_branch_refuses_when_the_stack_check_cannot_run(repo, monkeypatch):
+    import land_branch
+    _stale_stack(repo)
+
+    def boom(*a, **k):
+        raise land_branch.stack_check.StackCheckError("injected: cannot resolve")
+    monkeypatch.setattr(land_branch.stack_check, "check", boom)
+    r = _check_branch(repo, monkeypatch, "main")
+    assert "stack check could not run: injected: cannot resolve" in r["refusals"], r["refusals"]
