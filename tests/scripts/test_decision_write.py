@@ -71,10 +71,12 @@ def run(root, *argv, capsys=None):
 
 def add(root, capsys, *extra, owner="alpha-work", cls="scope", question="Ship part one first?",
         predict="a", reason=SENTINEL):
+    # A blind class takes no lean (BLIND_CLASSES, tests/scripts/test_decision_ladder.py).
+    lean = LEAN[2:] if cls in dw.BLIND_CLASSES else LEAN
     args = ["add", "--owner", owner, "--class", cls, "--question", question,
             "--option", "a: ship it now", "--option", "b: wait for part two",
             "--acts", "the owner cuts the branch", "--predict", predict, "--predict-reason", reason,
-            *LEAN, *extra]
+            *lean, *extra]
     return run(root, *args, capsys=capsys)
 
 

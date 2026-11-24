@@ -91,6 +91,15 @@ CLASSES = {
     "finding-rule": "design",
     "fact-check": "design",
 }
+# Classes asked BLIND: no lean is shown or stored, so their rulings feed the trust ladder's R1
+# measure (D2). Overnight brief 2026-11-24, rule 7 exception: workstream-status first, as the
+# class with the longest blind record. Adding a class is a reviewed code change, like CLASSES.
+BLIND_CLASSES = {"workstream-status"}
+# The trust ladder's thresholds, from the rulings only (output/codify-ui-102726/03-plan.md):
+# D2 "A class climbs R1 to R2 only on a held-out sample of 20 of its items with zero corrections";
+# D1(4) "A rung lapses after 30 days without a fresh audited sample".
+CLIMB_AT = 20
+LAPSE_DAYS = 30
 SPEND_THRESHOLD_USD = 5.0          # Nick, 2026-11-07: the total a decision commits
 ORG = "org"
 ORG_FILE = "orchestration"         # the organizer's rulings live in its own workstream
@@ -569,14 +578,23 @@ def cmd_add(p: dict, a) -> dict:
 def lean_fields(p: dict, a, labels: list) -> dict:
     """The fields rule 8 requires on every new question: the lean (an option label and why), the
     data lines it rests on (each must exist in the main checkout), what happens if Nick does
-    nothing, and the group (time-bound needs a date; no other group takes one)."""
+    nothing, and the group (time-bound needs a date; no other group takes one).
+    A class in BLIND_CLASSES takes NO lean: one given is refused, so a shown lean can never be
+    stored on a question the ladder counts as blind. Its other fields are context and stay."""
+    blind = a.cls in BLIND_CLASSES
+    if blind and a.lean is not None:
+        raise Refusal("lean_on_blind_class", f"{a.cls} is asked blind (BLIND_CLASSES): drop --lean")
+    if not blind and a.lean is None:
+        raise Refusal("lean_required", f"--lean is required for class {a.cls} (rule 8)")
     for name, val in (("lean", a.lean), ("if-nothing", a.if_nothing)):
-        if not val.strip():
+        if val is not None and not val.strip():
             raise Refusal("blank_field", f"--{name} is blank")
-    m = OPTION_RE.match(a.lean.strip())
-    if not m or m.group(1) not in labels:
-        raise Refusal("bad_lean", f"--lean is '<option label>: <why>' with a label in {labels}, "
-                                  f"got {a.lean!r}")
+    m = None
+    if not blind:
+        m = OPTION_RE.match(a.lean.strip())
+        if not m or m.group(1) not in labels:
+            raise Refusal("bad_lean", f"--lean is '<option label>: <why>' with a label in {labels}, "
+                                      f"got {a.lean!r}")
     rests = []
     for cite in a.rests_on:
         cite = cite.strip()
@@ -606,7 +624,8 @@ def lean_fields(p: dict, a, labels: list) -> dict:
             raise Refusal("bad_by_date", f"--by-date is YYYY-MM-DD, got {a.by_date!r}") from None
     elif a.by_date:
         raise Refusal("by_date_not_time_bound", f"--by-date is only for --group time-bound, not {a.group}")
-    return {"lean": a.lean.strip(), "lean_label": m.group(1), "lean_shown": True,
+    return {"lean": None if blind else a.lean.strip(), "lean_label": None if blind else m.group(1),
+            "lean_shown": not blind,
             "rests_on": rests, "if_nothing": a.if_nothing.strip(), "group": a.group,
             "by_date": by_date}
 
@@ -731,9 +750,28 @@ def org_names(first_cell: str) -> set:
     return {session_name(first_cell), *re.findall(r"[(\[]([^)\]]+)[)\]]", first_cell)}
 
 
+def newest_org_row(lines: list) -> list:
+    """The first cells of the org rows in the board's NEWEST table: the first table, top down,
+    that has any row whose session is org. The board puts the newest live table first, and a
+    live table need not carry a Workstreams column (the 11-22 and 11-24 ones do not), so the
+    org row is read here rather than from read_board's Workstreams table, which may be history.
+    Routing still comes from read_board."""
+    table = []
+    for line in lines + [""]:
+        if line.strip().startswith("|"):
+            table.append(line)
+            continue
+        rows = [cells(l)[0] for l in table[2:]]
+        orgs = [c for c in rows if session_name(c) == ORG]
+        if orgs:
+            return orgs
+        table = []
+    return []
+
+
 def cmd_takeover(p: dict, a) -> dict:
-    board, _ = read_board(p["board"])
-    org_rows = [c for c, s, _ in board or [] if s == ORG]
+    lines = p["board"].read_text(encoding="utf-8").splitlines() if p["board"].is_file() else []
+    org_rows = newest_org_row(lines)
     if len(org_rows) != 1 or a.org not in org_names(org_rows[0]):
         raise Refusal("board_disagrees", f"the board's org row does not name {a.org!r}; update it first")
     qs, _ = listing(p)                     # refuses a corrupt queue before anything is written
@@ -741,6 +779,60 @@ def cmd_takeover(p: dict, a) -> dict:
     return {"status": "ok", "org": a.org,
             "org_questions": [q for q in qs if q["owner"] == ORG],
             "unrouted": [q for q in qs if q["route"].startswith("UNROUTED")]}
+
+
+def ladder(events: list, now: datetime | None = None) -> dict:
+    """THE trust-ladder count, per class: the one function `check` and the morning page read.
+    Rules from the rulings only (output/codify-ui-102726/03-plan.md, closed 2026-10-28):
+      D2: a class climbs R1 -> R2 on 20 held-out items with zero corrections; under 20 stays R1.
+          Held-out = blind: the resolved event's lean_shown is not True (rows asked before the
+          lean field existed count, decision_write's own definition).
+      D1: one correction drops the class one rung, "not to R0", so R1 is the floor; a rung is
+          restored by the same 20; a lapse (30 days without a fresh sample) is reported, and
+          "bites only from R3, since R1 and R2 never act alone", so it does not move R1/R2.
+      D6: only a correction (a different option) counts; an amendment counts toward the 20.
+    A SAMPLE is D2's 20 held-out items: last_sample_at is when the latest block of 20 blind
+    non-corrections since the last correction completed (20th, 40th, ...), never the date of a
+    single ruling, so fewer than 20 new rulings cannot postpone a lapse (Codex r1 1331.F1). A
+    correction voids it until 20 more. last_ruling_at is the latest blind ruling, for display.
+    Shown-lean rulings are counted apart and never feed the rung. Order is the resolve time."""
+    now = now or datetime.now(timezone.utc)
+    cls_of = {e["id"]: e.get("class") for e in events if e.get("type") == "asked"}
+    res = sorted((e for e in events if e.get("type") == "resolved" and e.get("id") in cls_of),
+                 key=lambda e: e.get("at") or "")
+    out = {}
+    for e in res:
+        c = out.setdefault(cls_of[e["id"]], {
+            "rung": "R1", "blind_rulings": 0, "shown_rulings": 0, "corrections": 0,
+            "amendments": 0, "agreements_since_correction": 0, "last_sample_at": None,
+            "days_since_sample": None, "lapsed": False, "last_ruling_at": None,
+            "days_since_ruling": None})
+        if e.get("lean_shown") is True:
+            c["shown_rulings"] += 1
+            continue
+        c["blind_rulings"] += 1
+        c["last_ruling_at"] = e.get("at")
+        if e.get("outcome") == "correction":
+            c["corrections"] += 1
+            c["agreements_since_correction"] = 0
+            c["last_sample_at"] = None
+            c["rung"] = "R1"
+            continue
+        if e.get("outcome") == "amendment":
+            c["amendments"] += 1
+        c["agreements_since_correction"] += 1
+        if c["agreements_since_correction"] % CLIMB_AT == 0:
+            c["last_sample_at"] = e.get("at")
+        if c["agreements_since_correction"] >= CLIMB_AT:
+            c["rung"] = "R2"
+    for c in out.values():
+        if c["last_ruling_at"]:
+            c["days_since_ruling"] = (now - datetime.fromisoformat(c["last_ruling_at"])).days
+        if c["last_sample_at"]:
+            days = (now - datetime.fromisoformat(c["last_sample_at"])).days
+            c["days_since_sample"] = days
+            c["lapsed"] = days > LAPSE_DAYS
+    return dict(sorted(out.items()))
 
 
 def cmd_check(p: dict) -> tuple[dict, int]:
@@ -802,7 +894,8 @@ def cmd_check(p: dict) -> tuple[dict, int]:
         for k in (e.get("not_answered") or {}).get("topics", []):
             overrides[k] = overrides.get(k, 0) + 1
     return ({"status": "ok" if not problems else "problems", "problems": problems,
-             "promote": promote, "overrides": overrides, "citations": cited},
+             "promote": promote, "overrides": overrides, "citations": cited,
+             "ladder": ladder(events)},
             (1 if problems else 0))
 
 
@@ -823,7 +916,8 @@ def parser() -> argparse.ArgumentParser:
     add.add_argument("--commitment", action="store_true", help="spend only: credits or a subscription")
     add.add_argument("--by", default="unknown", help="the session adding the question")
     add.add_argument("--dry-run", action="store_true")
-    add.add_argument("--lean", required=True, help="'<option label>: <why>', shown to Nick (rule 8)")
+    add.add_argument("--lean", default=None,
+                     help="'<option label>: <why>', shown to Nick (rule 8); refused on a BLIND_CLASSES class")
     add.add_argument("--rests-on", action="append", required=True,
                      help="'<repo-relative path>:<line>' the lean rests on; repeatable")
     add.add_argument("--if-nothing", required=True, help="what happens if Nick does nothing")
