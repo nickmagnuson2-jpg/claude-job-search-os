@@ -21,7 +21,7 @@ ranking, or the voice logic — it composes the canonical sources:
 Origin: Loop-2 pipeline build, 2026-07-16. Per [[feedback_cold_outreach_flow_gaps]]
 (the drafting FLOW is the bottleneck, so batch drafting MUST run the same flow-gap
 guardrails) and [[feedback_recruiter_channel_resume_is_general]] (a general CV is the
-attachable asset, but default is no-attach on first contact).
+attachable asset; whether to attach it follows the /cold-outreach CV rule in Step 8's `ATTACH:` paragraph).
 
 ## Arguments
 
@@ -100,9 +100,10 @@ shortcut it, and do not batch-generate templated variants. Items 2-4 below run o
    plus `G2`/`G3`/`H6` as they apply) per contact. Record the content-rules verdict in each
    contact's queue row; don't drop it just because this is a batch.
 
-**Attachment default: none.** Per `/cold-outreach` Step 8 — do not attach a CV on
-first contact. If a general deployment CV exists (`output/deployment-strategist/…magnuson.pdf`),
-note it as "ready to send on reply," don't attach it.
+**Attachment (CV):** follow the `/cold-outreach` CV rule (the `ATTACH:` paragraph in
+`.claude/skills/cold-outreach/SKILL.md`, Step 8). Do not restate it here. When that rule says no
+attachment and a general deployment CV exists (`output/deployment-strategist/…magnuson.pdf`),
+note it as "ready to send on reply".
 
 ### Step 5: Write the review queue file
 
@@ -114,13 +115,14 @@ Write all Briefs, and later the drafts, to `output/outreach-queue/MMDDYY-<compan
 
 **Source:** contact_finder.py → evidence gate → rank → brief → spine → draft (/outreach-batch)
 **Status:** REVIEW — none sent. Approve/edit/send each below individually.
-**CV:** <path to general deployment CV, or "none"> — ready to send on reply, NOT attached.
+**CV:** <path to general deployment CV, or "none">. Per contact below, record the answer of the CV rule in the /cold-outreach Step 8 `ATTACH:` paragraph (do not restate it here): "attached" or "ready to send on reply, not attached".
 
 ---
 
 ## 1. <Name> — <Role> (rank <Total>/40)
 **LinkedIn:** <url> · **Evidence:** "<current-employment quote>"
 **Status:** AWAITING-SPINE | DRAFTED | NEEDS-RESEARCH | NEEDS-SPINE
+**CV:** attached | ready to send on reply, not attached (the /cold-outreach CV rule's answer for this contact)
 
 **Outreach Brief:** <why-now · verified recipient facts · sourced proofs · positioning · hook · hard don'ts>
 
@@ -134,7 +136,8 @@ Write all Briefs, and later the drafts, to `output/outreach-queue/MMDDYY-<compan
 **Quality gate:** Why you? "<quoted sentence>" · Why now? "<…>" · Why me? "<…>" · Why this class of role? "<…>"
 **To send:** write this subject+body to `tools/.pending-draft.txt` (TO blank), plus an
 `ARTIFACT: none (<reason>)` line above `BODY:` when the body carries a link other than the bio
-links (`tools/check_draft_artifact.py` blocks `open_draft.py` without it), write
+links (`tools/check_draft_artifact.py` blocks `open_draft.py` without it), plus an `ATTACH:` line
+with the CV path when **CV:** is attached, write
 `tools/.pending-draft.source` (`outreach-batch` + timestamp), run `python3 tools/open_draft.py`.
 
 ---

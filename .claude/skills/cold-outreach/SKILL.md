@@ -283,7 +283,7 @@ Follow channel constraints from `framework/outreach-guide.md`:
 2. **No thesis-jargon recital.** Grep the draft for Nick's own job-search taxonomy ("deployment-strategist seat," "forward-deployed side," "the lane," "bringing AI into legacy enterprises") and de-recite it into plain speech. Reading his positioning doc aloud at the recipient reads as inauthentic. (Exception: keep a real target term like "forward-deployed roles" when the recipient literally works at a forward-deployed company — then it reads as fluency, not jargon. Judge per recipient.)
 3. **One resonance beat, then the ask.** Two consecutive "why this resonates" paragraphs kill the ask for a 5-second scanner. Keep exactly ONE resonance beat, then the ask.
 4. **Tight + scannable (~5 seconds).** Cut surface repetition and any corpus-validated phrase that reads as filler *in this context* (corpus-validated ≠ always-keep). Cold email should be scannable fast.
-5. **Time-blocks vs. Calendly is per-send, not fixed.** Offer concrete time blocks OR a Calendly link; if unsure which fits this recipient, ask Nick. Do not hardcode either.
+5. **Offer 2-3 concrete times by default.** Do not paste a calendar link unless the recipient asked for one or offered theirs first (Nick's ruling 2026-11-22, superseding "time-blocks vs. Calendly is per-send"; source: framework/voice-reference.md Structure item 4).
 
 ### Step 6b: Substance-Provenance Audit (mandatory)
 
@@ -425,7 +425,7 @@ BODY:
 
 `ARTIFACT:` is read by `tools/check_draft_artifact.py`, which blocks `open_draft.py` on a draft carrying an attachment or a non-bio link without it, and is never sent. It follows the Brief record line's `artifact` key, with one difference: the header's `none` needs a reason in parentheses, so a Brief's `artifact: none` becomes `ARTIFACT: none (<reason>)`, e.g. `ARTIFACT: none (job posting link)`. For a page, demo or file built for this reader it is the BUILD-LOG path. A rendered CV passes without it.
 
-`ATTACH:` is optional and almost always omitted for cold outreach. Default behavior: do NOT attach a resume on first contact — offer to send if interested. Only include `ATTACH:` when the recipient has already asked for a CV/portfolio. When included, `open_draft.py` copies the file to the macOS clipboard so Cmd+V in Gmail compose attaches it.
+`ATTACH:` is optional and almost always omitted for cold outreach. Default behavior: do NOT attach a resume on first contact — offer to send if interested. Only include `ATTACH:` when the recipient has already asked for a CV/portfolio, or under the carve-out. **CV carve-out (Nick's ruling 2026-11-22, item 8.1):** after Nick has applied to a role at the company, a note to someone there carries the CV (add an `ATTACH:` line with the rendered CV). Before he has applied, attach it only if the recipient asked for it. Check `data/job-pipeline.md` for an applied row before deciding. When included, `open_draft.py` copies the file to the macOS clipboard so Cmd+V in Gmail compose attaches it.
 
 **Immediately after writing `.pending-draft.txt`, also write `tools/.pending-draft.source`** with two lines:
 
