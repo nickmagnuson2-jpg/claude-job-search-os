@@ -65,6 +65,7 @@ TOOLS = (
     "check_screenshot_path",
     "check_script_error_logged",
     "check_sealed_read",
+    "check_sendmessage_checkin",
     "check_stale_file_claim",
     "check_status_query_verification",
     "check_table_integrity",
