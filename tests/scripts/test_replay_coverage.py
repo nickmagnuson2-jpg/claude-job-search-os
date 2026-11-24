@@ -209,3 +209,71 @@ def test_every_env_prefix_hit_has_a_twin_that_differs(tmp_path):
                 "A='x\ny' python3 w.py"]:   # a value spanning lines: the regex sees it, the per-line twin cannot
         if rc.CLASSES["env_prefix"].hits(cmd):
             assert rc._strip_env_prefix(cmd) != cmd, cmd
+
+
+# --- mutation kills, 2026-11-23 (replay_coverage r2: 13 survivors of 83) ---------------------
+@pytest.mark.parametrize("cmd,twin", [
+    # the body ends at its delimiter: a prefix after it is a command again, one inside is data
+    ("cat <<EOF\nB=2 x\nEOF\nA=1 python3 w.py", "cat <<EOF\nB=2 x\nEOF\npython3 w.py"),
+    # <<- strips leading tabs before matching the delimiter; plain << does not
+    ("cat <<-EOF\n\tB=2 x\n\tEOF\nA=1 python3 w.py", "cat <<-EOF\n\tB=2 x\n\tEOF\npython3 w.py"),
+    ("cat <<EOF\n\tEOF\nB=2 x\nEOF\nA=1 python3 w.py", "cat <<EOF\n\tEOF\nB=2 x\nEOF\npython3 w.py"),
+])
+def test_heredoc_body_ends_at_its_delimiter(cmd, twin):
+    assert rc._strip_env_prefix(cmd) == twin
+
+
+def test_load_corpus_skips_blank_lines(tmp_path):
+    p = tmp_path / "c.jsonl"
+    row = json.dumps({"tool_name": "Bash", "tool_input": {"command": "a"}})
+    p.write_text(row + "\n\n   \n" + row.replace('"a"', '"b"') + "\n")
+    cmds, reach = rc.load_corpus(str(p))
+    assert cmds == ["a", "b"] and reach["rows"] == 2
+
+
+def test_each_hook_runs_once_per_distinct_command(tmp_path, hooks, monkeypatch):
+    # Every verdict is a subprocess per corpus row; measure() must not ask twice.
+    calls = []
+    real = rc.verdict
+
+    def counting(hook, cmd, env):
+        calls.append((hook, cmd))
+        return real(hook, cmd, env)
+    monkeypatch.setattr(rc, "verdict", counting)
+    cmds = ["PYTHONIOENCODING=utf-8 python3 w.py feedback_a.md"]
+    _measure(tmp_path, hooks, cmds, ["env_prefix"])
+    assert len(calls) == len(set(calls)) == 4    # old/new x original/twin
+
+
+def test_render_says_unmeasured_only_when_unmeasured():
+    rows = [{"class": "c", "n": 1, "unmeasured": False, "changed_old_to_new": 0, "twin": False}]
+    assert "UNMEASURED" not in rc.render(rows)
+    rows[0].update(n=0, unmeasured=True)
+    assert "UNMEASURED" in rc.render(rows)
+
+
+def test_env_flag_is_passed_to_the_hook_and_bad_form_is_a_usage_error(tmp_path):
+    hook = tmp_path / "envhook.py"
+    hook.write_text("import os, sys\nsys.exit(2 if os.environ.get('S4_PROBE') == 'on' else 0)\n")
+    corpus = _corpus(tmp_path, ["A=1 python3 w.py feedback_a.md"])
+    base = ["--corpus", corpus, "--old", f"{sys.executable} {hook}", "--new",
+            f"{sys.executable} {hook}", "--relevant", REL, "--classes", "env_prefix", "--json"]
+    out = subprocess.run([sys.executable, TOOL, *base, "--env", "S4_PROBE=on"],
+                         capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr          # same verdict (2) on original and twin
+    assert json.loads(out.stdout)["classes"][0]["n"] == 1
+    bad = subprocess.run([sys.executable, TOOL, *base, "--env", "S4_PROBE"], capture_output=True, text=True)
+    assert bad.returncode == 2 and "--env needs K=V" in bad.stderr
+
+
+def test_main_returns_0_in_process_when_clean(tmp_path, hooks, capsys):
+    # sys.exit(None) also exits 0, so only an in-process call sees main()'s return value.
+    corpus = _corpus(tmp_path, ["PYTHONIOENCODING=utf-8 python3 w.py feedback_a.md"])
+    assert rc.main(["--corpus", corpus, "--old", hooks["blind"], "--new", hooks["fixed"],
+                    "--relevant", REL, "--classes", "env_prefix"]) == 0
+
+
+def test_script_imports_count_report_without_its_dir_on_sys_path(tmp_path):
+    r = subprocess.run([sys.executable, "-I", TOOL, "--help"], capture_output=True, text=True,
+                       cwd=tmp_path, timeout=60)
+    assert r.returncode == 0, r.stderr
