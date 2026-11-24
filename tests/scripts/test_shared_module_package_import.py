@@ -60,7 +60,6 @@ TOOLS = (
     "check_prep_doc_format",
     "check_public_pii",
     "check_replace_all_safety",
-    "check_save_claims",
     "check_scanner_examined_something",
     "check_screenshot_path",
     "check_script_error_logged",

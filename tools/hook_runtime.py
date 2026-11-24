@@ -297,11 +297,13 @@ def read_write_target() -> tuple[str, str] | None:
 def last_assistant_text(transcript_path: str) -> str:
     """Concatenated text of the final assistant message in a session transcript.
 
-    Shared by the Stop hooks that judge what Claude just told the user
-    (check_save_claims, check_stale_file_claim), which held identical copies until
-    2026-10-21. A record counts as assistant by `type` or by `message.role`. A string
-    content is the text; a list contributes its text blocks, and a message with no
-    text (only tool calls) leaves the previous answer in place. A line that is not a
+    Used by the Stop hooks that judge what Claude just told the user
+    (check_stale_file_claim, check_derived_ratio). check_stale_file_claim and a hook
+    retired 2026-11-23 (docs/CHANGELOG.md) held identical copies until 2026-10-21.
+    A record counts as
+    assistant by `type` or by `message.role`. A string content is the text; a list
+    contributes its text blocks, and a message with no text (only tool calls) leaves
+    the previous answer in place. A line that is not a
     JSON object is skipped (both copies used to crash on one). A missing or unreadable
     file, or no assistant message, returns "".
     """
