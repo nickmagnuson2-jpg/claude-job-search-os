@@ -239,6 +239,19 @@ def section_prompt(section: Section, org: str, brief_rel: str) -> str:
     )
 
 
+# A Terminal window opened from inside a Claude session inherits that session's env
+# (CLAUDECODE, CLAUDE_CODE_CHILD_SESSION, CLAUDE_CODE_SESSION_ID, CLAUDE_PID, AI_AGENT).
+# A claude started with them runs as a child session and writes no transcript, so
+# run_metrics.py cannot see it (cause measured 2026-11-24, orchestration.md 17:38 S1).
+# The names are read at run time, so a CLAUDE* var added later is dropped too.
+CLEAN_ENV = "unset $(env | sed -n 's/^\\(CLAUDE[A-Za-z0-9_]*\\)=.*/\\1/p') AI_AGENT;"
+
+
+def window_command(repo: Path, prompt_path: Path, program: str = "claude") -> str:
+    """The shell line one section window runs: clean env, then claude with the prompt."""
+    return f"{CLEAN_ENV} cd '{repo}' && {program} \"$(cat '{prompt_path}')\""
+
+
 def open_window(cmd: str) -> None:
     subprocess.run(["osascript", "-e", "on run argv", "-e",
                     'tell application "Terminal" to do script (item 1 of argv)', "-e", "end run", cmd],
@@ -279,7 +292,7 @@ def main(argv=None) -> int:
     for x in wanted:
         p = prompts / f"{x}.txt"
         p.write_text(section_prompt(by_id[x], a.org, brief_rel))
-        cmd = f"cd '{repo}' && claude \"$(cat '{p}')\""
+        cmd = window_command(repo, p)
         if a.dry_run:
             print(f"[dry-run] {x}: {cmd}")
         else:

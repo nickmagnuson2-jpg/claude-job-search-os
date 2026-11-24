@@ -368,3 +368,65 @@ def test_a_brief_missing_a_rule_addition_is_refused(run_dir, n, sentence):
     assert sentence in t
     p = write_brief(run_dir, t.replace(sentence, "", 1))
     assert any(x.startswith(f"rule {n} does not match") for x in ls.brief_check(p, org="proj-org"))
+
+
+# ---------------------------------------------------------------- the window command's env
+# Cause of the 11-23 missing transcripts (orchestration.md 2026-11-24 17:38, S1): the windows
+# inherited a parent Claude session's env, so each claude ran as a child session and wrote no
+# transcript. These tests run the exact line main() hands to Terminal, with a fake `claude`
+# first on PATH that records its own env and argv.
+PARENT_ENV = {
+    "CLAUDECODE": "1",
+    "CLAUDE_CODE_CHILD_SESSION": "1",
+    "CLAUDE_CODE_SESSION_ID": "00000000-0000-0000-0000-000000000000",
+    "CLAUDE_PID": "12345",
+    "CLAUDE_SOME_FUTURE_VAR": "x",
+    "AI_AGENT": "claude-code",
+}
+
+
+def _run_window_line(run_dir, monkeypatch, shell):
+    import os
+    import shutil
+    import subprocess
+    if not shutil.which(shell):
+        pytest.skip(f"{shell} not installed")
+    opened = []
+    monkeypatch.setattr(ls, "open_window", lambda cmd: opened.append(cmd))
+    monkeypatch.setattr(ls.time, "sleep", lambda s: None)
+    p = write_brief(run_dir, filled_template())
+    repo = run_dir.parents[1]
+    assert ls.main([str(p), "--org", "proj-org", "--repo", str(repo)]) == 0
+    assert len(opened) == 1
+    bindir = run_dir / "bin"
+    bindir.mkdir()
+    out = run_dir / "child-env.txt"
+    fake = bindir / "claude"
+    fake.write_text(f'#!/bin/sh\npwd > "{out}"\nprintf "%s\\n" "$1" >> "{out}"\nenv >> "{out}"\n')
+    fake.chmod(0o755)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE") and k != "AI_AGENT"}
+    env.update(PARENT_ENV, PATH=f"{bindir}:{os.environ['PATH']}", KEEP_ME="kept")
+    subprocess.run([shell, "-c", opened[0]], env=env, check=True, timeout=30)
+    return out.read_text().splitlines(), repo
+
+
+@pytest.mark.parametrize("shell", ["zsh", "bash"])
+def test_the_window_line_drops_every_parent_claude_var(run_dir, monkeypatch, shell):
+    lines, repo = _run_window_line(run_dir, monkeypatch, shell)
+    names = {ln.split("=", 1)[0] for ln in lines if "=" in ln}
+    assert not names & set(PARENT_ENV), f"leaked into claude: {sorted(names & set(PARENT_ENV))}"
+    assert "KEEP_ME=kept" in lines  # only the Claude vars go, not the whole env
+
+
+def test_the_window_line_still_cds_to_the_repo_and_passes_the_prompt(run_dir, monkeypatch):
+    lines, repo = _run_window_line(run_dir, monkeypatch, "zsh")
+    assert Path(lines[0]).resolve() == repo.resolve()
+    assert lines[1].startswith("You are S1 in the swarm. Org is proj-org.")
+
+
+def test_a_failed_cd_does_not_start_claude(tmp_path):
+    import subprocess
+    out = tmp_path / "ran"
+    line = ls.window_command(tmp_path / "missing", tmp_path / "p.txt", program=f"touch '{out}' #")
+    subprocess.run(["zsh", "-c", line], capture_output=True, timeout=30)
+    assert not out.exists()
