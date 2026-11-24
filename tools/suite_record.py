@@ -63,13 +63,11 @@ from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from inbox_lock import LockTimeout, file_lock, held_fd, lock_path_for  # noqa: E402
-
 TOOL_VERSION = "1"
 LEDGER = Path("tools") / ".suite-ledger.jsonl"
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import stack_check  # noqa: E402  (codify #3: one rule, shared with land_branch)
+from inbox_lock import LockTimeout, file_lock, held_fd, lock_path_for  # noqa: E402
 
 DEFAULT_BASE = "origin/main"
 DEFAULT_TIMEOUT = 3600
