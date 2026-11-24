@@ -63,6 +63,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from count_report import format_line  # noqa: E402  (a count states its reach)
 import merge_chain as mc  # noqa: E402  (one rule for a valid merge, shared with both gates)
+import stack_check  # noqa: E402  (codify #3: one stacking rule, shared with suite_record)
 
 ZERO = "0" * 40
 # Env vars that turn a gate dry run into a recorded waiver. A read-only check must never
@@ -408,6 +409,12 @@ def check_branch(root: Path, branch: str, worktrees: dict, gh_state: dict | None
                 "rejected as non-fast-forward. Never force it; find out which tip is right")
     if stale_base:
         r["refusals"].append(stale_base)
+    if main_ref:
+        try:
+            r["refusals"] += [stack_check.format_refusals(branch, [s])
+                              for s in stack_check.check(str(root), branch, main_ref)]
+        except stack_check.StackCheckError as e:
+            r["refusals"].append(f"stack check could not run: {e}")
     if main_ref:
         m = merge_check(root, main_ref, tip)
         resolved = None
