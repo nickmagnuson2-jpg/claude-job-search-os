@@ -192,10 +192,9 @@ def load_role_tokens(goals_path: Path) -> str:
         text = goals_path.read_text(encoding="utf-8")
     except OSError:
         return ""
-    root = str(Path(__file__).resolve().parent.parent)
-    if root not in sys.path:
-        sys.path.insert(0, root)
-    from tools.career_scanner.scorer import _extract_target_titles
+    # tools/ is on sys.path (module top, for exa_search), so the scorer imports as
+    # career_scanner.scorer in script mode, which is how /scan-contacts runs this file.
+    from career_scanner.scorer import _extract_target_titles
     titles = _extract_target_titles(text)
     return titles[0] if titles else ""
 

@@ -164,11 +164,36 @@ def test_load_role_tokens_ignores_a_role_types_list(tmp_path):
 
 def test_load_role_tokens_uses_the_scorer_parser(tmp_path, monkeypatch):
     """One parser for target titles: contact_finder must call the scorer's."""
-    from tools.career_scanner import scorer
+    from career_scanner import scorer  # tools/ is on sys.path once cf is loaded
     goals = tmp_path / "goals.md"
     goals.write_text("anything", encoding="utf-8")
     monkeypatch.setattr(scorer, "_extract_target_titles", lambda text: ["Sentinel Title"])
     assert cf.load_role_tokens(goals) == "Sentinel Title"
+
+
+def test_load_role_tokens_in_script_mode(tmp_path):
+    """/scan-contacts runs contact_finder.py as a script: only tools/ is on sys.path,
+    not the repo root. The scorer import must resolve there (a root-relative
+    `tools.career_scanner` import raised ModuleNotFoundError in this mode)."""
+    import subprocess
+    import sys
+    goals = tmp_path / "goals.md"
+    goals.write_text(
+        "## Target Criteria\n\n"
+        "- **Open to Work titles (LinkedIn):** Operations Manager; Program Lead.\n",
+        encoding="utf-8",
+    )
+    code = (
+        "import sys; from pathlib import Path\n"
+        f"sys.path.insert(0, {str(MOD_PATH.parent)!r})\n"
+        "import contact_finder\n"
+        f"print(contact_finder.load_role_tokens(Path({str(goals)!r})))\n"
+    )
+    # -I: no PYTHONPATH, no cwd or user site on sys.path, as for a bare script.
+    out = subprocess.run([sys.executable, "-I", "-c", code], cwd=tmp_path,
+                         capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "Operations Manager"
 
 
 def test_load_role_tokens_missing_file(tmp_path):
