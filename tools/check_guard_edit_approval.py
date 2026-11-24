@@ -118,6 +118,13 @@ NOT_HOOK_LIBRARIES = {
                      "command; it decides when a review opens, never what the hook blocks, "
                      "and test_eic_review covers that opening step (2026-10-30, Nick "
                      "approved)",
+    "workstream_write": "workstream writer (add-section, add-next); check_workstream_heading_time "
+                        "imports newest_next_date so the guard, the writer and the suite share "
+                        "one definition; domain tooling edited in ordinary work (2026-11-23, S5)",
+    "workstream_state": "workstream registry parser, imported via workstream_write; domain "
+                        "logic shared with /standup and the suite (2026-11-23, S5)",
+    "inbox_lock": "file-lock helper, imported via workstream_write; shared by every atomic "
+                  "data writer, never a decision (2026-11-23, S5)",
 }
 
 # Guard infrastructure. Repo-relative, matched against the tail of the path so an
