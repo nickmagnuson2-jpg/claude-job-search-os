@@ -23,6 +23,27 @@ WHAT brief_check REQUIRES (framework/templates/overnight-brief.md is the shape):
     table or the sections. (Placeholders inside the shared rules and in fenced code are
     meant to stay.)
 
+  * a Codex (family openai) AND a Grok (family xai) review of the brief's CURRENT text in
+    tools/.cross-model-ledger.jsonl, with every finding on those rows dispositioned
+    (review_check, below).
+
+THE REVIEW CHECK. On 2026-11-24 a brief passed every check above while Codex and Grok had
+both found the same P0 in it (ledger 1323/1324 F1); the checks read form, not substance.
+A ledger row covers the brief when the row is usable, not a waiver, and its `target` holds
+a block `===BRIEF START===` ... `===BRIEF END===` whose stripped text EQUALS the brief's
+stripped current text. Every brief review in the ledger so far (1323-1332) is framed this
+way. Equality, not containment: containment let a reviewed brief launch after text was cut
+from its start or end (Codex, S1 r1 F1, P0). Matching is on the text, not a git tree
+(the push gate's key), because briefs live in gitignored output/; and codex_verify refuses
+gitignored --paths, so a brief review inlines the brief in --target. Rows are read and
+numbered exactly as cross_model_gate and finding_write read them, so a refusal names
+addresses `finding_write.py set` accepts. Known limits, accepted by the org 2026-11-24:
+  * a review fed an excerpt, or a target without the markers, never matches (fails closed);
+  * open findings on rows that reviewed an EARLIER text of the brief do not block once
+    both families have reviewed the current text. Mitigation: any such row whose framed
+    brief carries the same title line and has an open P0 is printed as a WARNING with its
+    address, so the org sees it.
+
 THE PROMPT each window starts with is written here (section_prompt), including the logging
 block, so that text has one copy.
 
@@ -34,12 +55,17 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import re
+import shlex
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+
+import cross_model_gate as cmg  # tools/ is sys.path[0] when this runs as a script
+from finding_write import read_lines
 
 REQUIRED_HEADINGS = ("Ranked backlog", "Rules for every session", "Sections", "Close-out: run metrics")
 RULE_COUNT = 18
@@ -48,6 +74,25 @@ SECTION_RE = re.compile(r"^### ([SL]\d+): (.*?)\s*$", re.M)
 PLACEHOLDER_RE = re.compile(r"<[^<>\n]+>")
 MOVES = {"conversations", "applications", "speed"}
 TEMPLATE = Path(__file__).resolve().parents[1] / "framework" / "templates" / "overnight-brief.md"
+LEDGER_ROOT = Path(__file__).resolve().parents[1]
+REVIEW_FAMILIES = {"openai": "codex", "xai": "grok"}  # family -> the /verify model that supplies it
+# Greedy, first START to last END: the brief itself may contain the marker text (the template's
+# own HOW TO USE comment does), and review_command puts no marker before or after the frame.
+# A target with two frames is read as one and covers nothing (fails closed). Codex S1 r2 F1.
+BRIEF_FRAME_RE = re.compile(r"===BRIEF START===(.*)===BRIEF END===", re.S)
+REVIEW_ASK = ("Plan review of this overnight swarm brief (shape: framework/templates/overnight-brief.md). "
+              "A finding must show a section that cannot reach its Done-when, a claim false against the "
+              "named code, a violated constraint, two sections editing one tracked file, or a misstated "
+              "number. Severity P0/P1/P2.")
+
+
+def review_command(brief: str | Path, model: str, repo: Path | None = None) -> str:
+    """The one review command whose ledger row covers this brief: the brief's file is inlined
+    between the frame markers by $(cat), so the row carries exactly its text. The template's
+    HOW TO USE block prints this same command (test-enforced)."""
+    cd = f"cd {shlex.quote(str(repo))} && " if repo else ""
+    return (f"{cd}PYTHONIOENCODING=utf-8 python3 tools/codex_verify.py --model {model} "
+            f"--target \"{REVIEW_ASK} ===BRIEF START===$(cat {shlex.quote(str(brief))})===BRIEF END===\"")
 BACKLOG_ROW_RE = re.compile(r"^\|\s*\d+\s*\|", re.M)
 
 
@@ -135,7 +180,73 @@ def _moves_ok(moves: str) -> bool:
     return bool(values) and all(v in MOVES for v in values)
 
 
-def brief_check(path: Path, org: str, template: Path = TEMPLATE) -> list:
+def _ledger_rows(ledger_root: Path) -> tuple[list, int]:
+    """(run number, row) pairs numbered as finding_write numbers them, plus unreadable lines."""
+    rows, corrupt = [], 0
+    for n, line in enumerate(read_lines(cmg.ledger_path(ledger_root)), start=1):
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            row = None
+        if isinstance(row, dict):
+            rows.append((n, row))
+        else:
+            corrupt += 1
+    return rows, corrupt
+
+
+def _open(row: dict) -> list:
+    """Findings with a blank disposition: cross_model_gate.open_findings' definition."""
+    return [f for f in row.get("findings") or []
+            if isinstance(f, dict) and not (f.get("disposition") or "").strip()]
+
+
+def framed_briefs(row: dict) -> list:
+    """The stripped brief text a review row carries between its START/END markers, if any."""
+    m = BRIEF_FRAME_RE.search(row.get("target") or "")
+    return [m.group(1).strip()] if m else []
+
+
+def review_check(text: str, ledger_root: Path, brief_path: Path | None = None) -> list:
+    """Every reason the ledger does not show this brief text reviewed and dispositioned."""
+    body = text.strip()
+    rows, corrupt = _ledger_rows(ledger_root)
+    if corrupt:
+        return [f"{cmg.ledger_path(ledger_root)} has {corrupt} unreadable line(s); "
+                f"a corrupt ledger cannot show the brief was reviewed"]
+    covering = [(n, r) for n, r in rows
+                if body and body in framed_briefs(r)
+                and not r.get("waived") and cmg.row_is_usable(r)]
+    problems = []
+    have = {cmg.row_model(r) for _, r in covering}
+    for fam, model in REVIEW_FAMILIES.items():
+        if fam not in have:
+            problems.append(f"no {model} review (family {fam}) in the cross-model ledger covers this brief's "
+                            f"current text (an edit after a review voids it). Review it with:\n      "
+                            f"{review_command(brief_path or '<brief.md>', model, ledger_root)}")
+    for n, r in covering:
+        for f in _open(r):
+            problems.append(f"open finding {n}.{f.get('id')} ({f.get('severity', '?')}, {r.get('model', '?')}) "
+                            f"on a review of this brief; disposition it with finding_write.py set")
+    return problems
+
+
+def review_warnings(text: str, ledger_root: Path) -> list:
+    """Open P0s on reviews of an EARLIER text of this brief (same title line). Not blocking."""
+    body = text.strip()
+    title = next((ln for ln in body.splitlines() if ln.startswith("# ")), None)  # None matches no line
+    out = []
+    for n, r in _ledger_rows(ledger_root)[0]:
+        framed = framed_briefs(r)
+        if body not in framed and any(title in fb.splitlines() for fb in framed):
+            for f in _open(r):
+                if f.get("severity") == "P0":
+                    out.append(f"open P0 {n}.{f.get('id')} ({r.get('model', '?')}) on a review of an earlier "
+                               f"text of this brief: {f.get('summary', '')[:160]}")
+    return out
+
+
+def brief_check(path: Path, org: str, template: Path = TEMPLATE, ledger_root: Path | None = None) -> list:
     """Every reason this brief may not launch; [] means it may."""
     path = Path(path)
     raw = path.read_text()
@@ -219,6 +330,7 @@ def brief_check(path: Path, org: str, template: Path = TEMPLATE) -> list:
     found = sorted(set(PLACEHOLDER_RE.findall(checked)))
     if found:
         problems.append(f"unfilled placeholder(s): {', '.join(found[:8])}")
+    problems += review_check(raw, LEDGER_ROOT if ledger_root is None else ledger_root, path.resolve())
     return problems
 
 
@@ -267,7 +379,10 @@ def main(argv=None) -> int:
     ap.add_argument("sections", nargs="*")
     a = ap.parse_args(argv)
 
-    problems = brief_check(a.brief, a.org)
+    ledger_root = a.repo.resolve()
+    for w in review_warnings(a.brief.read_text(), ledger_root):
+        print(f"WARNING: {w}", file=sys.stderr)
+    problems = brief_check(a.brief, a.org, ledger_root=ledger_root)
     if problems:
         print("launch_swarm: refusing to launch; fix the brief first:", file=sys.stderr)
         for p in problems:

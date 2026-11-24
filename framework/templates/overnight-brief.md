@@ -13,6 +13,16 @@ headings below, the org line matching --org, the backlog before the sections, ea
 section's Owns / Log file / Done when lines, and NEEDS-NICK.md existing). It also writes
 each session's launch prompt, including the logging block, so that text lives only there.
 
+REVIEW BEFORE LAUNCH. The launcher also refuses unless the cross-model ledger holds a Codex
+AND a Grok review of the brief's exact current text, with every finding dispositioned
+(tools/finding_write.py set <run>.<id>). Run both commands from the repo root after the
+last edit; any later edit voids them. They inline the brief between ===BRIEF START=== and
+===BRIEF END===, which is how the launcher matches a review to the brief:
+
+  PYTHONIOENCODING=utf-8 python3 tools/codex_verify.py --model codex --target "Plan review of this overnight swarm brief (shape: framework/templates/overnight-brief.md). A finding must show a section that cannot reach its Done-when, a claim false against the named code, a violated constraint, two sections editing one tracked file, or a misstated number. Severity P0/P1/P2. ===BRIEF START===$(cat 'output/overnight-<MMDDYY>/brief.md')===BRIEF END==="
+
+  PYTHONIOENCODING=utf-8 python3 tools/codex_verify.py --model grok --target "Plan review of this overnight swarm brief (shape: framework/templates/overnight-brief.md). A finding must show a section that cannot reach its Done-when, a claim false against the named code, a violated constraint, two sections editing one tracked file, or a misstated number. Severity P0/P1/P2. ===BRIEF START===$(cat 'output/overnight-<MMDDYY>/brief.md')===BRIEF END==="
+
 ADOPTION IS NOT ENFORCED. A swarm launched by hand, without tools/launch_swarm.py, skips
 every check. The checks bind only when the launcher is used.
 
