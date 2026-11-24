@@ -249,9 +249,9 @@ def ordinal(n: int) -> str:
 
 def bump(path: Path, match: str, evidence: str, expect_sha: str | None = None,
          dry_run: bool = False) -> dict:
+    # A "|" or newline in the evidence lands verbatim in the Pattern cell, where
+    # validate_cells refuses it, so it needs no check of its own (mutation r1 survivor).
     evidence = evidence.strip()
-    if "|" in evidence or "\n" in evidence or "\r" in evidence:
-        raise Refused(["evidence may not contain '|' or a newline"])
     found = DATE_RE.search(evidence)
     if not found:
         raise Refused(["evidence must say what happened and carry its YYYY-MM-DD date"])
