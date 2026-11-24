@@ -383,3 +383,156 @@ def test_repair_row_allows_whitespace_changes_at_cell_edges(broken):
     new = FIXED.replace("| Invented rule delta |", "|  Invented rule delta   |")
     code, out, p = repair(broken, new=new)
     assert code == 0, p.stdout + p.stderr
+
+
+# ------------------------------------------------------------------ bump (S4, 2026-11-24)
+# The 11-22 cutover left no sanctioned way to add 1 to a row's Occurrences (ff lesson 7,
+# row 167). bump adds one, records dated evidence in the Pattern cell, extends the Date
+# cell, and writes only through the same row validator as the other subcommands.
+
+BETA = "Invented pattern beta about a thank-you note |"
+
+
+def bump(f, *args, claudecode="1"):
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+    if claudecode is not None:
+        env["CLAUDECODE"] = claudecode
+    env.update({"LESSONS_PATH": str(f), "PYTHONIOENCODING": "utf-8",
+                "MEMORY_DIR": str(f.parent / "no-memory-here")})
+    p = subprocess.run([sys.executable, str(SCRIPT), "bump", *args],
+                       capture_output=True, text=True, env=env, timeout=60)
+    out = json.loads(p.stdout) if p.stdout.strip().startswith("{") else None
+    return p.returncode, out, p
+
+
+def row_with(f, needle):
+    hits = [ln for ln in lines_of(f) if needle in ln]
+    assert len(hits) == 1, hits
+    return hits[0]
+
+
+def test_bump_adds_one_and_records_dated_evidence(lessons):
+    before = lessons.read_text(encoding="utf-8")
+    code, out, p = bump(lessons, BETA, "--evidence", "2026-11-23: recurred on an invented follow-up")
+    assert code == 0, p.stdout + p.stderr
+    assert out["action"] == "bumped"
+    assert (out["occurrences_before"], out["occurrences_after"]) == (2, 3)
+    row = row_with(lessons, "Invented pattern beta")
+    assert row == ("| Invented pattern beta about a thank-you note **3rd occurrence (2026-11-23):** "
+                   "2026-11-23: recurred on an invented follow-up | Invented rule beta | 3 | No | "
+                   "2026-10-01 (3rd: 2026-11-23) |")
+    assert out["before"] in before and out["after"] == row
+    # every other line is unchanged
+    old, new = before.split("\n"), lessons.read_text(encoding="utf-8").split("\n")
+    assert len(old) == len(new)
+    assert [i for i, (a, b) in enumerate(zip(old, new)) if a != b] == [old.index(out["before"])]
+
+
+@pytest.mark.parametrize("n, word", [(1, "2nd"), (2, "3rd"), (3, "4th"), (10, "11th"),
+                                     (11, "12th"), (12, "13th"), (20, "21st"), (21, "22nd"),
+                                     (22, "23rd"), (110, "111th")])
+def test_bump_ordinals(tmp_path, n, word):
+    f = tmp_path / "lessons.md"
+    f.write_text(LESSONS.replace("| Invented rule gamma | 1 |", f"| Invented rule gamma | {n} |"),
+                 encoding="utf-8")
+    code, out, p = bump(f, "Invented pattern gamma", "--evidence", "2026-11-23 invented")
+    assert code == 0, p.stdout
+    row = row_with(f, "Invented pattern gamma")
+    assert f"**{word} occurrence (2026-11-23):**" in row
+    assert f"| {n + 1} | No | 2026-09-01 ({word}: 2026-11-23) |" in row
+
+
+def test_bump_on_a_long_row(lessons):
+    code, out, p = bump(lessons, "Invented pattern alpha", "--evidence", "2026-11-23 invented")
+    assert code == 0, p.stdout
+    row = row_with(lessons, "Invented pattern alpha")
+    assert len(row) > 600 and "| 2 | No | 2026-11-01 (2nd: 2026-11-23) |" in row
+
+
+def test_bump_dry_run_writes_nothing_and_shows_both_rows(lessons):
+    before = lessons.read_bytes()
+    code, out, p = bump(lessons, BETA, "--evidence", "2026-11-23 invented", "--dry-run",
+                        claudecode=None)
+    assert code == 0, p.stdout
+    assert out["action"] == "dry-run"
+    assert lessons.read_bytes() == before
+    assert out["before"] == row_with(lessons, "Invented pattern beta")
+    assert "| 3 | No | 2026-10-01 (3rd: 2026-11-23) |" in out["after"]
+    assert out["line"] == lines_of(lessons).index(out["before"]) + 1
+
+
+@pytest.mark.parametrize("args, needle", [
+    ([BETA, "--evidence", "no date in this evidence"], "YYYY-MM-DD"),
+    ([BETA, "--evidence", "2026-11-23 a | pipe"], "'|'"),
+    ([BETA, "--evidence", "2026-11-23 a\nnewline"], "'|'"),
+    ([BETA, "--evidence", "   "], "YYYY-MM-DD"),
+    (["thank-you note", "--evidence", "2026-11-23 x"], "matches 2 Section 2 rows"),
+    (["no such row anywhere", "--evidence", "2026-11-23 x"], "matches 0 Section 2 rows"),
+    (["short", "--evidence", "2026-11-23 x"], "at least 12"),
+    ([BETA, "--evidence", "2026-11-23 x", "--expect-sha", "0" * 64], "file changed"),
+])
+def test_bump_refusals_write_nothing(lessons, args, needle):
+    before = lessons.read_bytes()
+    code, out, p = bump(lessons, *args)
+    assert code == 1, p.stdout + p.stderr
+    assert out["action"] == "refused"
+    assert any(needle in r for r in out["reasons"]), out["reasons"]
+    assert lessons.read_bytes() == before
+
+
+@pytest.mark.parametrize("claudecode", [None, "0"])
+def test_bump_tripwire_refuses_a_write_outside_a_session(lessons, claudecode):
+    before = lessons.read_bytes()
+    code, out, p = bump(lessons, BETA, "--evidence", "2026-11-23 x", claudecode=claudecode)
+    assert code == 1
+    assert any("CLAUDECODE=1" in r for r in out["reasons"])
+    assert lessons.read_bytes() == before
+
+
+@pytest.mark.parametrize("occ", ["two", "-1", "1.5"])
+def test_bump_refuses_a_non_integer_occurrences_cell(tmp_path, occ):
+    f = tmp_path / "lessons.md"
+    f.write_text(LESSONS.replace("| Invented rule beta | 2 |", f"| Invented rule beta | {occ} |"),
+                 encoding="utf-8")
+    before = f.read_bytes()
+    code, out, p = bump(f, BETA, "--evidence", "2026-11-23 x")
+    assert code == 1, p.stdout
+    assert any("Occurrences" in r for r in out["reasons"]), out["reasons"]
+    assert f.read_bytes() == before
+
+
+def test_bump_with_the_current_sha_writes(lessons):
+    sha = hashlib.sha256(lessons.read_bytes()).hexdigest()
+    code, out, p = bump(lessons, BETA, "--evidence", "2026-11-23 x", "--expect-sha", sha)
+    assert code == 0, p.stdout
+    assert out["sha256_before"] == sha
+
+
+def test_bump_refuses_a_row_that_cannot_be_read(tmp_path):
+    f = tmp_path / "lessons.md"
+    f.write_text(LESSONS + BROKEN + "\n", encoding="utf-8")
+    before = f.read_bytes()
+    code, out, p = bump(f, "Invented pattern delta", "--evidence", "2026-11-23 x")
+    assert code == 1
+    assert any("cannot be read" in r for r in out["reasons"]), out["reasons"]
+    assert f.read_bytes() == before
+
+
+def test_bump_refuses_when_the_result_fails_the_row_validator(tmp_path):
+    # a Date cell that does not open with YYYY-MM-DD is a defect lessons_state reports;
+    # bump must not write a row the validator rejects
+    f = tmp_path / "lessons.md"
+    f.write_text(LESSONS.replace("| 2 | No | 2026-10-01 |", "| 2 | No | Oct 2026 |"),
+                 encoding="utf-8")
+    before = f.read_bytes()
+    code, out, p = bump(f, BETA, "--evidence", "2026-11-23 x")
+    assert code == 1
+    assert any("date" in r for r in out["reasons"]), out["reasons"]
+    assert f.read_bytes() == before
+
+
+def test_bump_keeps_the_file_mode(lessons):
+    lessons.chmod(0o640)
+    code, out, p = bump(lessons, BETA, "--evidence", "2026-11-23 x")
+    assert code == 0
+    assert oct(lessons.stat().st_mode & 0o777) == "0o640"
