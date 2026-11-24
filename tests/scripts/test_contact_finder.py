@@ -138,18 +138,37 @@ def test_company_mentioned_rejects_different_company_same_prefix():
 # runtime token loaders (temp fixtures - never the real profile)
 # --------------------------------------------------------------------------- #
 def test_load_role_tokens(tmp_path):
+    """The role query comes from the Open to Work titles line, the one source the
+    scorer also reads (tools/career_scanner/scorer.py _extract_target_titles)."""
+    goals = tmp_path / "goals.md"
+    goals.write_text(
+        "## Target Criteria\n\n"
+        "- **Open to Work titles (LinkedIn):** Operations Manager; Program Lead; "
+        "Strategy Lead. Every scanner reads this line.\n",
+        encoding="utf-8",
+    )
+    assert cf.load_role_tokens(goals) == "Operations Manager"
+
+
+def test_load_role_tokens_ignores_a_role_types_list(tmp_path):
+    """A "Role types" list is not a source of target titles any more: with no Open to
+    Work line the role query is dropped, never read from a second parser."""
     goals = tmp_path / "goals.md"
     goals.write_text(
         "## Target Criteria\n\n**Role types** (ranked):\n"
-        "1. Operations Manager / Program Lead at a logistics company (the seat)\n"
-        "2. Strategy & Planning on a strong team\n",
+        "1. Operations Manager / Program Lead at a logistics company (the seat)\n",
         encoding="utf-8",
     )
-    got = cf.load_role_tokens(goals)
-    assert "Operations Manager" in got
-    assert "Program Lead" in got
-    assert "logistics" not in got  # cut at "at a"
-    assert "(" not in got
+    assert cf.load_role_tokens(goals) == ""
+
+
+def test_load_role_tokens_uses_the_scorer_parser(tmp_path, monkeypatch):
+    """One parser for target titles: contact_finder must call the scorer's."""
+    from tools.career_scanner import scorer
+    goals = tmp_path / "goals.md"
+    goals.write_text("anything", encoding="utf-8")
+    monkeypatch.setattr(scorer, "_extract_target_titles", lambda text: ["Sentinel Title"])
+    assert cf.load_role_tokens(goals) == "Sentinel Title"
 
 
 def test_load_role_tokens_missing_file(tmp_path):
