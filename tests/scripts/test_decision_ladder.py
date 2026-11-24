@@ -241,6 +241,12 @@ def test_ladder_reports_the_d2_threshold():
     assert dw.CLIMB_AT == 20 and dw.LAPSE_DAYS == 30
 
 
+def test_each_class_record_carries_its_climb_threshold():
+    """The page prints "of N" from the record, never from a constant of its own (1339.F1)."""
+    lad = dw.ladder(history(["agree"] * 3), now=at(3))["workstream-status"]
+    assert lad["climb_at"] == dw.CLIMB_AT
+
+
 def test_check_carries_the_ladder(main, capsys):
     add(main, capsys, BLIND, "Is alpha done?", CONTEXT)
     code, data = rule_and_resolve(main, capsys, "Q1", "b", flag=None)   # predicted a

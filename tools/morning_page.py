@@ -186,19 +186,33 @@ def waiting_on_them(root: Path) -> dict:
     return {"error": None, "rows": rows}
 
 
+READ_ERRORS = (decision_write.Refusal, OSError, ValueError, KeyError, TypeError, AttributeError)
+
+
 def decisions_waiting(root: Path) -> dict:
     """Build M (orchestration.md 2026-11-21 19:05): the open questions for Nick, read through
     decision_write's own listing, so the page and `decision_write.py list --json` cannot
     disagree (one reader, imported, never re-parsed here). The listing reads only; it routes
     each question from the board and never shows the sealed prediction. A failure is stated
-    on the page, never shown as an empty queue."""
+    on the page, never shown as an empty queue.
+    The trust ladder comes from decision_write.ladder() over the same queue (S2, 2026-11-24):
+    the page shows that function's numbers and never counts rungs itself. It has its OWN try, so
+    a ladder failure is stated beside the open questions and never hides them (Grok 1342.F3)."""
     try:
-        qs, board = decision_write.listing(decision_write.paths(decision_write.resolve_main(root)))
+        p = decision_write.paths(decision_write.resolve_main(root))
+        qs, board = decision_write.listing(p)
     # KeyError/TypeError/AttributeError: a queue line that is valid JSON but not a valid event
     # (Codex r1 F3). The launchd job must still write the page and say the source failed.
-    except (decision_write.Refusal, OSError, ValueError, KeyError, TypeError, AttributeError) as e:
-        return {"error": f"{type(e).__name__}: {e}", "board": None, "open": None}
-    return {"error": None, "board": board, "open": qs}
+    except READ_ERRORS as e:
+        err = f"{type(e).__name__}: {e}"
+        return {"error": err, "board": None, "open": None, "ladder": None, "ladder_error": err}
+    try:
+        ladder, ladder_error = decision_write.ladder(decision_write.load_events(p["questions"])), None
+    # Any ordinary exception, not only READ_ERRORS: the questions are already read and must reach
+    # the page whatever the ladder does (Codex 1344.F2). KeyboardInterrupt/SystemExit still stop.
+    except Exception as e:  # noqa: BLE001
+        ladder, ladder_error = None, f"{type(e).__name__}: {e}"
+    return {"error": None, "board": board, "open": qs, "ladder": ladder, "ladder_error": ladder_error}
 
 
 def gather_live(root: Path, now: datetime) -> dict:
@@ -240,13 +254,41 @@ DECISION_GROUPS = ("time-bound", "role", "policy")
 QUESTION_CHARS = 200  # real questions run past 400 characters; the full text is one `list` away
 
 
+LADDER_INTS = ("climb_at", "agreements_since_correction", "corrections")
+LADDER_OPTIONAL_INTS = ("shown_rulings", "days_since_sample", "days_since_ruling")
+
+
+def _is_int(v) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def checked_ladder(d: dict) -> tuple:
+    """(ladder, error). The whole ladder, or None with the reason: one bad class record makes the
+    ladder unavailable rather than reaching the renderer (Codex 1339.F2 / Grok 1342.F2). Every
+    number the line prints is checked here, so the page shows only what ladder() returned."""
+    raw = d.get("ladder")
+    if raw is None:
+        return None, d.get("ladder_error") or "not read"
+    if not isinstance(raw, dict):
+        return None, f"ladder is {type(raw).__name__}, not a mapping"
+    for cls, c in raw.items():
+        ok = (isinstance(cls, str) and isinstance(c, dict) and isinstance(c.get("rung"), str)
+              and all(_is_int(c.get(k)) for k in LADDER_INTS)
+              and all(c.get(k) is None or _is_int(c.get(k)) for k in LADDER_OPTIONAL_INTS))
+        if not ok:
+            return None, f"{cls}: invalid record"
+    return raw, None
+
+
 def decisions_view(d: dict) -> dict:
     """Group the open questions time-bound (soonest by_date first, undated last), role,
     policy, then "ungrouped" for rows asked before the group field existed or with a value
     outside the three. Nothing is dropped; empty groups are left out."""
     qs = d.get("open")
+    ladder, ladder_error = checked_ladder(d)
     if qs is None:
-        return {"error": d.get("error") or "not read", "groups": None, "total": None}
+        return {"error": d.get("error") or "not read", "groups": None, "total": None,
+                "ladder": ladder, "ladder_error": ladder_error}
     by = {}
     for q in qs:
         g = q.get("group") if q.get("group") in DECISION_GROUPS else "ungrouped"
@@ -254,7 +296,8 @@ def decisions_view(d: dict) -> dict:
     if "time-bound" in by:
         by["time-bound"].sort(key=lambda q: (q.get("by_date") is None, q.get("by_date") or ""))
     groups = [{"name": g, "items": by[g]} for g in DECISION_GROUPS + ("ungrouped",) if g in by]
-    return {"error": None, "groups": groups, "total": len(qs)}
+    return {"error": None, "groups": groups, "total": len(qs), "ladder": ladder,
+            "ladder_error": ladder_error}
 
 
 def _event_day(ev: dict) -> date | None:
@@ -450,7 +493,7 @@ ul{list-style:none;padding-left:0}li{padding-left:14px;text-indent:-14px}li::bef
 .funnel{grid-column:1/-1}.fgrid2{display:grid;grid-template-columns:3fr 2fr;column-gap:40px}
 ul.cuts{columns:2;column-gap:40px}ul.cuts li{break-inside:avoid}
 code{font:15px/1.3 ui-monospace,Menlo,monospace}summary{cursor:pointer;font-weight:600;margin-top:6px}
-.ruled{color:var(--ok);font-weight:700}.funnel li{display:block}ul.decisions li{display:block;margin:6px 0}
+.ruled{color:var(--ok);font-weight:700}.funnel li{display:block}ul.decisions li{display:block;margin:6px 0}ul.ladder li{display:block;margin:6px 0}
 #sources-failed{margin:0 32px 20px}
 @media (max-width:900px){main{grid-template-columns:1fr;padding:0 16px 16px}
 .fgrid2{grid-template-columns:1fr}ul.cuts{columns:1}#sources-failed{margin:0 16px 16px}
@@ -508,6 +551,7 @@ def _decision_li(q: dict) -> str:
     if q.get("group") == "time-bound" and q.get("by_date"):
         head += f' <span class="muted">by {_e(q["by_date"])}</span>'
     lean = (f"Lean: {_e(q['lean'])}" if q.get("lean")
+            else '<span class="muted">blind: no lean shown</span>' if q.get("lean_shown") is False
             else '<span class="muted">no lean recorded</span>')
     # A sealed row can still carry a field of the wrong type (a hand edit that check reports
     # later); the page shows what it can rather than aborting the launchd job (Grok r1 F1).
@@ -525,7 +569,38 @@ def _decision_li(q: dict) -> str:
             f'{nothing}{over_html}<br><span class="muted">{_e(where)}</span></li>')
 
 
+def _ladder_line(cls: str, c: dict) -> str:
+    """One class's rung, worded from decision_write.ladder()'s fields only."""
+    n = c["agreements_since_correction"]
+    count = (f"{n} blind agreements" if c["rung"] != "R1"
+             else f"{n} of {c['climb_at']} blind agreements")
+    fixes = c["corrections"]
+    parts = [f"{cls}: {c.get('rung')}, {count} since the last correction",
+             f"{fixes} correction" + ("" if fixes == 1 else "s")]
+    if c.get("days_since_sample") is not None:
+        parts.append(f"last sample of {c['climb_at']} completed {c['days_since_sample']} days ago"
+                     + (", lapsed" if c.get("lapsed") else ""))
+    elif c.get("days_since_ruling") is not None:
+        parts.append(f"last blind ruling {c['days_since_ruling']} days ago")
+    if c.get("shown_rulings"):
+        parts.append(f"{c['shown_rulings']} shown-lean rulings not counted")
+    return ", ".join(_e(x) for x in parts)
+
+
+def render_ladder(ladder, error=None) -> str:
+    if ladder is None:
+        return f'<p class="warn">Trust ladder unavailable: {_e(error or "not read")}</p>'
+    if not ladder:
+        return '<p class="muted">Trust ladder: No blind rulings resolved yet.</p>'
+    items = "".join(f"<li>{_ladder_line(k, ladder[k])}</li>" for k in sorted(ladder))
+    return f'<h3>Trust ladder</h3><ul class="ladder">{items}</ul>'
+
+
 def render_decisions(v: dict) -> str:
+    return render_ladder(v.get("ladder"), v.get("ladder_error")) + _render_open(v)
+
+
+def _render_open(v: dict) -> str:
     if v["groups"] is None:
         return f'<p class="muted">Decisions unavailable: {_e(v["error"])}</p>'
     if not v["groups"]:

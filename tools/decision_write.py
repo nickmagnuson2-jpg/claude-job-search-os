@@ -803,7 +803,7 @@ def ladder(events: list, now: datetime | None = None) -> dict:
     out = {}
     for e in res:
         c = out.setdefault(cls_of[e["id"]], {
-            "rung": "R1", "blind_rulings": 0, "shown_rulings": 0, "corrections": 0,
+            "rung": "R1", "climb_at": CLIMB_AT, "blind_rulings": 0, "shown_rulings": 0, "corrections": 0,
             "amendments": 0, "agreements_since_correction": 0, "last_sample_at": None,
             "days_since_sample": None, "lapsed": False, "last_ruling_at": None,
             "days_since_ruling": None})
