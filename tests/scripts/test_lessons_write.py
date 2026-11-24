@@ -536,3 +536,47 @@ def test_bump_keeps_the_file_mode(lessons):
     code, out, p = bump(lessons, BETA, "--evidence", "2026-11-23 x")
     assert code == 0
     assert oct(lessons.stat().st_mode & 0o777) == "0o640"
+
+
+# Row 167, the first real case (ff lesson 7, 2026-11-24). Org b7 ruled the live dry run
+# waits for the install; tonight's proof is this test. The row is read at run time from the
+# main checkout's gitignored lessons file and copied into a tmp_path table, so its real text
+# (a contact's name) never enters this tracked file. It runs from a linked worktree too
+# (main_checkout resolves to main), and skips only where main's file is absent, such as a
+# clean merged tree.
+ROW_167_MATCH = "Claude closes a warm first-reply DM with a scheduling-mechanics offer"
+
+
+def test_bump_on_row_167_real_text(tmp_path):
+    sys.path.insert(0, str(REPO / "tools"))
+    import learning_state as ls
+    from vault_paths import main_checkout
+    live = main_checkout(REPO) / "memory" / "lessons.md"
+    if not live.is_file():
+        pytest.skip(f"LIVE-DATA-ABSENT: {live} not present")
+    rows = [ln for ln in live.read_text(encoding="utf-8").split("\n") if ROW_167_MATCH in ln]
+    assert len(rows) == 1, f"row 167 match found {len(rows)} rows"
+    real = rows[0]
+    cells, defect = ls.parse_lessons_row(real)
+    assert cells is not None, defect
+    occ_before, date_before = int(cells[2]), cells[4]
+    f = tmp_path / "lessons.md"
+    f.write_text(LESSONS + real + "\n", encoding="utf-8")
+    ev = "2026-11-24: recurred on an invented follow-up (ff lesson 7)"
+    code, out, p = bump(f, ROW_167_MATCH, "--evidence", ev, "--dry-run", claudecode=None)
+    assert code == 0, p.stdout + p.stderr
+    assert out["before"] == real
+    assert f.read_text(encoding="utf-8") == LESSONS + real + "\n"   # dry run wrote nothing
+    code, out, p = bump(f, ROW_167_MATCH, "--evidence", ev)
+    assert code == 0, p.stdout + p.stderr
+    new_cells, defect = ls.parse_lessons_row(row_with(f, ROW_167_MATCH))
+    assert new_cells is not None, defect
+    n = occ_before + 1
+    word = {2: "2nd", 3: "3rd"}.get(n, f"{n}th")
+    assert new_cells[2] == str(n)
+    assert new_cells[4] == f"{date_before} ({word}: 2026-11-24)"
+    assert new_cells[0] == f"{cells[0]} **{word} occurrence (2026-11-24):** {ev}"
+    assert new_cells[1] == cells[1] and new_cells[3] == cells[3]
+    _disp, _due, defects = ls.lessons_state(new_cells, memory_dir=tmp_path / "no-memory-here",
+                                            repo_root=main_checkout(REPO))
+    assert list(defects) == []
