@@ -70,6 +70,20 @@ ZERO = "0" * 40
 # carry them through, or running it from a shell that has one set would write a ledger row.
 WAIVER_ENV = ("CODEX_VERIFY_WAIVE", "AUDIT_PII_WAIVE", "PUSH_PII_OVERRIDE")
 SHA_RE = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+# How long a landing suite queues behind a running builder suite. A builder holds the lock for
+# setup + pytest (capped at suite_record's DEFAULT_TIMEOUT, 3600 s) + teardown, so the wait is
+# that cap plus 30 minutes (Grok 585ac8c5 F4: an equal wait could still expire and refuse).
+SUITE_WAIT_S = 3600 + 1800
+
+
+def suite_supports_wait(tool: Path) -> bool:
+    """True if the checkers' suite_record.py accepts --wait (C2). GitHub main's copy before C2
+    lands rejects the flag with argparse exit 2, so it is passed only when supported (Grok
+    585ac8c5 F1). Unreadable means unsupported."""
+    try:
+        return '"--wait"' in tool.read_text(encoding="utf-8")
+    except OSError:
+        return False
 MAIN_NAMES = {"main", "origin/main", "refs/heads/main", "refs/remotes/origin/main"}
 
 
@@ -959,8 +973,11 @@ def merge_push(root: Path, branches: list[str], *, dry_run: bool, gh=None,
         return rep
     if want_suite:
         tool = gate_tools / "suite_record.py"
+        # --wait: queue behind a builder's suite (suite_record's lock) instead of failing.
+        wait = ["--wait", str(SUITE_WAIT_S)] if suite_supports_wait(tool) else []
         rc, out, err = run([sys.executable, str(tool), "run", "--branch", cur, "--base", base,
-                            "--repo-root", str(main)], cwd=main, timeout=4 * 3600)
+                            *wait, "--repo-root", str(main)], cwd=main,
+                           timeout=SUITE_WAIT_S + 4 * 3600)
         rep["suite"] = {"rc": rc, "ok": rc == 0, "tail": tail(out + err, 40)}
         if rc != 0:
             rep["refusals"].append(f"full suite on the merged tree did not pass (rc {rc}); "

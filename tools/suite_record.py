@@ -2,7 +2,8 @@
 """suite_record.py -- run the FULL test suite on the merged tree of base + branch, and record
 a pass a gate can check.
 
-    run   --branch B [--base origin/main] [--timeout 3600]   build merged tree, run, record
+    run   --branch B [--base origin/main] [--timeout 3600] [--wait 0]
+                                                             build merged tree, run, record
     check --tip T    [--base origin/main]                    exit 0 if that tree has a pass
 
 WHY (2026-11-09): six PRs merged on per-branch tests only, and no full suite ran on the
@@ -36,6 +37,12 @@ shares one ledger:
 Exit codes: run 0 recorded / 1 not recorded. check 0 pass on record / 1 none (incl. a merge
 conflict) / 2 usage error, bad ref, or unreadable ledger.
 
+LOCK (C2, 2026-11-23): `run` holds inbox_lock.file_lock on the shared ledger for the whole run,
+and pytest inherits the lock fd, so the slot stays held until pytest itself exits. A second
+`run` refuses with code suite_locked and names the holder, or queues with --wait SECONDS.
+`check` never takes the lock. LIMIT: only copies of this file that carry the lock take it. A
+worktree branched before C2 landed runs unlocked until it rebases (Grok 585ac8c5 F2).
+
 LIMIT: the suite runs on tracked files only. Gitignored trees (data/, output/) are absent in
 the temp worktree. It is a linked worktree, so tests marked live_data skip there
 (tests/conftest.py skips them when .git is a file); on a fresh clone they would run.
@@ -52,6 +59,7 @@ import sys
 import tempfile
 import time
 import xml.etree.ElementTree as ET
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -59,6 +67,7 @@ TOOL_VERSION = "1"
 LEDGER = Path("tools") / ".suite-ledger.jsonl"
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import stack_check  # noqa: E402  (codify #3: one rule, shared with land_branch)
+from inbox_lock import LockTimeout, file_lock, held_fd, lock_path_for  # noqa: E402
 
 DEFAULT_BASE = "origin/main"
 DEFAULT_TIMEOUT = 3600
@@ -72,6 +81,13 @@ class GitError(Exception):
 
 class LedgerError(Exception):
     """The ledger exists but cannot be read. Never read as "no record"."""
+
+
+class SuiteLocked(Exception):
+    """Another `run` holds the suite lock. `holder` is what that run recorded about itself."""
+
+    def __init__(self, holder: dict):
+        self.holder = holder
 
 
 class Conflict(Exception):
@@ -189,20 +205,81 @@ def _tail(log: Path, n: int = 15) -> str:
         return ""
 
 
-def _run_pytest(wt: Path, junit: Path, log: Path, timeout: int) -> int | None:
-    """pytest's returncode, or None on timeout (the whole process group is killed)."""
+def _run_pytest(wt: Path, junit: Path, log: Path, timeout: int,
+                keep_fds: tuple[int, ...] = ()) -> int | None:
+    """pytest's returncode, or None on timeout (the whole process group is killed).
+
+    keep_fds: the suite lock's fd, inherited by pytest. flock belongs to the open file
+    description, so while pytest holds its copy the lock outlives this process: killing the
+    named holder no longer frees the slot while its pytest keeps running (Grok 585ac8c5 F3)."""
     argv = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
             f"--junitxml={junit}"]
     env = child_env()
     with log.open("wb") as out:
         proc = subprocess.Popen(argv, cwd=wt, env=env, stdout=out, stderr=subprocess.STDOUT,
-                                stdin=subprocess.DEVNULL, start_new_session=True)
+                                stdin=subprocess.DEVNULL, start_new_session=True,
+                                pass_fds=keep_fds)
         try:
             return proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             os.killpg(proc.pid, signal.SIGKILL)
             proc.wait()
             return None
+
+
+# ---------------------------------------------------------------- one suite at a time
+# 2026-11-21: two runs overlapped twice in one night, and the org's pgrep check missed
+# suite_record runs. The slot is now an flock on the shared ledger (inbox_lock.file_lock), so
+# the kernel releases it when a run exits or crashes and no stale lock can outlive its run.
+# The holder record sits next to the lock file, outside the repo, and is read only to NAME
+# the holder in a refusal; it never decides who holds the lock.
+
+def _alive(pid) -> bool:
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def holder_path(ledger: Path) -> Path:
+    lock = lock_path_for(ledger)
+    return lock.with_name(lock.name + ".holder.json")
+
+
+def read_holder(ledger: Path) -> dict:
+    try:
+        data = json.loads(holder_path(ledger).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+@contextmanager
+def suite_lock(ledger: Path, branch: str, wait: float):
+    """Hold the suite lock for the block. Raises SuiteLocked if it is still held after `wait`."""
+    stack = ExitStack()
+    try:
+        stack.enter_context(file_lock(ledger, timeout=wait))
+    except LockTimeout:
+        raise SuiteLocked(read_holder(ledger)) from None
+    with stack:
+        hp = holder_path(ledger)
+        hp.write_text(json.dumps({
+            "pid": os.getpid(), "branch": branch,
+            "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "session": os.environ.get("CLAUDE_SESSION_ID", ""),
+        }), encoding="utf-8")
+        try:
+            yield
+        finally:
+            # Removed before the lock is released, so a reader never sees this run named
+            # after the next run has taken the lock.
+            hp.unlink(missing_ok=True)
 
 
 def _out(payload: dict, code: int) -> int:
@@ -215,12 +292,29 @@ def _fail(code: str, message: str, **extra) -> int:
                  **extra}, 1)
 
 
-def cmd_run(root: Path, branch: str, base: str, timeout: int) -> int:
+def cmd_run(root: Path, branch: str, base: str, timeout: int, wait: float = 0) -> int:
     try:
         common_git = common_dir(root)
     except GitError as e:
         return _fail("git_error", str(e))
     ledger = common_git.parent / LEDGER
+    try:
+        with suite_lock(ledger, branch, wait):
+            return _run_locked(root, common_git, ledger, branch, base, timeout)
+    except SuiteLocked as e:
+        h = e.holder
+        who = (f"pid {h.get('pid', '?')} on branch {h.get('branch', '?')}, "
+               f"started {h.get('started_at', '?')}") if h else "a run that has not named itself yet"
+        if h and not _alive(h.get("pid")):
+            who += (" (that process has exited; its pytest is still running and holds the "
+                    "lock until it finishes)")
+        return _fail("suite_locked", f"another suite is running: {who}. Retry later, or pass "
+                     "--wait SECONDS to queue behind it.", holder=h, branch=branch,
+                     waited_s=wait)
+
+
+def _run_locked(root: Path, common_git: Path, ledger: Path, branch: str, base: str,
+                timeout: int) -> int:
     base_sha = resolve_commit(root, base)
     tip_sha = resolve_commit(root, branch)
     if base_sha is None or tip_sha is None:
@@ -260,7 +354,8 @@ def cmd_run(root: Path, branch: str, base: str, timeout: int) -> int:
         admin = admin_dir(wt, common_git)
         junit, log = tmp / "junit.xml", tmp / "pytest.log"
         start = time.monotonic()
-        rc = _run_pytest(wt, junit, log, timeout)
+        fd = held_fd(ledger)
+        rc = _run_pytest(wt, junit, log, timeout, keep_fds=(fd,) if fd is not None else ())
         duration = round(time.monotonic() - start, 1)
         if rc is None:
             return _fail("timeout", f"timeout after {timeout} s", duration_s=duration, **ids)
@@ -323,6 +418,16 @@ def cmd_check(root: Path, tip: str, base: str) -> int:
                  "tip": tip_sha, "recorded": ok}, 0 if ok else 1)
 
 
+def _nonneg(v: str) -> float:
+    try:
+        f = float(v)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a number: {v}") from None
+    if f < 0:
+        raise argparse.ArgumentTypeError("--wait must be >= 0")
+    return f
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Run or check the full suite on a merged tree.")
     ap.add_argument("--repo-root", default=".")
@@ -331,6 +436,8 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--branch", required=True)
     run.add_argument("--base", default=DEFAULT_BASE)
     run.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    run.add_argument("--wait", type=_nonneg, default=0.0,
+                     help="seconds to queue behind a running suite (default 0: refuse)")
     run.add_argument("--repo-root", dest="repo_root_sub", default=None)
     chk = sub.add_parser("check")
     chk.add_argument("--tip", required=True)
@@ -339,7 +446,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     root = Path(args.repo_root_sub or args.repo_root)
     if args.command == "run":
-        return cmd_run(root, args.branch, args.base, args.timeout)
+        return cmd_run(root, args.branch, args.base, args.timeout, args.wait)
     return cmd_check(root, args.tip, args.base)
 
 

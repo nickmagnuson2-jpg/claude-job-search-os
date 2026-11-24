@@ -47,7 +47,7 @@ if mode == 'garbage':
     print('not json'); sys.exit(0)
 print(json.dumps(r)); sys.exit(0)
 """
-SUITE_STUB = ("import json, os, sys\n"
+SUITE_STUB = ("import json, os, sys  # accepts \"--wait\" like the real C2 suite_record\n"
               "open(os.environ['LB_ARGV_LOG'], 'a').write(json.dumps(['suite', *sys.argv[1:]]) + '\\n')\n"
               "sys.exit(int(os.environ.get('LB_SUITE_RC', '0')))\n")
 HOOK_STUB = """#!/bin/bash
@@ -1313,8 +1313,9 @@ def test_mp_real_run_backfills_once_and_runs_suite_on_chain_tip(mp):
     assert len(_rows(main_tools / ".cross-model-ledger.jsonl")) == 1
     assert len(_rows(main_tools / ".audit-pii-ledger.jsonl")) == 1
     argv = [json.loads(x) for x in Path(os.environ["LB_ARGV_LOG"]).read_text().splitlines()]
+    # --wait: the landing suite queues behind a builder's suite (suite_record's lock, C2).
     assert ["suite", "run", "--branch", rep["chain_tip"], "--base", mp["base"],
-            "--repo-root", str(mp["root"])] in argv
+            "--wait", str(lb.SUITE_WAIT_S), "--repo-root", str(mp["root"])] in argv
 
 
 def test_mp_suite_failure_refuses_and_shows_output(mp, monkeypatch):
@@ -1806,3 +1807,32 @@ def test_check_refuses_when_the_allowlist_resolution_hits_a_git_error(mp, monkey
     assert "notes" not in r
     assert any(x.startswith("conflicts with main: ") and "forced" in x for x in r["refusals"])
     assert r["steps"]["merge_main"]["error"] == "rev-list failed (rc 128): forced"
+
+
+# ---- C2 review fixes (Grok 585ac8c5 F1, F4)
+
+def test_suite_supports_wait_reads_the_checkers_copy(tmp_path):
+    new, old = tmp_path / "new.py", tmp_path / "old.py"
+    new.write_text('run.add_argument("--wait", type=float)\n')
+    old.write_text('run.add_argument("--timeout", type=int)\n')
+    assert lb.suite_supports_wait(new) is True
+    assert lb.suite_supports_wait(old) is False
+    assert lb.suite_supports_wait(tmp_path / "missing.py") is False
+
+
+def test_mp_does_not_pass_wait_to_a_checker_that_lacks_it(mp, monkeypatch):
+    # GitHub main's suite_record before C2 lands rejects --wait (argparse exit 2). The
+    # detection itself is test_suite_supports_wait_reads_the_checkers_copy; this pins the wiring.
+    monkeypatch.setattr(lb, "suite_supports_wait", lambda tool: False)
+    wt, tip = ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    seed_branch_ledgers(wt, tip)
+    rep = run_mp(mp, ["one"], dry_run=False)
+    assert rep["ok"], rep
+    argv = [json.loads(x) for x in Path(os.environ["LB_ARGV_LOG"]).read_text().splitlines()]
+    suite = [a for a in argv if a[:2] == ["suite", "run"]]
+    assert suite and all("--wait" not in a for a in suite)
+
+
+def test_the_landing_wait_outlasts_a_full_builder_suite():
+    import suite_record
+    assert lb.SUITE_WAIT_S > suite_record.DEFAULT_TIMEOUT

@@ -429,8 +429,9 @@ REGISTRY: dict[tuple[str, str, str | None], object] = {
         shown=Text("tools/records_lookup.py", r'"hit_count": len\(found\)')),
     # suite_record.py: pytest's own skip count. A run where every collected test skipped
     # exits 0 and ran nothing, so it records no pass (2026-11-16, found on the merged tree).
+    # The all-skipped branch moved from cmd_run into _run_locked when the suite lock wrapped the run (C2, 2026-11-23).
     ("suite_record.py", "skipped", None): [
-        Branch("suite_record.py", "cmd_run", reads="skipped", closes="exit")],
+        Branch("suite_record.py", "_run_locked", reads="skipped", closes="exit")],
     # replay_coverage.py: a shape class with 0 relevant rows in the corpus (codify #27,
     # 2026-11-23). The CLI exits 1 on it, so a replay that never saw the shape cannot pass.
     ("replay_coverage.py", "unmeasured", None): [
