@@ -1,15 +1,16 @@
 ---
 name: discover-companies
-description: Discover new target companies (or people) via the Exa Agent API, score them against your thesis, and propose them to your inbox for review
+description: Discover new target companies (or people) via the Exa Agent API, score them against your thesis, and queue them for review in the company queue /standup reads
 argument-hint: "[preset-name | --query \"...\"]"
 user-invocable: true
-allowed-tools: Bash(*), Read(*), Write(data/inbox.md), Write(data/discover-presets.yaml)
+allowed-tools: Bash(*), Read(*), Write(data/discover-presets.yaml)
 ---
 
 # Discover Companies (Exa Agent API)
 
 Discover *new* companies matching Nick's role-shape thesis, score them
-deterministically, and write a review-gated proposal to `data/inbox.md`.
+deterministically, and queue a review-gated proposal in the company queue
+(`tools/company_queue.py`), which `/standup` reads.
 Feeds the front of `/scan-companies` (which scores roles after you promote a
 company). This skill does NOT modify `data/scan-targets.yaml`.
 
@@ -71,7 +72,7 @@ PYTHONIOENCODING=utf-8 python3 tools/pipeline_reconcile.py --repo-root . --forma
 ```
 
 Pass every candidate. Exit 1 means at least one is already tracked; **exit 2 means the pipeline
-could not be read and the result is not an all-clear.** Carry the verdict into the inbox block so
+could not be read and the result is not an all-clear.** Carry the verdict into the queued proposal (`pipeline_note`) so
 the reviewer sees it:
 
 - **`Previously closed`** — annotate with the stage and date. **Never silently drop it.** A closed
@@ -97,7 +98,8 @@ Then, for each candidate, add a one-line fit read the deterministic score cannot
   - `bench: thin` — engineer-heavy with one recent commercial hire.
   - `bench: unknown` — public data too sparse to say. **This is a real and common answer. Say it.**
 
-  **Sort `thin` and `unknown` down; do NOT drop them.** Two reasons this is not a filter: public
+  **Sort `thin` and `unknown` down in the Step 5 chat table; do NOT drop them.** (The queue and
+  `/standup` keep their own order, by score; they show the `bench` tag on each line.) Two reasons this is not a filter: public
   data is stale often enough to matter (in one case Exa's tenure figure for a target's commercial
   lead was contradicted by what he said on the call), and the part that actually decides it — whether the
   guidance is real, whether there is any structure — is not visible from outside and needs the
@@ -109,45 +111,57 @@ Then, for each candidate, add a one-line fit read the deterministic score cannot
 Do NOT re-score; the number is deterministic. You are adding judgment on top — the founding-team
 read is a sort key and an annotation, not an input to the score.
 
-### Step 4: Write the proposal (atomic, review-gated)
+### Step 4: Queue the proposal (the company queue `/standup` reads)
 
-Prepend a block to `data/inbox.md` **via the locked writer, never a raw Write**:
+Discovery output waits in the company queue, not in `data/inbox.md` (funnel-intake
+decision 3, 2026-11-06). `/standup` shows the queue and Nick accepts or rejects each
+company there (`tools/company_queue.py decide`), which is what turns a company into a
+scan target. Write through the queue's own writer, never a raw Write: it holds the file
+lock and skips a company already pending or already decided.
+
+Pass one JSON list, one object per candidate, on stdin:
 
 ```bash
-PYTHONIOENCODING=utf-8 python3 tools/inbox_lock.py prepend \
-  --inbox data/inbox.md --stdin <<'BLOCK'
-<the block below>
-BLOCK
+PYTHONIOENCODING=utf-8 python3 tools/company_queue.py --repo-root . add --preset lane-a <<'JSON'
+[{"name": "Acme AI", "description": "<from the tool>", "score": 9,
+  "lane": "A", "geo_band": "sf", "geo_flag": false, "stage_text": "Series C",
+  "fit": "<one-line fit read>", "url": "<careers link>", "slug_guess": "acme-ai",
+  "recommendation": "promote", "bench": "thin", "bench_note": "<what you found>",
+  "pipeline_note": "Previously closed: <stage, date>"}]
+JSON
 ```
 
-A re-read-then-Write cannot hold the file lock across its read-think-write cycle, so
-it can silently revert a concurrent write from the launchd collectors (which fire
-every 3 hours and each morning). Hand the CLI just the new block; it does the
-read-splice-write inside the lock.
+| Step 3 / table field | Key |
+|---|---|
+| Score | `score` (copy the tool's number, never re-score) |
+| Company | `name` |
+| Lane (A / B) | `lane` |
+| SF? | `geo_band`, `geo_flag` (copy from the tool) |
+| Stage | `stage_text` (the tool's own key) |
+| Fit read | `fit` |
+| Careers | `url` |
+| Slug guess | `slug_guess` (the tool's own key) |
+| Rec (promote / hold) | `recommendation` |
+| Founding-team read | `bench` (`yes` / `thin` / `unknown`) and `bench_note` |
+| Pipeline reconcile verdict | `pipeline_note` (omit when the reconcile found nothing) |
 
-The block to pass:
-
-```markdown
-## Discovered Companies - YYYY-MM-DD (preset: lane-a)
-
-Discovered via /discover-companies. Promote winners into data/scan-targets.yaml
-(confirm `ats` + `slug`), then /scan-companies scores their roles.
-
-| Score | Company | Lane | SF? | Stage | Fit read | Careers | Slug guess | Rec |
-|-------|---------|------|-----|-------|----------|---------|------------|-----|
-| 9 | Acme AI | A | SF | Series C | <one-line> | [link](url) | acme-ai | promote |
-```
+Use the preset name you ran (`--preset lane-b`, or `--preset freeform` for a `--query`
+run). For `--entity person` runs pass `--entity person` and the tool's `role`,
+`company`, `location`. The command prints `{"status": "ok", "added": n, "skipped": n}`;
+a skipped company is one already in the queue or already decided there. Check the
+result with `tools/company_queue.py --repo-root . read --top 25`.
 
 Never write to `data/scan-targets.yaml` from this skill - promotion is the user's
-explicit, gated action.
+explicit, gated action, through `company_queue.py decide`.
 
 ### Step 5: Present
 
 Show the sorted table in chat and report `candidate_count` / `excluded_count`.
 If the JSON has `partial: true`, the Webset hit the timeout - say so and note the
 results are incomplete (re-run or raise `--timeout`). Free tier caps a run at 25
-results; mention that if the count is at the cap. Then suggest: "Promote the ones
-you like into scan-targets.yaml, then run `/scan-companies`."
+results; mention that if the count is at the cap. Then say they are queued for
+`/standup`, where accepting one makes it a scan target; then `/scan-companies`
+scores its roles.
 
 ## Hard rules
 

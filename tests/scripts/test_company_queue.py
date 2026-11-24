@@ -713,3 +713,55 @@ def test_slug_candidates_keep_ascii_digits_inside_words():
 def test_slug_candidates_drop_a_separately_typed_accent():
     # "A" followed by U+030A COMBINING RING ABOVE: the mark is an accent, not a separator.
     assert "acme-works" in cq.slug_candidates("Åcme Works")
+
+
+# --- /discover-companies writes the queue (l2-discover-queue-1124) -----------------
+# One proposal row as the skill's Step 4 builds it: every column of its table plus the
+# Step 3 judgment. Written out literally, NOT from cq.KEPT_KEYS / cq.READ_KEYS, so a key
+# dropped from either tuple fails here instead of being dropped from the expectation too.
+SKILL_ROW = {
+    "name": "Acme AI", "description": "Agents for field-service dispatch", "score": 9,
+    "lane": "A", "geo_band": "sf", "geo_flag": False, "stage_text": "Series C",
+    "fit": "Deployment seat next to the CEO", "url": "https://example.com/careers",
+    "slug_guess": "acme-ai", "recommendation": "promote", "bench": "thin",
+    "bench_note": "about 40 people, 6 non-engineers, founders ex-infra",
+    "pipeline_note": "Previously closed: Rejected 2026-09-02",
+}
+
+
+def _cli_stdin(monkeypatch, capsys, root, argv, stdin=None):
+    import io
+    if stdin is not None:
+        monkeypatch.setattr("sys.stdin", io.StringIO(stdin))
+    rc = cq.main(["--repo-root", str(root), *argv])
+    return rc, json.loads(capsys.readouterr().out)
+
+
+def test_skill_proposal_round_trips_every_field_through_add_and_read(tmp_path, monkeypatch,
+                                                                     capsys):
+    rc, out = _cli_stdin(monkeypatch, capsys, tmp_path,
+                   ["add", "--preset", "lane-a", "--today", "2026-11-24"],
+                   stdin=json.dumps([SKILL_ROW]))
+    assert rc == 0 and out["added"] == 1 and out["skipped"] == 0
+    rc, shown = _cli_stdin(monkeypatch, capsys, tmp_path, ["read"])
+    assert rc == 0 and shown["pending_companies"] == 1
+    row = shown["companies"][0]
+    for k, v in SKILL_ROW.items():
+        assert row.get(k) == v, f"{k} lost between the skill and /standup's read"
+    assert row["preset"] == "lane-a" and row["first_seen"] == "2026-11-24"
+
+
+def test_cli_add_skips_a_company_already_queued(tmp_path, monkeypatch, capsys):
+    _cli_stdin(monkeypatch, capsys, tmp_path, ["add", "--preset", "lane-a", "--today", "2026-11-24"],
+         stdin=json.dumps([SKILL_ROW]))
+    rc, out = _cli_stdin(monkeypatch, capsys, tmp_path,
+                   ["add", "--preset", "lane-b", "--today", "2026-11-25"],
+                   stdin=json.dumps([{"name": "ACME AI", "score": 3}]))
+    assert rc == 0 and (out["added"], out["skipped"]) == (0, 1)
+
+
+@pytest.mark.parametrize("stdin", ["not json", json.dumps({"name": "Acme"})])
+def test_cli_add_refuses_input_that_is_not_a_json_list(tmp_path, monkeypatch, capsys, stdin):
+    rc, out = _cli_stdin(monkeypatch, capsys, tmp_path, ["add", "--preset", "lane-a"], stdin=stdin)
+    assert rc == 1 and out["status"] == "error"
+    assert not cq.queue_path(tmp_path).exists()
