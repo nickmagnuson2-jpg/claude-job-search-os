@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+"""launch_swarm.py - open one Terminal window per overnight-swarm section, but only from a
+brief that passes brief_check.
+
+WHY. Across 9 overnight runs, about 12-14 failures came from what the brief left out:
+no ranked backlog, no file ownership, no standby org, rules sent by message after launch
+(DECISIONS.md row C1, 2026-11-21). On 2026-11-23 the same shape fired three times before
+any section had worked an hour: the brief named a previous org while the launch named
+another; no section had a log file and the logging rules arrived after launch; rules
+12-18 were added to the brief after all sessions had read it. A template alone is prose.
+This launcher is the step every swarm already goes through, so the template's
+requirements are checked here, before any window opens.
+
+WHAT brief_check REQUIRES (framework/templates/overnight-brief.md is the shape):
+  * an `Organizer: **<name>**` line equal to --org, a `Standby org: **<name>**` line and a
+    `Needs Nick:` line, and output/<run>/NEEDS-NICK.md existing next to the brief;
+  * the headings Ranked backlog, Rules for every session, Sections and Close-out: run
+    metrics, with the backlog before the sections;
+  * rules numbered 1 to 18 under Rules for every session;
+  * at least one `### <ID>: <title> | moves: <...>` section, each with Owns, Log file
+    (a backticked path) and Done when lines; no two sections owning the same backticked path;
+  * no unfilled `<...>` placeholder in the header lines, the backlog, the rules-checked
+    table or the sections. (Placeholders inside the shared rules and in fenced code are
+    meant to stay.)
+
+THE PROMPT each window starts with is written here (section_prompt), including the logging
+block, so that text has one copy.
+
+ADOPTION IS NOT ENFORCED: a swarm opened by hand skips all of this.
+
+Usage:
+  PYTHONIOENCODING=utf-8 python3 tools/launch_swarm.py output/overnight-<MMDDYY>/brief.md --org <name> [--dry-run] [SECTION ...]
+"""
+from __future__ import annotations
+
+import argparse
+import re
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+REQUIRED_HEADINGS = ("Ranked backlog", "Rules for every session", "Sections", "Close-out: run metrics")
+RULE_COUNT = 18
+LOGGING_BLOCK_MARK = "LOGGING IS MANDATORY"
+SECTION_RE = re.compile(r"^### ([SL]\d+): (.*?)\s*$", re.M)
+PLACEHOLDER_RE = re.compile(r"<[^<>\n]+>")
+MOVES = {"conversations", "applications", "speed"}
+TEMPLATE = Path(__file__).resolve().parents[1] / "framework" / "templates" / "overnight-brief.md"
+BACKLOG_ROW_RE = re.compile(r"^\|\s*\d+\s*\|", re.M)
+
+
+@dataclass
+class Section:
+    id: str
+    title: str
+    moves: str | None
+    owns: str | None
+    log_file: str | None
+    done_when: str | None
+    body: str
+
+
+@dataclass
+class Brief:
+    org: str | None
+    standby: str | None
+    needs_nick: str | None
+    headings: list
+    sections: list
+    text: str
+
+
+def _strip_comments(text: str) -> str:
+    return re.sub(r"<!--.*?-->", "", text, flags=re.S)
+
+
+def _field(body: str, name: str) -> str | None:
+    m = re.search(rf"^- \*\*{re.escape(name)}:\*\*\s*(.*)$", body, re.M)
+    return m.group(1).strip() if m and m.group(1).strip() else None
+
+
+def _h2_block(text: str, heading: str) -> str:
+    m = re.search(rf"^## {re.escape(heading)}\s*$", text, re.M)
+    if not m:
+        return ""
+    rest = text[m.end():]
+    n = re.search(r"^## ", rest, re.M)
+    return rest[: n.start()] if n else rest
+
+
+def parse_brief(text: str) -> Brief:
+    text = _strip_comments(text)
+    org = re.search(r"^Organizer: \*\*([^*]+)\*\*", text, re.M)
+    standby = re.search(r"^Standby org: \*\*([^*]+)\*\*", text, re.M)
+    needs = re.search(r"^Needs Nick: `([^`]+)`", text, re.M)
+    headings = re.findall(r"^## (.+?)\s*$", text, re.M)
+    sections_block = _h2_block(text, "Sections")
+    sections = []
+    matches = list(SECTION_RE.finditer(sections_block))
+    for i, m in enumerate(matches):
+        body = sections_block[m.end(): matches[i + 1].start() if i + 1 < len(matches) else len(sections_block)]
+        head = m.group(2)
+        title, _, moves = head.partition("| moves:")
+        log = _field(body, "Log file")
+        log_path = re.fullmatch(r"`([^`]+)`", log or "")
+        sections.append(Section(
+            id=m.group(1), title=title.strip(), moves=moves.strip() or None,
+            owns=_field(body, "Owns"), log_file=log_path.group(1) if log_path else None,
+            done_when=_field(body, "Done when"), body=body))
+    return Brief(org=org.group(1).strip() if org else None,
+                 standby=standby.group(1).strip() if standby else None,
+                 needs_nick=needs.group(1) if needs else None,
+                 headings=headings, sections=sections, text=text)
+
+
+def _rule_lines(text: str) -> dict:
+    block = _h2_block(_strip_comments(text), "Rules for every session")
+    return {int(m.group(1)): m.group(0).strip() for m in re.finditer(r"^(\d+)\. .*$", block, re.M)}
+
+
+def template_rules(template: Path = TEMPLATE) -> dict:
+    """The template's rules, each as a pattern in which its <placeholders> match any text.
+    The template is the one copy of the shared rules; a brief carries them verbatim."""
+    out = {}
+    for n, line in _rule_lines(template.read_text()).items():
+        parts = PLACEHOLDER_RE.split(line)
+        out[n] = re.compile(".+?".join(re.escape(x) for x in parts) + r"\Z")
+    return out
+
+
+def _moves_ok(moves: str) -> bool:
+    values = [v.strip().lower() for v in re.split(r"[,+/]|\band\b", moves) if v.strip()]
+    return bool(values) and all(v in MOVES for v in values)
+
+
+def brief_check(path: Path, org: str, template: Path = TEMPLATE) -> list:
+    """Every reason this brief may not launch; [] means it may."""
+    path = Path(path)
+    raw = path.read_text()
+    b = parse_brief(raw)
+    problems = []
+
+    if b.org is None:
+        problems.append("no 'Organizer: **<name>**' line")
+    elif b.org != org:
+        problems.append(f"Organizer line names {b.org!r} but the launch names --org {org!r}")
+    if b.standby is None:
+        problems.append("no 'Standby org: **<name>**' line")
+    if b.needs_nick is None:
+        problems.append("no 'Needs Nick: `<path>`' line")
+    if not (path.parent / "NEEDS-NICK.md").is_file():
+        problems.append(f"{path.parent / 'NEEDS-NICK.md'} does not exist; create it before any window opens")
+
+    for h in REQUIRED_HEADINGS:
+        if h not in b.headings:
+            problems.append(f"missing heading '## {h}'")
+    if "Ranked backlog" in b.headings and "Sections" in b.headings:
+        if b.headings.index("Ranked backlog") > b.headings.index("Sections"):
+            problems.append("'## Ranked backlog' must come before '## Sections'")
+    backlog = _h2_block(b.text, "Ranked backlog")
+    if "Ranked backlog" in b.headings and not BACKLOG_ROW_RE.search(backlog):
+        problems.append("'## Ranked backlog' has no ranked row ('| 1 | <item> | ...'); rank the backlog before the sections")
+    section_ids = {s.id for s in b.sections}
+    table = [ln for ln in backlog.splitlines() if ln.strip().startswith("|")]
+    # Every table row after the header and separator is an item (Codex r3 F1: a row
+    # whose rank is empty or not a number used to skip all row checks).
+    for n, line in enumerate(table[2:] if len(table) >= 2 else [], start=1):
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        rank = cells[0] if cells[0].isdigit() else f"#{n}"
+        if not cells[0].isdigit():
+            problems.append(f"backlog row {rank}: rank {cells[0]!r} is not a number")
+        # Rank | Item | Moves | Evidence | Section (Codex r2 F1: each row is checked, not only its presence)
+        moves, evidence, section = (cells + ["", "", "", "", ""])[2:5]
+        if not _moves_ok(moves):
+            problems.append(f"backlog row {rank}: moves {moves!r} is not one or more of conversations, applications, speed")
+        if not evidence:
+            problems.append(f"backlog row {rank}: no evidence for its rank")
+        named = [x for x in re.split(r"[,/ ]+", section) if x]
+        missing = [x for x in named if x not in section_ids]
+        if not named or missing:
+            problems.append(f"backlog row {rank}: section {section!r} is not a section in this brief"
+                            f"{' (' + ', '.join(missing) + ')' if missing else ''}")
+
+    rules = _h2_block(b.text, "Rules for every session")
+    numbers = {int(n) for n in re.findall(r"^(\d+)\. ", rules, re.M)}
+    want = template_rules(template)
+    have = _rule_lines(b.text)
+    for n in range(1, RULE_COUNT + 1):
+        if n not in numbers:
+            problems.append(f"rule {n} is missing under '## Rules for every session'")
+        elif n in want and not want[n].match(have.get(n, "")):
+            problems.append(f"rule {n} does not match the template's rule text ({template.name}); copy it verbatim")
+
+    if not b.sections:
+        problems.append("no sections ('### S<n>: <title> | moves: <...>') under '## Sections'")
+    owners = {}
+    for s in b.sections:
+        if not s.moves:
+            problems.append(f"{s.id}: heading does not name what it moves ('| moves: ...')")
+        elif not _moves_ok(s.moves):
+            problems.append(f"{s.id}: moves {s.moves!r} is not one or more of conversations, applications, speed")
+        if not s.owns:
+            problems.append(f"{s.id}: no '- **Owns:**' line")
+        if not s.log_file:
+            problems.append(f"{s.id}: no '- **Log file:**' line with a backticked path")
+        if not s.done_when:
+            problems.append(f"{s.id}: no '- **Done when:**' line")
+        for p in re.findall(r"`([^`]+)`", s.owns or ""):
+            owners.setdefault(p, []).append(s.id)
+    for p, ids in owners.items():
+        if len(ids) > 1:
+            problems.append(f"{p} is owned by more than one section: {', '.join(ids)}")
+
+    checked = "\n".join(
+        [ln for ln in b.text.splitlines() if re.match(r"^(# |Organizer:|Standby org:|Needs Nick:)", ln)]
+        + [_h2_block(b.text, h) for h in ("Ranked backlog", "Rules checked against this plan", "Sections")])
+    found = sorted(set(PLACEHOLDER_RE.findall(checked)))
+    if found:
+        problems.append(f"unfilled placeholder(s): {', '.join(found[:8])}")
+    return problems
+
+
+def section_prompt(section: Section, org: str, brief_rel: str) -> str:
+    x = section.id
+    return (
+        f"You are {x} in the swarm. Org is {org}. Read {brief_rel}: the rules, then section {x}. "
+        f"Check in with {org} now.\n\n"
+        f"{LOGGING_BLOCK_MARK}. Keep your log current the whole run:\n"
+        f"- Log file: {section.log_file} (append only, with cat >>; other sessions share it).\n"
+        f"- Write a dated section headed '## YYYY-MM-DD HH:MM by `date` | {x}: <what>' at start, at every commit, "
+        f"at every review result, when blocked, when you change plan, and when done. Never longer than 30 minutes "
+        f"between entries while you work.\n"
+        f"- Time comes from running `date`, never an estimate. Each entry states what changed, the evidence "
+        f"(sha, report path, count with its denominator), and what is next.\n"
+        f"- Log first, then message {org} with the same facts. {org}'s check-in cron reads your newest "
+        f"'| {x}:' heading and chases a gap over 30 minutes.\n"
+    )
+
+
+def open_window(cmd: str) -> None:
+    subprocess.run(["osascript", "-e", "on run argv", "-e",
+                    'tell application "Terminal" to do script (item 1 of argv)', "-e", "end run", cmd],
+                   check=True, capture_output=True)
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("brief", type=Path)
+    ap.add_argument("--org", required=True)
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[1])
+    ap.add_argument("sections", nargs="*")
+    a = ap.parse_args(argv)
+
+    problems = brief_check(a.brief, a.org)
+    if problems:
+        print("launch_swarm: refusing to launch; fix the brief first:", file=sys.stderr)
+        for p in problems:
+            print(f"  - {p}", file=sys.stderr)
+        return 2
+    b = parse_brief(a.brief.read_text())
+    by_id = {s.id: s for s in b.sections}
+    wanted = a.sections or list(by_id)
+    unknown = [x for x in wanted if x not in by_id]
+    if unknown:
+        print(f"launch_swarm: no such section(s) in the brief: {', '.join(unknown)}", file=sys.stderr)
+        return 2
+
+    repo = a.repo.resolve()
+    brief_abs = a.brief.resolve()
+    try:
+        brief_rel = str(brief_abs.relative_to(repo))
+    except ValueError:
+        brief_rel = str(brief_abs)
+    prompts = brief_abs.parent / "prompts"
+    prompts.mkdir(exist_ok=True)
+    for x in wanted:
+        p = prompts / f"{x}.txt"
+        p.write_text(section_prompt(by_id[x], a.org, brief_rel))
+        cmd = f"cd '{repo}' && claude \"$(cat '{p}')\""
+        if a.dry_run:
+            print(f"[dry-run] {x}: {cmd}")
+        else:
+            open_window(cmd)
+            print(f"opened {x}")
+            time.sleep(2)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
