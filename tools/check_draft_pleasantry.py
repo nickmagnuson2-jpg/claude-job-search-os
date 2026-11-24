@@ -61,6 +61,9 @@ DRAFT_FILE = Path(__file__).parent / ".pending-draft.txt"
 # Derived from Nick's corpus: "Hope you have a great weekend!", "Hope you had a
 # great long weekend!", "Hope your week is going well!", "Happy 4th of July!",
 # "enjoy your vacation", "take care", "safe travels", "wishing you".
+# Near Veterans Day, "Thank you for your service" is the warm line (Nick's ruling
+# 2026-11-22 item 8.4). "Happy Veterans Day" is deliberately NOT accepted: Nick
+# ruled it the wrong greeting for the day.
 PLEASANTRY_RE = re.compile(
     r"""
       hope\s+(you|your|the|everything|things|you're|you\s+had|you\s+have|you'?ll)
@@ -73,6 +76,7 @@ PLEASANTRY_RE = re.compile(
     | safe\s+travels
     | congrat
     | great\s+week\b
+    | thank\s+you\s+for\s+your\s+service
     """,
     re.IGNORECASE | re.VERBOSE,
 )

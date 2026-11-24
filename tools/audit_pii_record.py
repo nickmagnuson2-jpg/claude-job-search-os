@@ -17,15 +17,26 @@ push it was typed for.
 
 LIMIT: Claude writes the record, so it proves the semantic pass RAN to a clean verdict on
 that tree. It does not prove the pass was any good. (Nick, 2026-11-05.)
+
+FROM A LINKED WORKTREE (2026-11-22, 3 fires in one day): the CLI uses the MAIN checkout's
+ledger, the one merge-push's gate reads. `record` writes there and also to the worktree's
+copy, which a push from the worktree and land_branch step 5 read; `check` passes only on
+main's rows, and a record held only by the worktree's copy fails with code
+recorded_only_in_worktree. A linked worktree whose main cannot be found exits 2
+(main_checkout_unresolved) and writes nothing. The library functions (read_rows, has_clean_record,
+append_waiver) still use the root they are given: land_branch's merge-push preview runs the
+guard inside a throwaway worktree whose copy holds rows main does not have yet.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
 
 LEDGER = Path("tools") / ".audit-pii-ledger.jsonl"
 
@@ -39,6 +50,33 @@ def tree_of(root: Path, sha: str) -> str | None:
     r = subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "--quiet",
                         f"{sha}^{{commit}}^{{tree}}"], capture_output=True, text=True)
     return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+
+
+def commit_of(root: Path, sha: str) -> str | None:
+    """The full commit id SHA names in `root` (HEAD differs between checkouts)."""
+    r = subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "--quiet",
+                        f"{sha}^{{commit}}"], capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+
+
+class MainUnresolved(Exception):
+    """`root` is a linked worktree whose main checkout cannot be found."""
+
+
+def resolve_main(root: Path) -> Path:
+    """The main checkout's root, or `root` itself when it is one.
+
+    codex_verify._main_checkout is the resolver the review ledger already uses
+    (mirror_to_main, finding_write, the open-P0 line), so both ledgers agree on
+    "main". It rejects a --separate-git-dir holder (Grok r1 F2) and raises for a linked
+    worktree it cannot place (Codex r1 F1). Imported here, not at module top, so the
+    push guard that imports this module's library functions does not load it."""
+    import codex_verify as cv
+    try:
+        main = cv._main_checkout(Path(root).resolve())
+    except RuntimeError as e:
+        raise MainUnresolved(str(e)) from None
+    return Path(main) if main else Path(root)
 
 
 def read_rows(root: Path) -> list[dict]:
@@ -103,16 +141,40 @@ def main(argv: list[str] | None = None) -> int:
     if tree is None:
         return _out({"status": "error", "code": "not_a_commit",
                      "message": f"{args.tip} is not a commit in {root}"}, 1)
-    if args.command == "record":
-        append_row(root, {"kind": "audit", "verdict": "clean", "tree": tree, "tip": args.tip,
-                          "recorded": _now(), "files_scanned": args.files,
-                          "accepted": args.accept})
-        return _out({"status": "ok", "action": "record", "tree": tree, "tip": args.tip}, 0)
     try:
-        ok = has_clean_record(root, tree)
+        main = resolve_main(root)
+    except MainUnresolved as e:
+        return _out({"status": "error", "code": "main_checkout_unresolved",
+                     "message": f"{e}; the push gate reads main's ledger, so run this from "
+                                "the main checkout"}, 2)
+    in_worktree = main.resolve() != root.resolve()
+    ledger = str(main / LEDGER)
+    if args.command == "record":
+        row = {"kind": "audit", "verdict": "clean", "tree": tree, "tip": args.tip,
+               "recorded": _now(), "files_scanned": args.files, "accepted": args.accept}
+        append_row(main, row)
+        if in_worktree:
+            # The worktree's copy too: a push run from the worktree, and land_branch
+            # step 5's dry run, read it (the hook's root is --show-toplevel) (Grok r1 F1).
+            append_row(root, row)
+        return _out({"status": "ok", "action": "record", "tree": tree, "tip": args.tip,
+                     "ledger": ledger}, 0)
+    try:
+        ok = has_clean_record(main, tree)
+        stranded = not ok and in_worktree and has_clean_record(root, tree)
     except LedgerError as e:
         return _out({"status": "error", "code": "ledger_unreadable", "message": str(e)}, 2)
-    return _out({"status": "ok", "action": "check", "tree": tree, "recorded": ok}, 0 if ok else 1)
+    if stranded:
+        fix = " ".join(shlex.quote(str(a)) for a in (
+            "python3", main / "tools" / "audit_pii_record.py", "--repo-root", main,
+            "record", "--tip", commit_of(root, args.tip)))
+        fix = f"PYTHONIOENCODING=utf-8 {fix}"
+        return _out({"status": "ok", "action": "check", "tree": tree, "recorded": False,
+                     "code": "recorded_only_in_worktree", "ledger": ledger,
+                     "message": "recorded only in this worktree's copy, which merge-push's gate "
+                                f"does not read; re-record from the main checkout: {fix}"}, 1)
+    return _out({"status": "ok", "action": "check", "tree": tree, "recorded": ok,
+                 "ledger": ledger}, 0 if ok else 1)
 
 
 if __name__ == "__main__":

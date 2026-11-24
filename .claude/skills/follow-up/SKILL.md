@@ -421,7 +421,7 @@ BODY:
 
 `ARTIFACT:` is read by `tools/check_draft_artifact.py`, which blocks `open_draft.py` on a draft carrying an attachment or a link other than the bio links without it, and is never sent. Write `ARTIFACT: none (<reason>)` for a plain link such as a job posting or a calendar link, and `ARTIFACT: output/<slug>/BUILD-LOG.md` for a page, demo or file built for this reader (`framework/artifact-workflow.md`). A rendered CV passes without it.
 
-`ATTACH:` is optional. Include it when the follow-up genuinely needs a file (the recipient asked for a CV, or you're sending the artifact you previously offered). When included, `open_draft.py` copies the file to the macOS clipboard so Cmd+V in Gmail compose attaches it.
+`ATTACH:` is optional. For a file other than the CV, include it when the follow-up genuinely needs it (the recipient asked for it, or you're sending the artifact you previously offered). Whether to attach the CV follows the `/cold-outreach` CV rule (the `ATTACH:` paragraph in `.claude/skills/cold-outreach/SKILL.md`, Step 8, including its carve-out for after Nick has applied); do not restate it here. When included, `open_draft.py` copies the file to the macOS clipboard so Cmd+V in Gmail compose attaches it.
 
 **Immediately after writing `.pending-draft.txt`, also write `tools/.pending-draft.source`** with two lines:
 

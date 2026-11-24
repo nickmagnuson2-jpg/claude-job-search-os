@@ -275,7 +275,7 @@ See `memory/feedback_voice_pure_diff_minimal.md` and `memory/feedback_minimize_p
 3. **Specific ask** (1 sentence) — exactly one ask, in Nick's voice per the matched exemplar; see `voice-reference.md` ask patterns (`I'd love to...`, specific not generic). Do not paste a canned ask.
 4. **Close** — per `voice-reference.md` closer canon (`Best,` / `Thanks,` + bare `Nick`)
 
-**Do NOT attach resume** — offer to send if interested. Unsolicited attachments reduce response rates.
+**Resume attachment:** before Nick has applied to a role at this company, do NOT attach it unless asked; offer to send if interested. Unsolicited attachments reduce response rates. **CV carve-out (Nick's ruling 2026-11-22, item 8.1):** after Nick has applied to a role at the company, a note to someone there carries the CV (add an `ATTACH:` line with the rendered CV). Before he has applied, attach it only if the recipient asked for it. Check `data/job-pipeline.md` for an applied row before deciding.
 
 **Subject line:** Plain per the Step 5 subject rule (Re: prefix preserved when replying to an existing thread).
 
@@ -410,7 +410,7 @@ BODY:
 
 `ARTIFACT:` is read by `tools/check_draft_artifact.py`, which blocks `open_draft.py` on a draft carrying an attachment or a link other than the bio links without it, and is never sent. Write `ARTIFACT: none (<reason>)` for a plain link such as a job posting or a calendar link, and `ARTIFACT: output/<slug>/BUILD-LOG.md` for a page, demo or file built for this reader (`framework/artifact-workflow.md`). A rendered CV passes without it.
 
-`ATTACH:` is optional. Include it only when the email genuinely needs a file (CV, cover letter PDF, portfolio doc) and the recipient asked for it or it is the main artifact of the message. Default behavior remains: do NOT attach a resume on cold outreach unless the recipient asked. When included, `open_draft.py` copies the file to the macOS clipboard so Cmd+V in the Gmail compose window attaches it.
+`ATTACH:` is optional. For a file other than the CV (cover letter PDF, portfolio doc), include it only when the email genuinely needs it and the recipient asked for it or it is the main artifact of the message. Whether to attach the CV follows the **Resume attachment** rule and its CV carve-out in the "Interest / Application" template above; do not restate it here. When included, `open_draft.py` copies the file to the macOS clipboard so Cmd+V in the Gmail compose window attaches it.
 
 **Immediately after writing `.pending-draft.txt`, also write `tools/.pending-draft.source`** with two lines:
 
