@@ -461,3 +461,12 @@ def test_a_tools_module_the_caller_imported_is_blamed_over_the_label():
 
 def test_no_named_script_returns_empty():
     assert fs.traceback_blame([], S6_OUTPUT) == ""
+
+
+def test_a_traceback_with_no_frame_lines_keeps_the_named_script():
+    # nothing shows who raised it (truncated output, or only the exception line), so keep the tool
+    out = "Exit code 1\nTraceback (most recent call last):\nRuntimeError: boom\n"
+    assert fs.traceback_blame(["pipe_write.py"], out) == "pipe_write.py"
+    # one <string> frame IS evidence: the caller's code ran and raised
+    out2 = out.replace("RuntimeError", '  File "<string>", line 1, in <module>\nRuntimeError')
+    assert fs.traceback_blame(["pipe_write.py"], out2) == "inline python3 (with pipe_write.py)"

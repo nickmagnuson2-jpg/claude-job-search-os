@@ -365,6 +365,8 @@ def hook_crash(error_text: str) -> str:
 
 _TRACEBACK_HEADER_RE = re.compile(r"Traceback \(most recent call last\):")
 _TOOLS_DIR_RE = re.compile(r"(?:^|/)tools/[^/]+\.py$")
+# Any frame line, including <string> / <stdin>: the evidence that a traceback shows WHERE it ran.
+_ANY_FRAME_RE = re.compile(r'File "[^"]+", line \d+')
 
 
 def traceback_blame(scripts: list[str], error_text: str) -> str:
@@ -377,7 +379,8 @@ def traceback_blame(scripts: list[str], error_text: str) -> str:
     retained finding_write JSONDecodeError event was raised by the caller, not the tool;
     output/overnight-112526/S6-friction-triage.md section 3).
 
-      - no traceback in the output: scripts[0], unchanged (a tool's own JSON error, exit code);
+      - no traceback in the output, or a traceback with no frame lines at all (truncated, or
+        only the exception line survived): scripts[0], unchanged, because nothing shows who raised it;
       - a traceback frame in a named script: the deepest such script raised it, or was the
         entry point of the library call that did, so it keeps the blame;
       - else a frame in another file under a tools/ directory (a tools module the caller
@@ -389,7 +392,7 @@ def traceback_blame(scripts: list[str], error_text: str) -> str:
     if not scripts:
         return ""
     text = error_text or ""
-    if not _TRACEBACK_HEADER_RE.search(text):
+    if not _TRACEBACK_HEADER_RE.search(text) or not _ANY_FRAME_RE.search(text):
         return scripts[0]
     frames = _TRACEBACK_PYFILE_RE.findall(text)
     names = [f.replace("\\", "/").rsplit("/", 1)[-1].lower() for f in frames]
