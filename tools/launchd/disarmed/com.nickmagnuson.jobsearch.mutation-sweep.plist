@@ -106,9 +106,9 @@
         <key>Minute</key><integer>0</integer>
     </dict>
     <key>StandardOutPath</key>
-    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/mutation-sweep.log</string>
+    <string>__REPO_ROOT__/tools/launchd/logs/mutation-sweep.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/mutation-sweep.err</string>
+    <string>__REPO_ROOT__/tools/launchd/logs/mutation-sweep.err</string>
     <key>RunAtLoad</key>
     <false/>
 </dict>

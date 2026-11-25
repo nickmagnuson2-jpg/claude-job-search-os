@@ -8,7 +8,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/opt/homebrew/bin/python3</string>
-        <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/gmail_fetch.py</string>
+        <string>__REPO_ROOT__/tools/gmail_fetch.py</string>
         <string>--job-search-label</string>
     </array>
 
@@ -21,7 +21,7 @@
     </dict>
 
     <key>WorkingDirectory</key>
-    <string>/Users/mag/Documents/Obsidian/30-projects/job-search</string>
+    <string>__REPO_ROOT__</string>
 
     <key>StartInterval</key>
     <integer>900</integer>
@@ -30,8 +30,8 @@
     <false/>
 
     <key>StandardOutPath</key>
-    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/gmail-fetch.log</string>
+    <string>__REPO_ROOT__/tools/launchd/logs/gmail-fetch.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/gmail-fetch.err</string>
+    <string>__REPO_ROOT__/tools/launchd/logs/gmail-fetch.err</string>
 </dict>
 </plist>

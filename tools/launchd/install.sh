@@ -19,16 +19,46 @@
 set -e
 
 # Overridable so the tests can run this against a throwaway tree and a fake launchctl.
-SOURCE_DIR="${LAUNCHD_SOURCE_DIR:-/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+SOURCE_DIR="${LAUNCHD_SOURCE_DIR:-$HERE}"
 TARGET_DIR="${LAUNCHD_TARGET_DIR:-$HOME/Library/LaunchAgents}"
 LAUNCHCTL="${LAUNCHCTL:-launchctl}"
 DISARMED_DIR="$SOURCE_DIR/disarmed"
 PREFIX="com.nickmagnuson.jobsearch."
 
-# install_one <label>: copy the plist into place and (re)load it.
+# The tracked plists are templates (S1, 2026-11-25): no machine's home path is in this public
+# repo. __REPO_ROOT__ is the MAIN checkout (an install run from a worktree still points the
+# jobs at main), __CLAUDE_PROJECT_DIR__ is its Claude Code project folder and
+# __CLAUDE_PROJECT_SLUG__ that folder's name (detector-scan writes "$HOME/.claude/projects/<slug>"), all from the
+# existing resolvers (vault_paths.main_checkout, hook_runtime.claude_project_dir). launchd
+# expands neither ~ nor $HOME, so the installed copy carries the literal paths.
+read -r RENDER_REPO RENDER_PROJECT RENDER_SLUG < <(python3 - "$HERE/../.." <<'PY'
+import sys
+from pathlib import Path
+here = Path(sys.argv[1]).resolve()
+sys.path.insert(0, str(here / "tools"))
+from hook_runtime import claude_project_dir
+from vault_paths import main_checkout
+main = main_checkout(here)
+print(main, claude_project_dir(main), claude_project_dir(main).name)
+PY
+)
+RENDER_REPO="${LAUNCHD_REPO_ROOT:-$RENDER_REPO}"
+RENDER_PROJECT="${LAUNCHD_CLAUDE_PROJECT_DIR:-$RENDER_PROJECT}"
+RENDER_SLUG="$(basename "$RENDER_PROJECT")"
+[ -n "$RENDER_REPO" ] && [ -n "$RENDER_PROJECT" ] && [ -n "$RENDER_SLUG" ] || {
+    echo "install.sh: could not resolve the repo root and Claude project folder" >&2; exit 1; }
+
+# render <template> <dest>: the plist with its three placeholders filled in.
+render() {
+    sed -e "s#__CLAUDE_PROJECT_DIR__#$RENDER_PROJECT#g" -e "s#__CLAUDE_PROJECT_SLUG__#$RENDER_SLUG#g" \
+        -e "s#__REPO_ROOT__#$RENDER_REPO#g" "$1" > "$2"
+}
+
+# install_one <label>: render the plist into place and (re)load it.
 install_one() {
     local label="$1" short="${1#$PREFIX}"
-    cp "$SOURCE_DIR/$label.plist" "$TARGET_DIR/$label.plist"
+    render "$SOURCE_DIR/$label.plist" "$TARGET_DIR/$label.plist"
     # Clear stale logs before loading: a pre-existing com.apple.macl xattr
     # (stamped under a prior macOS TCC context) makes launchd unable to open
     # the log file, so the job dies at setup with EX_CONFIG (78) and writes

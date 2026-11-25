@@ -32,9 +32,9 @@
         <key>Minute</key><integer>40</integer>
     </dict>
     <key>StandardOutPath</key>
-    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/sent-artifact-check.log</string>
+    <string>__REPO_ROOT__/tools/launchd/logs/sent-artifact-check.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/sent-artifact-check.err</string>
+    <string>__REPO_ROOT__/tools/launchd/logs/sent-artifact-check.err</string>
     <key>RunAtLoad</key>
     <false/>
 </dict>

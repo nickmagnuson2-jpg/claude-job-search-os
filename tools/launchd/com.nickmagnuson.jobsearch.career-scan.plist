@@ -12,7 +12,7 @@
         <string>tools.career_scanner.cli</string>
         <string>--once-a-day</string>
         <string>--repo-root</string>
-        <string>/Users/mag/Documents/Obsidian/30-projects/job-search</string>
+        <string>__REPO_ROOT__</string>
     </array>
 
     <key>EnvironmentVariables</key>
@@ -24,7 +24,7 @@
     </dict>
 
     <key>WorkingDirectory</key>
-    <string>/Users/mag/Documents/Obsidian/30-projects/job-search</string>
+    <string>__REPO_ROOT__</string>
 
     <!-- 06:30 so the queue is fresh for the 07:00 morning page (Nick, R0c, 2026-11-18).
          A scan takes about 25 s (two measured runs, 2026-11-17 and 11-18). 09:00-12:00
@@ -69,8 +69,8 @@
     <false/>
 
     <key>StandardOutPath</key>
-    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/career-scan.log</string>
+    <string>__REPO_ROOT__/tools/launchd/logs/career-scan.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/career-scan.err</string>
+    <string>__REPO_ROOT__/tools/launchd/logs/career-scan.err</string>
 </dict>
 </plist>

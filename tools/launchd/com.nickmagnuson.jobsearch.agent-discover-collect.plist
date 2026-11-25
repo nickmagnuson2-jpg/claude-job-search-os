@@ -8,7 +8,7 @@
 	<array>
 		<string>/bin/sh</string>
 		<string>-c</string>
-		<string>/opt/homebrew/bin/python3 /Users/mag/Documents/Obsidian/30-projects/job-search/tools/agent_collect.py --today "$(date +%Y-%m-%d)"</string>
+		<string>/opt/homebrew/bin/python3 __REPO_ROOT__/tools/agent_collect.py --today "$(date +%Y-%m-%d)"</string>
 	</array>
 	<key>EnvironmentVariables</key>
 	<dict>
@@ -18,7 +18,7 @@
 		<string>/opt/homebrew/bin:/usr/bin:/bin</string>
 	</dict>
 	<key>WorkingDirectory</key>
-	<string>/Users/mag/Documents/Obsidian/30-projects/job-search</string>
+	<string>__REPO_ROOT__</string>
 	<key>StartCalendarInterval</key>
 	<dict>
 		<key>Weekday</key>
@@ -31,8 +31,8 @@
 	<key>RunAtLoad</key>
 	<false/>
 	<key>StandardOutPath</key>
-	<string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/agent-discover-collect.log</string>
+	<string>__REPO_ROOT__/tools/launchd/logs/agent-discover-collect.log</string>
 	<key>StandardErrorPath</key>
-	<string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/agent-discover-collect.err</string>
+	<string>__REPO_ROOT__/tools/launchd/logs/agent-discover-collect.err</string>
 </dict>
 </plist>

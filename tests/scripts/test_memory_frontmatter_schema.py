@@ -32,11 +32,13 @@ from pathlib import Path
 
 import pytest
 
-MEMORY_DIR = Path(
-    os.path.expanduser(
-        "~/.claude/projects/-Users-mag-Documents-Obsidian-30-projects-job-search/memory"
-    )
-)
+import sys  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+from hook_runtime import claude_project_dir  # noqa: E402
+from vault_paths import main_checkout  # noqa: E402
+
+# Derived, never one machine's folder name (S1, 2026-11-25).
+MEMORY_DIR = claude_project_dir(main_checkout(Path(__file__).resolve().parents[2])) / "memory"
 
 # None = enforce corpus-wide. Was date(2026, 8, 13) until the Phase 1 backfill landed.
 ENFORCE_FROM = None
