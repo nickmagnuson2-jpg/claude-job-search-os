@@ -383,7 +383,8 @@ def traceback_blame(scripts: list[str], error_text: str) -> str:
       - else a frame in another file under a tools/ directory (a tools module the caller
         imported): that module;
       - else no frame in any tool: the caller's own code raised it, so the row is
-        "inline python3 (caller of <scripts[0]>)", never the tool.
+        "inline python3 (with <scripts[0]>)", never the tool. "with", not "caller of": the
+        command may only mention the tool (inside a heredoc body, as an argument).
     """
     if not scripts:
         return ""
@@ -399,7 +400,7 @@ def traceback_blame(scripts: list[str], error_text: str) -> str:
         if _TOOLS_DIR_RE.search(frame.replace("\\", "/")) and "site-packages" not in frame \
                 and name not in EXCLUDE_SCRIPTS:
             return name
-    return f"inline python3 (caller of {scripts[0]})"
+    return f"inline python3 (with {scripts[0]})"
 
 
 def derive_surface(tool_name: str, command: str, error_text: str = "") -> str:

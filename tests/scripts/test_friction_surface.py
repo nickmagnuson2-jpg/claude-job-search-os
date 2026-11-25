@@ -419,7 +419,7 @@ PIPE_WRITE_VIA_LIBRARY = (
 
 
 def test_s6_live_shape_blames_the_inline_caller_not_pipe_write():
-    assert fs.derive_surface("Bash", S6_COMMAND, S6_OUTPUT) == "inline python3 (caller of pipe_write.py)"
+    assert fs.derive_surface("Bash", S6_COMMAND, S6_OUTPUT) == "inline python3 (with pipe_write.py)"
 
 
 def test_a_traceback_raised_inside_pipe_write_still_blames_pipe_write():
@@ -453,10 +453,10 @@ def test_a_tools_module_the_caller_imported_is_blamed_over_the_label():
     assert fs.traceback_blame(["pipe_write.py"], out) == "md_table.py"
     # an excluded logger frame is never the blame
     out2 = out.replace("md_table.py", "friction_log.py")
-    assert fs.traceback_blame(["pipe_write.py"], out2) == "inline python3 (caller of pipe_write.py)"
+    assert fs.traceback_blame(["pipe_write.py"], out2) == "inline python3 (with pipe_write.py)"
     # a module named tools.py outside a tools/ directory is not a tools/ frame
     out3 = out.replace("tools/md_table.py", "lib/notools/x.py")
-    assert fs.traceback_blame(["pipe_write.py"], out3) == "inline python3 (caller of pipe_write.py)"
+    assert fs.traceback_blame(["pipe_write.py"], out3) == "inline python3 (with pipe_write.py)"
 
 
 def test_no_named_script_returns_empty():

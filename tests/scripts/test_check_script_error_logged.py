@@ -642,7 +642,7 @@ def test_the_callers_json_load_is_not_blamed_on_the_tool_it_read(hook_run):
            '| python3 -c "import json,sys; json.load(sys.stdin)" || true')
     r = hook_run(cmd, stdout=tb)
     assert r.logged
-    assert r.surface == "inline python3 (caller of pipe_write.py)"
+    assert r.surface == "inline python3 (with pipe_write.py)"
 
 
 def test_a_crash_inside_the_tool_is_still_blamed_on_the_tool_when_piped(hook_run):
