@@ -646,7 +646,11 @@ def test_the_callers_json_load_is_not_blamed_on_the_tool_it_read(hook_run):
 
 
 def test_a_crash_inside_the_tool_is_still_blamed_on_the_tool_when_piped(hook_run):
-    cmd = ('python3 tools/pipe_write.py update acme 2>&1 '
+    """Without 2>&1 the tool's traceback stays on stderr, visible beside the caller's failure."""
+    cmd = ('python3 tools/pipe_write.py update acme '
            '| python3 -c "import json,sys; json.load(sys.stdin)" || true')
-    r = hook_run(cmd, stdout=PIPE_WRITE_TRACEBACK)
+    caller = ('Traceback (most recent call last):\n'
+              '  File "<string>", line 1, in <module>\n'
+              'json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)\n')
+    r = hook_run(cmd, stdout=caller, stderr=PIPE_WRITE_TRACEBACK)
     assert r.surface == "pipe_write.py"

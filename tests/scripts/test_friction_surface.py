@@ -425,8 +425,22 @@ def test_s6_live_shape_blames_the_inline_caller_not_pipe_write():
 def test_a_traceback_raised_inside_pipe_write_still_blames_pipe_write():
     cmd = "PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . update Acme Applied"
     assert fs.derive_surface("Bash", cmd, PIPE_WRITE_OWN) == "pipe_write.py"
-    # also when a caller pipes its output onward: the frame is pipe_write's own
-    assert fs.derive_surface("Bash", S6_COMMAND, PIPE_WRITE_OWN) == "pipe_write.py"
+    # piped onward WITHOUT 2>&1, the tool's traceback stays on stderr, which the logger sees
+    # next to the caller's own failure: the tool's frame is visible, so the tool keeps the blame
+    piped = ('python3 tools/pipe_write.py update Acme Applied '
+             '| python3 -c "import json,sys; json.load(sys.stdin)"')
+    both = PIPE_WRITE_OWN + S6_OUTPUT.split("\n", 1)[1]
+    assert fs.derive_surface("Bash", piped, both) == "pipe_write.py"
+
+
+def test_with_2to1_a_tool_crash_is_not_visible_and_the_surface_keeps_the_tool_name():
+    """Codex/Grok s4c F1, org ruling 2026-11-25: with `2>&1 |` the pipe consumes the tool's
+    own traceback, so the logger sees only the caller's frames. A real crash and a usage error
+    look identical there; S6's evidence favours the caller, and the surface still names the
+    tool, so a grep for it finds every such row. Ambiguity pinned on purpose."""
+    caller_only = S6_OUTPUT.split("\n", 1)[1]          # what the logger sees either way
+    assert fs.derive_surface("Bash", S6_COMMAND, caller_only) == "inline python3 (with pipe_write.py)"
+    assert "pipe_write.py" in fs.derive_surface("Bash", S6_COMMAND, caller_only)
 
 
 def test_a_library_frame_under_the_named_tool_blames_the_named_tool():
