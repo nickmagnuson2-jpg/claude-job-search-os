@@ -242,6 +242,28 @@ def mutant_key(rel_path: str, func: str, op: str, source_line: str) -> str:
     return f"{rel_path}::{func}::{op}::{h}"
 
 
+def unique_keys(rel_path: str, tree: ast.AST, src_lines: list[str],
+                points: list[tuple[int, int, str]]) -> dict[tuple[int, int, str], str]:
+    """{(line, col, op): key}, one distinct key per mutant site.
+
+    mutant_key alone collides when one function holds the same stripped line twice with the
+    same operator (two `sys.exit(0)` in one main), so one allowlist entry silently covered a
+    second, never-reviewed mutant (S1's finding, 2026-11-23/25). Sites sharing a key are
+    numbered in (line, column) order: occurrence 1 keeps mutant_key's value exactly, so
+    every existing allowlist entry keeps its meaning; occurrence N >= 2 gets ".N" on the hash
+    part. An existing entry therefore still covers occurrence 1 only, and occurrences 2+ show
+    up as survivors until reviewed under their own key: an extra survivor, never a hidden one.
+    allowlist_write's validate_key accepts the suffix (still four '::' parts)."""
+    seen: dict[str, int] = {}
+    out: dict[tuple[int, int, str], str] = {}
+    for line, col, op in sorted(points, key=lambda p: (p[0], p[1], p[2])):
+        text = src_lines[line - 1] if 0 < line <= len(src_lines) else ""
+        base = mutant_key(rel_path, enclosing_function(tree, line), op, text)
+        seen[base] = seen.get(base, 0) + 1
+        out[(line, col, op)] = base if seen[base] == 1 else f"{base}.{seen[base]}"
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Test mapping
 # ---------------------------------------------------------------------------
@@ -2453,11 +2475,14 @@ def main() -> int:
     allow = load_allowlist()
 
     catalog = []
+    keys = unique_keys(rel, tree, src_lines, points)
     for lineno, col, op in points:
         line = src_lines[lineno - 1] if 0 < lineno <= len(src_lines) else ""
         func = enclosing_function(tree, lineno)
+        key = keys[(lineno, col, op)]
+        occ = key.rsplit("::", 1)[1].partition(".")[2]
         catalog.append({"line": lineno, "col": col, "op": op, "func": func,
-                        "key": mutant_key(rel, func, op, line),
+                        "key": key, "key_occurrence": int(occ) if occ else 1,
                         "source": line.strip()[:100]})
 
     # Scope: the whole file, or the mutants on lines the diff touched (resolve_scope).

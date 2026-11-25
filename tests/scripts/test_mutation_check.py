@@ -2695,3 +2695,88 @@ def test_the_forwarding_handlers_are_put_back(monkeypatch, tmp_path):
     monkeypatch.setattr(mc.subprocess, "Popen", _P)
     assert mc._run_forwarding_signals(["x"], cwd=str(tmp_path), env={}) == 3
     assert {s: signal.getsignal(s) for s in mc._FORWARDED_SIGNALS} == before
+
+
+# --- allowlist keys are unique per site (S1's finding; org: no deferral) ------------------
+# The key is path::func::OP::sha1(stripped line)[:8], so identical lines with the same
+# operator in one function shared a key, and one allowlist entry hid a second, unreviewed
+# mutant (two `sys.exit(0)` in one main, 2026-11-23). Occurrence 1 keeps today's key, so
+# no existing entry changes meaning; occurrences 2+ get ".N" on the hash part.
+
+_TWIN = textwrap.dedent("""\
+    import sys
+
+
+    def main(argv):
+        if not argv:
+            sys.exit(0)
+        if argv[0] == "x":
+            return 1
+        sys.exit(0)
+""")
+
+
+def _twin_keys(tmp_path):
+    import ast
+    tree = ast.parse(_TWIN)
+    points = mc.enumerate_mutants(tree)
+    return points, mc.unique_keys("tools/twin.py", tree, _TWIN.splitlines(), points)
+
+
+def test_identical_lines_in_one_function_get_distinct_keys(tmp_path):
+    points, keys = _twin_keys(tmp_path)
+    exits = sorted((ln, col, op) for ln, col, op in points if op == "DROP_CALL")
+    assert [ln for ln, _, _ in exits] == [6, 9]
+    k6, k9 = keys[exits[0]], keys[exits[1]]
+    assert k6 != k9
+    assert k6 == mc.mutant_key("tools/twin.py", "main", "DROP_CALL", "        sys.exit(0)")
+    assert k9 == k6 + ".2"
+    assert len(set(keys.values())) == len(points)
+
+
+def test_a_key_with_no_twin_is_unchanged(tmp_path):
+    import ast
+    points, keys = _twin_keys(tmp_path)
+    tree = ast.parse(_TWIN)
+    lines = _TWIN.splitlines()
+    plain = [p for p in points if p[0] == 7]          # `if argv[0] == "x":` is unique
+    assert plain
+    for ln, col, op in plain:
+        assert keys[(ln, col, op)] == mc.mutant_key(
+            "tools/twin.py", mc.enclosing_function(tree, ln), op, lines[ln - 1])
+
+
+def test_list_reports_each_mutants_occurrence(tmp_path):
+    (tmp_path / "tools").mkdir()
+    src = tmp_path / "tools" / "twin.py"
+    src.write_text(_TWIN, encoding="utf-8")
+    t = tmp_path / "test_twin.py"
+    t.write_text(f"import sys; sys.path.insert(0, r'{tmp_path / 'tools'}')\n"
+                 "import twin\ndef test_x(): assert twin.main(['x']) == 1\n", encoding="utf-8")
+    r = _run([str(src), "--tests", str(t), "--list", "--whole-file"], cwd=tmp_path)
+    cat = json.loads(r.stdout)["catalog"]
+    exits = [e for e in cat if e["op"] == "DROP_CALL"]
+    assert sorted((e["line"], e["key_occurrence"]) for e in exits) == [(6, 1), (9, 2)]
+    assert len({e["key"] for e in cat}) == len(cat)
+
+
+def test_an_existing_entry_covers_occurrence_1_only_and_the_twin_surfaces(tmp_path):
+    """The migration: an entry written under today's key keeps covering occurrence 1, and
+    the twin it used to hide is now a survivor to review."""
+    (tmp_path / "tools").mkdir()
+    src = tmp_path / "tools" / "twin.py"
+    src.write_text(_TWIN, encoding="utf-8")
+    t = tmp_path / "test_twin.py"
+    t.write_text(f"import sys; sys.path.insert(0, r'{tmp_path / 'tools'}')\n"
+                 "import twin\ndef test_x(): assert twin.main(['x']) == 1\n", encoding="utf-8")
+    old_key = mc.mutant_key("tools/twin.py", "main", "DROP_CALL", "        sys.exit(0)")
+    (tmp_path / "tools" / "mutation-allow.json").write_text(
+        json.dumps({old_key: "EQUIVALENT: a placeholder reason for this fixture."}),
+        encoding="utf-8")
+    r = _run([str(src), "--tests", str(t), "--whole-file", "--json"], cwd=tmp_path)
+    d = json.loads(r.stdout)
+    allowed = {a["key"] if isinstance(a, dict) else a for a in d["allowlisted_detail"]} \
+        if isinstance(d.get("allowlisted_detail"), list) else set(d.get("allowlisted_detail") or {})
+    survivors = {s["key"] for s in d["survivors"]}
+    assert old_key in allowed, d.get("allowlisted_detail")
+    assert old_key + ".2" in survivors, survivors
