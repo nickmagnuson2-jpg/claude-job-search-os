@@ -299,17 +299,87 @@ def test_check_text_with_unreadable_old_checks_every_key():
 
 # ------------------------------------------------------------------ record_fire (the one count writer)
 
+# RULE has no reopen_at, so since 2026-11-25 a fire on it (3 -> 4) is refused. A fire that
+# should succeed uses GATED, the same rule with its number set.
+GATED = RULE.replace('  reopen_gate: "3rd fire: build the check"\n',
+                     '  reopen_gate: "3rd fire: build the check"\n  reopen_at: 3\n')
+
+
 def test_record_fire_adds_exactly_one_and_the_evidence(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAUDECODE", "1")
-    p = _file(tmp_path)
+    p = _file(tmp_path, GATED)
     n = mf.record_fire(p, "2026-11-22 the same miss again in a draft", today=dt.date(2026, 11, 22))
     assert n == 4
     text = p.read_text(encoding="utf-8")
     assert mf.read(text)[0]["occurrences"] == 4
-    assert text == RULE.replace("  occurrences: 3", "  occurrences: 4") + (
+    assert text == GATED.replace("  occurrences: 3", "  occurrences: 4") + (
         "- Fire 4 recorded 2026-11-22: 2026-11-22 the same miss again in a draft\n")
-    before, after = RULE.splitlines(), text.splitlines()
+    before, after = GATED.splitlines(), text.splitlines()
     assert [(a, b) for a, b in zip(before, after) if a != b] == [("  occurrences: 3", "  occurrences: 4")]
+
+
+# ---- "refuse at 2" (Nick, 2026-11-25; S1): no open rule reaches 2 fires with no reopen_at
+
+def _at(occ, *, reopen_at=None, promoted="no", terminal=False):
+    text = RULE.replace("  occurrences: 3", f"  occurrences: {occ}")
+    text = text.replace("  promoted: no", f"  promoted: {promoted}")
+    extra = (f"  reopen_at: {reopen_at}\n" if reopen_at is not None else "") + (
+        "  terminal: true\n  terminal_reason: retired on purpose\n" if terminal else "")
+    return text.replace("  last_cited: 2026-11-01\n", f"  last_cited: 2026-11-01\n{extra}")
+
+
+def test_a_first_fire_with_no_reopen_at_is_accepted(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDECODE", "1")
+    p = _file(tmp_path, _at(0))
+    assert mf.record_fire(p, "2026-11-25 first fire") == 1
+
+
+def test_a_fire_reaching_2_with_no_reopen_at_is_refused_and_names_the_command(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDECODE", "1")
+    text = _at(1)
+    p = _file(tmp_path, text)
+    with pytest.raises(mf.WriteRefused) as e:
+        mf.record_fire(p, "2026-11-25 second fire")
+    msg = str(e.value)
+    assert "reopen_at is missing" in msg and "to 2 fires" in msg
+    assert "tools/memory_write.py set" in msg and "reopen_at=<n>" in msg
+    assert p.read_text(encoding="utf-8") == text, "a refused fire leaves the file untouched"
+
+
+@pytest.mark.parametrize("occ", [2, 6])
+def test_a_fire_past_2_with_no_reopen_at_is_refused(tmp_path, monkeypatch, occ):
+    monkeypatch.setenv("CLAUDECODE", "1")
+    p = _file(tmp_path, _at(occ))
+    with pytest.raises(mf.WriteRefused):
+        mf.record_fire(p, "2026-11-25 another fire")
+
+
+@pytest.mark.parametrize("reopen_at", [2, 5])
+def test_the_same_fire_is_accepted_once_reopen_at_is_set(tmp_path, monkeypatch, reopen_at):
+    monkeypatch.setenv("CLAUDECODE", "1")
+    p = _file(tmp_path, _at(1))
+    with pytest.raises(mf.WriteRefused):
+        mf.record_fire(p, "2026-11-25 second fire")
+    mf.write(p, {"reopen_at": reopen_at})
+    assert mf.record_fire(p, "2026-11-25 second fire") == 2
+
+
+@pytest.mark.parametrize("promoted", ['"yes -- hook"', "hook", "partial -- test owed"])
+def test_only_an_open_rule_is_refused(tmp_path, monkeypatch, promoted):
+    """A closed rule is out of the backlog and passes; partial is still in it and is refused."""
+    monkeypatch.setenv("CLAUDECODE", "1")
+    p = _file(tmp_path, _at(1, promoted=promoted))
+    if promoted.startswith("partial"):
+        with pytest.raises(mf.WriteRefused):
+            mf.record_fire(p, "2026-11-25 second fire")
+    else:
+        assert mf.record_fire(p, "2026-11-25 second fire") == 2
+
+
+def test_a_terminal_rule_is_not_refused(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDECODE", "1")
+    p = _file(tmp_path, _at(1, terminal=True))
+    assert mf.record_fire(p, "2026-11-25 second fire") == 2
 
 
 def test_record_fire_refuses_without_claudecode(tmp_path, monkeypatch):
@@ -424,7 +494,7 @@ def test_record_fire_names_a_frontmatter_defect(tmp_path, monkeypatch):
 
 def test_record_fire_on_a_file_without_final_newline(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAUDECODE", "1")
-    p = _file(tmp_path, RULE.rstrip("\n"))
+    p = _file(tmp_path, GATED.rstrip("\n"))
     mf.record_fire(p, "2026-11-22 a fire", today=dt.date(2026, 11, 22))
     assert p.read_text(encoding="utf-8").endswith(
         "**Rule:** an example.\n- Fire 4 recorded 2026-11-22: 2026-11-22 a fire\n")
@@ -602,9 +672,9 @@ def test_write_with_the_current_sha_proceeds(tmp_path):
 
 def test_record_fire_refuses_a_file_changed_after_the_caller_hashed_it(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAUDECODE", "1")
-    p = _file(tmp_path)
+    p = _file(tmp_path, GATED)
     seen = _sha(p)
-    changed = RULE.replace("  last_cited: 2026-11-01", "  last_cited: 2026-11-22")
+    changed = GATED.replace("  last_cited: 2026-11-01", "  last_cited: 2026-11-22")
     p.write_text(changed, encoding="utf-8")
     with pytest.raises(mf.WriteRefused):
         mf.record_fire(p, "2026-11-22 a fire", expect_sha256=seen)
@@ -620,6 +690,6 @@ def test_crlf_file_reads_as_before_through_the_checked_read(tmp_path, monkeypatc
     p.write_bytes(RULE.replace("\n", "\r\n").encode("utf-8"))
     mf.write(p, {"reopen_at": 3})
     assert mf.read_file(p)[0]["reopen_at"] == 3
-    p.write_bytes(RULE.replace("\n", "\r\n").encode("utf-8"))
+    p.write_bytes(GATED.replace("\n", "\r\n").encode("utf-8"))
     sha = __import__("hashlib").sha256(p.read_bytes()).hexdigest()
     assert mf.record_fire(p, "2026-11-22 a fire", expect_sha256=sha) == 4

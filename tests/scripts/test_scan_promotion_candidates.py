@@ -513,7 +513,7 @@ def test_cron_mode_creates_a_todo_when_candidates_exist(tmp_path):
     assert marker.exists(), "todo_write.py was never invoked"
     args = marker.read_text(encoding="utf-8")
     assert "add" in args and "Low" in args
-    assert "0 rules due for promotion + 1 with a gate that names no number" in args
+    assert "0 rules due for promotion + 1 with no reopen_at" in args
 
 
 def test_no_todo_is_created_when_there_is_nothing_to_report(tmp_path):

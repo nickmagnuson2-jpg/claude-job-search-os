@@ -53,12 +53,30 @@ def test_a_friction_rung_is_a_demand_not_a_completion(tmp_path):
         "| 2026-08-02 | other.py | broke | did y | 1 | — |\n", encoding="utf-8")
     recs = ll.read_friction(p)
     assert len(recs) == 2
-    demanded = [r for r in recs if r["disposition"] == ll.DISPOSITION_OPEN]
-    assert len(demanded) == 1 and demanded[0]["occurrences"] == 3
-    assert "script-patch" in demanded[0]["evidence"]
-    assert recs[1]["disposition"] == "no-action-needed", (
-        "an em-dash rung demands nothing; counting it as open inflates the backlog"
-    )
+    # Since 2026-11-25 (S1) due is learning_state.friction_state, which needs the Kind
+    # column: a row without one is a defect_kind, open and never due, whatever its rung.
+    assert [r["due"] for r in recs] == [False, False]
+    assert all(r["disposition"] == ll.DISPOSITION_OPEN for r in recs)
+    assert "script-patch" in recs[0]["evidence"] and "defect_kind" in recs[0]["evidence"]
+
+
+def test_friction_due_is_friction_state(tmp_path):
+    """Kind and the RESOLVED marker decide, then the ladder (2). The rung is ignored: on
+    2026-11-25 the rung read 413 due where friction_state read 300."""
+    p = tmp_path / "friction-log.md"
+    p.write_text(
+        "| Date | Surface | Nature | Fix | Occurrences | Promotion | Kind |\n"
+        "|---|---|---|---|---|---|---|\n"
+        "| 2026-08-01 | a.py | x | did x | 2 | — | friction |\n"
+        "| 2026-08-01 | b.py | x | did x | 1 | script-patch (mandatory) | friction |\n"
+        "| 2026-08-01 | c.py | x | RESOLVED 2026-09-01 by abc | 9 | script-patch (mandatory) | friction |\n"
+        "| 2026-08-01 | d.py | x | did x | 9 | script-patch (mandatory) | block-as-designed |\n"
+        "| 2026-08-01 | e.py | x | did x | 3 | — | false-positive-block |\n", encoding="utf-8")
+    recs = {r["ref"].split(":")[0]: r for r in ll.read_friction(p)}
+    assert {k for k, r in recs.items() if r["due"]} == {"a.py", "e.py"}
+    assert recs["c.py"]["disposition"] == "resolved"
+    assert recs["d.py"]["disposition"] == "no-action-needed"
+    assert recs["b.py"]["disposition"] == ll.DISPOSITION_OPEN
 
 
 def test_a_rung_of_memory_do_now_also_counts_as_demanded(tmp_path):
@@ -120,11 +138,39 @@ def test_a_missing_lessons_file_is_not_an_error(tmp_path):
 
 # ---------------------------------------------------------------- memory
 
-def write_rule(d: Path, name, occ=1, promoted="no", terminal="false"):
+def write_rule(d: Path, name, occ=1, promoted="no", terminal="false", reopen_at=2):
+    reopen = "" if reopen_at is None else f"  reopen_at: {reopen_at}\n"
     (d / name).write_text(
         f'---\nname: {name[:-3]}\ndescription: "a rule"\nmetadata:\n'
         f'  occurrences: {occ}\n  promoted: "{promoted}"\n  terminal: {terminal}\n'
-        f'  reopen_gate: "3rd fire"\n---\nBody\n', encoding="utf-8")
+        f'  reopen_gate: "3rd fire"\n{reopen}---\nBody\n', encoding="utf-8")
+
+
+def test_memory_due_is_the_typed_reopen_at_not_two_and_not_the_prose(tmp_path):
+    """One definition of due (learning_state.memory_state, 2026-11-25 S1). The prose gate
+    says "3rd fire" in every rule here and is never read."""
+    write_rule(tmp_path, "feedback_none.md", occ=5, reopen_at=None)   # no_number: never due
+    write_rule(tmp_path, "feedback_early.md", occ=4, reopen_at=5)     # below its own number
+    write_rule(tmp_path, "feedback_at.md", occ=5, reopen_at=5)        # at it
+    write_rule(tmp_path, "feedback_closed.md", occ=9, promoted="yes -- hook", reopen_at=2)
+    write_rule(tmp_path, "feedback_term.md", occ=9, terminal="true", reopen_at=2)
+    due = {r["ref"] for r in ll.read_memory(tmp_path) if r["due"]}
+    assert due == {"feedback_at.md"}
+
+
+def test_a_non_feedback_record_is_read_like_any_other(tmp_path):
+    """Same population as learning_state: every *.md carrying a record key."""
+    write_rule(tmp_path, "reference_x.md", occ=3, reopen_at=3)
+    (tmp_path / "MEMORY.md").write_text("# index\n", encoding="utf-8")
+    assert [(r["ref"], r["due"]) for r in ll.read_memory(tmp_path)] == [("reference_x.md", True)]
+
+
+def test_an_unparseable_rule_stays_open_and_is_never_due(tmp_path):
+    (tmp_path / "feedback_bad.md").write_text(
+        "---\nname: x\nmetadata:\n  occurrences: 7\n  promoted: [unclosed\n---\n", encoding="utf-8")
+    [rec] = ll.read_memory(tmp_path)
+    assert rec["disposition"] == ll.DISPOSITION_OPEN and rec["due"] is False
+    assert rec["evidence"].startswith("frontmatter defect")
 
 
 def test_memory_dispositions(tmp_path):

@@ -492,19 +492,28 @@ metadata:
   occurrences: {occ}
   promoted: no
   reopen_gate: "{gate}"
-  last_cited: __TODAY__
+{reopen}  last_cited: __TODAY__
 ---
 body
 """.replace("__TODAY__", date.today().isoformat())
 
 
+def _rule(name, occ, gate, reopen_at=None):
+    reopen = "" if reopen_at is None else f"  reopen_at: {reopen_at}\n"
+    return RULE.format(name=name, occ=occ, gate=gate, reopen=reopen)
+
+
 def _gated_corpus(tmp_path):
+    """Due comes from the typed reopen_at (learning_state), never the prose gate. Each gate
+    text below would give the OTHER answer if it were read (2026-11-25, S1)."""
     d = tmp_path / "memory"
     d.mkdir()
-    for name, occ, gate in (("due_a", 3, "3rd fire"), ("due_b", 2, "TRIPPED 2026-09-14"),
-                            ("early", 2, "5th fire"), ("vague", 4, "the next dated fire"),
-                            ("once", 1, "2nd fire")):
-        (d / f"feedback_{name}.md").write_text(RULE.format(name=name, occ=occ, gate=gate))
+    for name, occ, gate, reopen_at in (("due_a", 3, "3rd fire", 3),
+                                       ("due_b", 2, "5th fire", 2),
+                                       ("early", 2, "TRIPPED 2026-09-14", 5),
+                                       ("vague", 4, "3rd fire", None),
+                                       ("once", 1, "2nd fire", 2)):
+        (d / f"feedback_{name}.md").write_text(_rule(name, occ, gate, reopen_at))
     return d
 
 
@@ -537,7 +546,7 @@ def test_the_backlog_is_written_as_three_lists(tmp_path):
     assert "feedback_due_a.md" in due and "feedback_due_b.md" in due
     assert "feedback_early.md" not in due and "feedback_vague.md" not in due
     assert "feedback_vague.md" in vague and "feedback_due_a.md" not in vague
-    assert "feedback_early.md" in early and "(2x) -- gate: 5th fire" in early
+    assert "feedback_early.md" in early and "(2x) -- gate: TRIPPED 2026-09-14" in early
     assert "feedback_once.md" not in text
     assert "LOW COVERAGE" not in text
     assert "\n\n\n" not in text, "one blank line between sections, never two"
@@ -546,7 +555,7 @@ def test_the_backlog_is_written_as_three_lists(tmp_path):
 def test_an_empty_list_says_none(tmp_path):
     d = tmp_path / "memory"
     d.mkdir()
-    (d / "feedback_due_a.md").write_text(RULE.format(name="due_a", occ=3, gate="3rd fire"))
+    (d / "feedback_due_a.md").write_text(_rule("due_a", 3, "3rd fire", 3))
     subprocess.run([sys.executable, str(SCRIPT), "--memory-dir", str(d), "--repo-root",
                     str(tmp_path), "--mode", "cron"], capture_output=True, text=True)
     text = (d / "promotion-backlog.md").read_text(encoding="utf-8")

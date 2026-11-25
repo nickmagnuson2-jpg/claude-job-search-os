@@ -140,7 +140,19 @@ def test_set_usage_errors_exit_2(mem, pairs, needle):
 
 # ------------------------------------------------------------------ bump
 
+def test_bump_refuses_a_rule_with_no_reopen_at_and_names_set(mem):
+    """record_fire refuses a fire reaching 2+ with no reopen_at (2026-11-25, S1); the CLI
+    reports it as refused, exit 1, file untouched, with the set command."""
+    code, out, _ = run(["bump", "feedback_example_rule.md", "--fire",
+                        "2026-11-25: invented fire for the test"], mem)
+    assert code == 1 and out["action"] == "refused"
+    assert any("memory_write.py set" in r and "reopen_at=<n>" in r for r in out["reasons"])
+    assert text(mem) == RULE
+
+
 def test_bump_increments_and_appends_dated_evidence(mem):
+    code, out, p = run(["set", "feedback_example_rule.md", "reopen_at=3"], mem)
+    assert code == 0, p.stdout + p.stderr
     code, out, p = run(["bump", "feedback_example_rule.md", "--fire",
                         "2026-11-22: invented fire for the test"], mem)
     assert code == 0, p.stdout + p.stderr

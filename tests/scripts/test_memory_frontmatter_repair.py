@@ -282,7 +282,7 @@ def test_metadata_indent_skips_a_blank_or_comment_first_line(tmp_path, gap, monk
     # F3: child indent came from the next physical line, so a blank or comment line made
     # a valid 4-space block unwritable.
     monkeypatch.setenv("CLAUDECODE", "1")
-    text = "---\nname: x\nmetadata:\n" + gap + "    occurrences: 2\n    promoted: no\n---\nbody\n"
+    text = "---\nname: x\nmetadata:\n" + gap + "    occurrences: 2\n    promoted: no\n    reopen_at: 5\n---\nbody\n"
     p = tmp_path / "feedback_x.md"
     p.write_text(text, encoding="utf-8")
     mf.write(p, {"promoted": "partial -- half"})
