@@ -2579,8 +2579,12 @@ def test_the_env_fingerprint_does_not_see_which_temp_path_the_root_is(monkeypatc
         root.mkdir()
         monkeypatch.setattr(mc, "REPO_ROOT", root)
         monkeypatch.setenv("MUTATION_REPO_ROOT", str(root))
-        # the marker carries the unresolved spelling run_in_worktree writes
-        monkeypatch.setenv(mc.IN_WORKTREE_CHILD_ENV, str(tmp_path / name))
+        # the marker carries the unresolved spelling run_in_worktree writes: on macOS the
+        # temp worktree is /var/folders/..., a symlink to the resolved /private/var root
+        spelled = str(root)
+        if spelled.startswith("/private/var/") and Path("/var").is_symlink():
+            spelled = spelled[len("/private"):]
+        monkeypatch.setenv(mc.IN_WORKTREE_CHILD_ENV, spelled)
         prints.append(mc._env_fingerprint())
     assert prints[0] == prints[1]
     monkeypatch.setenv("MUTATION_REPO_ROOT", str(tmp_path / "elsewhere"))
