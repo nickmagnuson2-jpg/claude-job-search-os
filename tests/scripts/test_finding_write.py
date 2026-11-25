@@ -868,3 +868,144 @@ def test_this_runs_identity_at_another_position_refuses(mirrored, capsys):
     _write_ledger(wt, [W_ROW, dict(ROW_2)])
     _write_ledger(main, [MAIN_OWN, _pos_mirror(wt, W_ROW, 2)])
     _main_unchanged_after_set(capsys, main, wt, ["REFUSED", "run 2"])
+
+
+# --- S4b (overnight 2026-11-24): a disposition of a worktree's run, set from MAIN, refuses
+# with the command to run in the worktree. L2 set its Codex dispositions from main; main's
+# mirror changed, the worktree copy did not, and the pre-push gate run from the worktree
+# refused with '1 unresolved P0: 1.F1'. open_p0_against(wt, ...) below is that gate's read.
+
+import cross_model_gate as cmg  # noqa: E402
+
+W_OPEN = {**W_ROW, "findings": [
+    {"id": "F1", "severity": "P0", "summary": "a P0", "disposition": None},
+    {"id": "F2", "severity": "P1", "summary": "a P1", "disposition": None},
+]}
+TOOL = "PYTHONIOENCODING=utf-8 python3 tools/finding_write.py"
+
+
+@pytest.fixture()
+def l2(mirrored):
+    main, wt = mirrored
+    _write_ledger(wt, [W_OPEN])
+    _write_ledger(main, [MAIN_OWN, {**W_OPEN, "worktree": str(wt), "worktree_run": 1}])
+    return main, wt
+
+
+def _bytes(root):
+    return fw.ledger_path(root).read_bytes()
+
+
+def test_l2_set_from_main_on_a_worktree_run_refuses_and_writes_nothing(l2, capsys):
+    main, wt = l2
+    before = (_bytes(main), _bytes(wt))
+    assert cmg.open_p0_against(wt, {"tools/x.py"})             # the gate refuses today
+    rc, out, err = _cli(capsys, main, "set", "2.F1", "--disposition", "parked", "--why", "later on")
+    assert rc == 2 and out is None
+    assert cmg.open_p0_against(wt, {"tools/x.py"})             # still refused: nothing written
+    assert (_bytes(main), _bytes(wt)) == before
+    msg = json.loads(err)["error"]
+    assert msg.endswith(f"cd {wt} && {TOOL} set 1.F1 --disposition parked --why 'later on'")
+    assert "nothing was written" in msg
+
+
+def test_l2_the_printed_command_clears_the_worktree_gate_and_main(l2, capsys):
+    main, wt = l2
+    _cli(capsys, main, "set", "2.F1", "--disposition", "fixed", "--why", "done")
+    rc, out, _ = _cli(capsys, wt, "set", "1.F1", "--disposition", "fixed", "--why", "done")
+    assert rc == 0 and out["mirrored"] is True
+    assert not cmg.open_p0_against(wt, {"tools/x.py"})
+    assert _rows(main)[1]["findings"][0]["disposition"] == "fixed"
+
+
+def test_set_from_main_with_force_names_force_in_the_command(l2, capsys):
+    main, wt = l2
+    rc, _, err = _cli(capsys, main, "set", "2.F2", "--disposition", "fixed", "--why", "w", "--force")
+    assert rc == 2
+    assert json.loads(err)["error"].endswith(f"{TOOL} set 1.F2 --disposition fixed --why w --force")
+
+
+def test_accept_from_main_on_a_worktree_run_refuses_with_the_accept_command(l2, capsys):
+    main, wt = l2
+    before = _bytes(main)
+    rc, _, err = _cli(capsys, main, "accept", "2.F1", "--why", "ship")
+    assert rc == 2 and _bytes(main) == before
+    assert json.loads(err)["error"].endswith(f"cd {wt} && {TOOL} accept 1.F1 --why ship")
+
+
+def test_set_from_main_without_a_recorded_position_points_to_list(mirrored, capsys):
+    main, wt = mirrored                    # main's mirror has a worktree but no worktree_run
+    before = _bytes(main)
+    rc, _, err = _cli(capsys, main, "set", "2.F2", "--disposition", "parked", "--why", "w")
+    msg = json.loads(err)["error"]
+    assert rc == 2 and _bytes(main) == before
+    assert f"cd {wt} && {TOOL} list" in msg and W_ROW["report"] in msg
+    assert msg.endswith(f"cd {wt} && {TOOL} set <run>.F2 --disposition parked --why w")
+
+
+def test_set_from_main_on_a_gone_worktrees_row_writes_main(l2, capsys):
+    import shutil
+    main, wt = l2
+    shutil.rmtree(wt)
+    rc, out, _ = _cli(capsys, main, "set", "2.F1", "--disposition", "parked", "--why", "w")
+    assert rc == 0 and out["mirrored"] is None
+    assert _rows(main)[1]["findings"][0]["disposition"] == "parked"
+
+
+def test_set_from_main_on_a_row_naming_a_plain_directory_writes_main(mirrored, capsys, tmp_path):
+    main, wt = mirrored
+    plain = tmp_path / "plain"
+    (plain / ".git").mkdir(parents=True)          # a directory, not a linked worktree's file
+    _write_ledger(main, [MAIN_OWN, {**W_OPEN, "worktree": str(plain), "worktree_run": 1}])
+    rc, _, _ = _cli(capsys, main, "set", "2.F1", "--disposition", "parked", "--why", "w")
+    assert rc == 0 and _rows(main)[1]["findings"][0]["disposition"] == "parked"
+
+
+def test_set_from_main_on_mains_own_row_is_unchanged(l2, capsys):
+    main, _wt = l2
+    rc, _, _ = _cli(capsys, main, "set", "1.F1", "--disposition", "parked", "--why", "w")
+    assert rc == 0 and _rows(main)[0]["findings"][0]["disposition"] == "parked"
+
+
+@pytest.mark.parametrize("bad", [None, "", 7, ["x"]])
+def test_live_worktree_ignores_a_missing_or_non_string_field(bad):
+    assert fw.live_worktree({"worktree": bad}) is None
+
+
+def test_a_boolean_worktree_run_is_not_taken_for_a_position(l2, capsys):
+    main, wt = l2
+    _write_ledger(main, [MAIN_OWN, {**W_OPEN, "worktree": str(wt), "worktree_run": True}])
+    rc, _, err = _cli(capsys, main, "set", "2.F1", "--disposition", "parked", "--why", "w")
+    assert rc == 2 and "<run>.F1" in json.loads(err)["error"]
+
+
+def test_a_keyerror_message_is_printed_without_its_quotes(repo, capsys):
+    rc, _, err = _cli(capsys, repo, "set", "9.F1", "--disposition", "fixed", "--why", "w")
+    assert rc == 2 and json.loads(err)["error"].startswith("no run 9")
+
+
+def _printed_commands(msg):
+    """Every command the refusal prints: each starts where the tool is named."""
+    import re
+    return [m.start() for m in re.finditer(re.escape(TOOL), msg)]
+
+
+@pytest.mark.parametrize("positioned", [True, False])
+@pytest.mark.parametrize("verb", [["set", "2.F1", "--disposition", "fixed", "--why", "w"],
+                                  ["accept", "2.F1", "--why", "w"]])
+def test_every_command_the_refusal_prints_starts_with_the_cd(l2, capsys, positioned, verb):
+    """Org b7 (S4b Grok r1 F1, ruled a P0 in effect): run numbers differ per ledger, so a
+    printed command without the cd, pasted from main, dispositions main's row at that
+    number. Each command the refusal prints must carry it."""
+    main, wt = l2
+    row = {**W_OPEN, "worktree": str(wt)}
+    if positioned:
+        row["worktree_run"] = 1
+    _write_ledger(main, [MAIN_OWN, row])
+    rc, _, err = _cli(capsys, main, *verb)
+    msg = json.loads(err)["error"]
+    starts = _printed_commands(msg)
+    assert rc == 2 and len(starts) == (1 if positioned else 2)
+    prefix = f"cd {wt} && "
+    for at in starts:
+        assert msg[:at].endswith(prefix), msg
