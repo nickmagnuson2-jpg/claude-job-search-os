@@ -142,3 +142,24 @@ def test_main_that_cannot_be_located_blocks_with_a_reason(repos, monkeypatch):
     assert len(rows) == 1 and corrupt == 1 and "could not be located" in note
     v = g.check(wt, CHANGE, since=0)
     assert v.blocked is True and "could not be located" in v.message
+
+
+def test_a_push_from_the_main_checkout_reads_its_ledger_once(repos):
+    """b7 check on b03b3ef6: in the main checkout .git is a directory, so main_checkout_of
+    returns None at its first test and only main's own ledger is read: once, no doubled
+    rows, no unreadable line, and a covering row clears the push."""
+    main, wt = repos
+    _row(main)
+    assert g.main_checkout_of(main) is None
+    rows, corrupt, note = g.read_gate_ledger(main)
+    assert len(rows) == 1 and corrupt == 0 and note == ""
+    v = g.check(main, CHANGE, since=0)
+    assert v.blocked is False, v.message
+
+
+def test_main_checkout_with_an_open_p0_counts_it_once(repos):
+    main, wt = repos
+    _row(main)
+    _row(main, report="output/analysis/112526-grok-x.md", model="grok", findings=_open_p0())
+    blocking = g.open_p0_against(main, {PATH})
+    assert len(blocking) == 1
