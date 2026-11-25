@@ -1120,6 +1120,7 @@ def test_remove_archives_the_row_with_its_cells(tmp_path):
     assert cols[6] == f"warm lead - Withdrawn {_d.today():%Y-%m-%d}"
     assert cols[7] == "https://acme.example/jobs/1"
     text = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    assert text.count("## Archived") == 1, "the row joins the existing Archived table"
     assert text.index("| Acme Corp |") > text.index("## Archived")
 
 
@@ -1158,7 +1159,10 @@ def test_the_header_row_is_not_a_pipeline_entry(tmp_path):
     out, code = _s6c_pw(tmp_path, "update", "Company", "Interviewing")
     assert code != 0 and out["code"] == "not_found"
     out, code = _s6c_pw(tmp_path, "add", "Company", "Role")
-    assert code == 0, out
+    assert code == 0 and out["action"] == "add", out          # not duplicate_warning
+    text = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    active = text[text.index("## Active"):text.index("## Archived")]
+    assert sum(l.startswith("| Company | Role |") for l in active.splitlines()) == 2  # header + row
 
 
 @pytest.mark.parametrize("trailing", [True, False])
