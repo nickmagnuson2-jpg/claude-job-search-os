@@ -79,6 +79,10 @@ FIXTURE = {
     "feedback_terminal.md": (rule(9, 2, extra="  terminal: true\n"), False),
     "reference_counted.md": (rule(4, 4), True),
     "feedback_bad_reopen.md": (rule(4, "three"), False),
+    # Codex s1 r1 F1: the scanner's legacy population (2+ fires, its own promoted reader)
+    # dropped both of these before judging due.
+    "feedback_due_at_one.md": (rule(1, 1), True),
+    "feedback_unknown_promoted.md": (rule(2, 2, promoted="n/a"), True),
 }
 
 

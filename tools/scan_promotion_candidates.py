@@ -453,7 +453,7 @@ LOW_COVERAGE_EXIT = 3
 
 
 def gate_state(reopen_gate: str, occurrences: int) -> str:
-    """LEGACY prose reader, NOT used by this scanner since 2026-11-25 (due_of is). Kept only
+    """LEGACY prose reader, NOT used by this scanner since 2026-11-25 (ruled_state is). Kept only
     because tools/learning_cutover.py prints it as the pre-cutover "before" column.
 
     due | not_due | no_number, for a rule that has fired at least twice.
@@ -473,20 +473,30 @@ def gate_state(reopen_gate: str, occurrences: int) -> str:
     return "due" if occurrences >= int(m.group(1)) else "not_due"
 
 
-def due_of(path: Path, memory_dir: Path) -> str:
-    """due | not_due | no_number | defect, from learning_state.memory_state on the typed
-    `reopen_at` (memory_frontmatter.read). The prose gate is not read: since 2026-11-25 the
-    scanner, learning_ledger and learning_state give one due set (parity test:
-    tests/scripts/test_due_reader_parity.py). A frontmatter that does not parse, a bad
-    reopen_at or a bad occurrences is a defect, never due."""
+def ruled_state(path: Path, memory_dir: Path) -> tuple[str, bool | None]:
+    """(gate state, is a candidate), both from learning_state.memory_state on
+    memory_frontmatter.read. The prose gate is not read, and neither are this scanner's own
+    promoted / terminal / occurrence predicates: since 2026-11-25 the scanner, learning_ledger
+    and learning_state give one due set (tests/scripts/test_due_reader_parity.py).
+
+    gate state: due | not_due | no_number | defect. A bad reopen_at or a bad occurrences is
+    a defect, never due.
+    candidate: in learning_state's backlog, not terminal, and either at CANDIDATE_MIN or more
+    fires or due (a rule whose own reopen_at is 1 is due at 1 fire; Codex s1 r1 F1). None when
+    the frontmatter does not parse: learning_state cannot judge it, and the caller falls back
+    to the legacy population for that file, which is never due either way."""
     try:
         fields, defect = mf.read(path.read_text(encoding="utf-8"))
     except (UnicodeDecodeError, OSError):
-        return "defect"
+        return "defect", None
     if defect:
-        return "defect"
-    due = ls.memory_state(fields, memory_dir=memory_dir).due
-    return due if due in ("due", "not_due", "no_number") else "defect"
+        return "defect", None
+    st = ls.memory_state(fields, memory_dir=memory_dir)
+    due = st.due if st.due in ("due", "not_due", "no_number") else "defect"
+    occ = ls._count(fields.get("occurrences"))
+    candidate = (ls.in_backlog(st.disposition) and not st.terminal
+                 and (due == "due" or (occ is not None and occ >= ls.CANDIDATE_MIN)))
+    return due, candidate
 
 
 REFRESH_PREFIX = "Memory refresh:"
@@ -559,7 +569,10 @@ def main(argv: list[str]) -> None:
                 "description": fm.get("description", ""),
             })
 
-        if occurrences >= 2 and not is_promoted(fm) and not terminal:
+        state, candidate = ruled_state(path, memory_dir)
+        if candidate is None:   # unparseable frontmatter: legacy population, never due
+            candidate = occurrences >= 2 and not is_promoted(fm) and not terminal
+        if candidate:
             promotion_candidates.append({
                 "file": path.name,
                 "occurrences": occurrences,
@@ -567,7 +580,7 @@ def main(argv: list[str]) -> None:
                 # list because the remaining gap is real work, but flagged so the
                 # backlog can be triaged (finish the half-built one vs start a new one).
                 "partial": is_partially_promoted(fm),
-                "gate_state": due_of(path, memory_dir),
+                "gate_state": state,
                 "promoted_value": str(fm.get("promoted", "no")),
                 "reopen_gate": fm.get("reopen_gate", ""),
                 "description": fm.get("description", ""),
