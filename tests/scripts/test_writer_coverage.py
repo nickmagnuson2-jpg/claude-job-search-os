@@ -7,8 +7,9 @@ operations are READ from those two sources, never typed here, so a new route is 
 it is written.
 
 Sources of required operations:
-  1. every string constant in tracked tools/check_*.py, pattern `<name>_write.py <op>` (backticked,
-     so prose like "todo_write.py is positional" is not read as an op);
+  1. every string constant in tracked tools/check_*.py: a backticked `<name>_write.py <op>`, or a
+     command line `python3 [tools/]<name>_write.py <op>` (Grok r1 F1: the usage text a guard
+     prints is a route too). Bare prose like "todo_write.py is positional" is not read as an op;
   2. the "### Write-Only Files" section of CLAUDE.md, every backticked bare word on a line that
      names `tools/<name>_write.py`.
 Operations a writer offers: read by AST, never by import or execution: `add_parser("<op>")`,
@@ -28,6 +29,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 NO_SOURCE = REPO / "tests" / "scripts" / "writer_no_rule_source.json"
 _ROUTE_RE = re.compile(r"`(?:tools/)?(\w+_write\.py) ([a-z][a-z-]*)")
+# the command a guard prints for the agent to run: `python3 tools/<w>_write.py <op> ...`
+_COMMAND_RE = re.compile(r"\bpython3?\s+(?:\S*/)?(\w+_write\.py)\s+([a-z][a-z-]*)")
 _WRITER_LINE = re.compile(r"`tools/(\w+_write\.py)`")
 _BARE_WORD = re.compile(r"`([a-z][a-z-]*)`")
 
@@ -49,8 +52,9 @@ def guard_routes(sources: dict[str, str]) -> dict[str, set[tuple[str, str]]]:
     for guard, src in sources.items():
         for node in ast.walk(ast.parse(src)):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                for w, op in _ROUTE_RE.findall(node.value):
-                    req.setdefault(w, set()).add((op, guard))
+                for rx in (_ROUTE_RE, _COMMAND_RE):
+                    for w, op in rx.findall(node.value):
+                        req.setdefault(w, set()).add((op, guard))
     return req
 
 
@@ -154,6 +158,14 @@ def test_guard_routes_read_backticked_ops_only():
         "x_write.py": {("set", "check_x.py"), ("bump", "check_x.py")}}
 
 
+def test_guard_routes_read_printed_command_lines():
+    # Grok r1 F1: the usage text a guard prints is a route even without backticks
+    src = ('USAGE = """\n  PYTHONIOENCODING=utf-8 python3 tools/x_write.py add "<t>"\n'
+           '  python x_write.py restage <c>\n"""\nM = "a Bash command invokes tools/x_write.py with kwargs"\n')
+    assert guard_routes({"check_x.py": src}) == {
+        "x_write.py": {("add", "check_x.py"), ("restage", "check_x.py")}}
+
+
 def test_claude_md_section_and_ops():
     md = ("### Write-Only Files (x)\n\n- `data/a.md` → `tools/a_write.py` (`audit` finds rows)\n"
           "- `data/b.md` → `tools/b_write.py`\n\n### Next\n- `tools/c_write.py` (`gone`)\n")
@@ -223,6 +235,14 @@ def test_route_to_an_unknown_writer_fails():
 
 
 # ---- live ------------------------------------------------------------------------------------
+
+def test_live_printed_commands_are_required():
+    # the three ops Grok r1 F1 showed could be deleted with the live test green
+    routes, _ = live_required(REPO)
+    assert {"add", "done", "rotate"} <= {op for op, _ in routes.get("todo_write.py", set())}
+    assert "restage" in {op for op, _ in routes.get("pipe_write.py", set())}
+    assert "add-section" in {op for op, _ in routes.get("workstream_write.py", set())}
+
 
 def test_live_sources_parse_to_something():
     routes, section = live_required(REPO)
