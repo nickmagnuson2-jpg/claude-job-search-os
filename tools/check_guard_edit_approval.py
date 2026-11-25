@@ -399,8 +399,14 @@ _PY_DYNAMIC = {"exec", "eval", "compile", "getattr", "setattr", "delattr", "__im
                "globals", "locals", "vars", "breakpoint", "sys.modules",
                "os.fchdir", "os.chroot"}
 # os.chdir is followed, not refused (S2c, 2026-11-25): a chdir whose argument folds to ONE
-# known absolute path adds that directory, and relative write targets are then checked
-# against the start cwd AND every such directory. Any other chdir cannot be followed.
+# known absolute path adds that directory. A relative write target is checked against the
+# start cwd AND every chdir that may have run before it. ORDER (Codex S2c r1 F1): in
+# straight-line code a chdir applies only to writes on later lines, so a write before it
+# is not read as landing in the new directory. DESIGN, not a deferred defect: when the
+# chdir sits inside a loop or a function, or the write sits inside a function, execution
+# order is not tracked and the chdir applies to that write whatever the line order. That
+# can only add directories to check, so it can only over-block, never let a guard write
+# through. Any other chdir cannot be followed and the script blocks.
 # A script that uses chdir or argparse is analysable only since that change, so its
 # verdict is STRICT: every write target must be fully known, or it blocks (org ce ruling:
 # a newly allowed script shows all its write targets resolved).
@@ -437,6 +443,8 @@ class _PyWrites:
         self.values: dict[str, list] = {}
         self.modules: set[str] = set()                 # local names bound to a module
         self.chdirs: list[str] = []                    # known absolute dirs from os.chdir
+        self.chdir_nodes: list = []                    # the os.chdir call for each dir
+        self.target_nodes: list = []                   # the call that produced each target
         self.strict = False                            # chdir or argparse: no unknown targets
         self.unsafe = False
         for n in ast.walk(tree):
@@ -512,7 +520,10 @@ class _PyWrites:
         out: list[str] = []
         if self.unsafe:
             return None
+        prev = None
         for n in ast.walk(self.tree):
+            self.target_nodes += [prev] * (len(out) - len(self.target_nodes))
+            prev = n
             name = n.attr if isinstance(n, ast.Attribute) else getattr(n, "id", "")
             if name.startswith("__") and name not in ("__name__", "__file__"):
                 return None                           # __builtins__, os.__dict__[...]
@@ -551,6 +562,7 @@ class _PyWrites:
                 if _UNKNOWN in d or not os.path.isabs(os.path.expanduser(d)):
                     return None                       # a chdir it cannot place
                 self.chdirs.append(os.path.expanduser(d))
+                self.chdir_nodes.append(n)
                 continue
             if q == _PY_FILETYPE:
                 if None in kw or any(isinstance(a, ast.Starred) for a in n.args):
@@ -589,6 +601,31 @@ class _PyWrites:
                 mode = n.args[0] if n.args else kw.get("mode")
                 if mode is not None and self._write_mode(mode):
                     out += self.fold(f.value)
+        self.target_nodes += [prev] * (len(out) - len(self.target_nodes))
+        return out
+
+    def _inside(self, node, kinds) -> bool:
+        p = self.parent.get(node)
+        while p is not None:
+            if isinstance(p, kinds):
+                return True
+            p = self.parent.get(p)
+        return False
+
+    def dirs_for(self, i: int, cwd: str) -> list[str]:
+        """The directories target i may be relative to: the start cwd, and each chdir that
+        may have run before it (see the ORDER note at _PY_CHDIR)."""
+        ast = self.ast
+        loops = (ast.For, ast.AsyncFor, ast.While, ast.FunctionDef, ast.AsyncFunctionDef,
+                 ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+        funcs = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+        t = self.target_nodes[i] if i < len(self.target_nodes) else None
+        out = [cwd]
+        for d, c in zip(self.chdirs, self.chdir_nodes):
+            ordered = (t is not None and not self._inside(c, loops)
+                       and not self._inside(t, funcs))
+            if not ordered or (c.lineno, c.col_offset) < (t.lineno, t.col_offset):
+                out.append(d)
         return out
 
     def _run_targets(self, cmd, cwd: str, fed: bool = False) -> list[str]:
@@ -641,7 +678,7 @@ def _python_rewrites_a_guard(text: str, cwd: str, argv: list[str]) -> bool:
         return True
     if w.strict and any(_UNKNOWN in t for t in targets):
         return True                                   # newly analysable: every target known
-    return any(_may_be_guard(t, c) for t in targets for c in [cwd] + w.chdirs)
+    return any(_may_be_guard(t, c) for i, t in enumerate(targets) for c in w.dirs_for(i, cwd))
 
 
 def _read_script(path: str, cwd: str) -> str:
