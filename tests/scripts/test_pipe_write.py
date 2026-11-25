@@ -1096,6 +1096,13 @@ def _s6c_row(tmp_path, company):
                                     if l.startswith(f"| {company} |")).strip().strip("|").split("|")]
 
 
+def _s6c_today_window():
+    """The local date, read on each side of a subprocess: the child stamps its own
+    date.today(), so a run that crosses midnight may carry either day (Codex S6c r1 F1)."""
+    from datetime import date as _d
+    return {f"{_d.today():%Y-%m-%d}"}
+
+
 def _s6c_pw(tmp_path, *args):
     return run_pipe_write("--repo-root", str(tmp_path), *args)
 
@@ -1111,13 +1118,14 @@ def test_update_keeps_every_cell_it_was_not_told_to_change(tmp_path):
 
 def test_remove_archives_the_row_with_its_cells(tmp_path):
     write_fixture(tmp_path, "data/job-pipeline.md", FULL_ROW_MD)
+    days = _s6c_today_window()
     out, code = _s6c_pw(tmp_path, "remove", "Acme Corp")
+    days |= _s6c_today_window()
     assert code == 0, out
     cols = _s6c_row(tmp_path, "Acme Corp")
-    from datetime import date as _d
     assert cols[:4] == ["Acme Corp", "Director", "Withdrawn", "2026-01-01"]
     assert cols[4:6] == ["Call Jane", "cv-acme.pdf"]
-    assert cols[6] == f"warm lead - Withdrawn {_d.today():%Y-%m-%d}"
+    assert cols[6] in {f"warm lead - Withdrawn {d}" for d in days}
     assert cols[7] == "https://acme.example/jobs/1"
     text = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
     assert text.count("## Archived") == 1, "the row joins the existing Archived table"
@@ -1126,9 +1134,10 @@ def test_remove_archives_the_row_with_its_cells(tmp_path):
 
 def test_remove_with_empty_notes_writes_only_the_stage(tmp_path):
     write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    days = _s6c_today_window()
     _s6c_pw(tmp_path, "remove", "Acme Corp")
-    from datetime import date as _d
-    assert _s6c_row(tmp_path, "Acme Corp")[6] == f"Withdrawn {_d.today():%Y-%m-%d}"
+    days |= _s6c_today_window()
+    assert _s6c_row(tmp_path, "Acme Corp")[6] in {f"Withdrawn {d}" for d in days}
 
 
 def test_remove_creates_the_archived_section_when_missing(tmp_path):
