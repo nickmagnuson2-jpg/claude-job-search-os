@@ -203,6 +203,25 @@ def test_empty_inputs_fail_loudly():
                                           lambda w: set(), {})[0]
 
 
+def test_each_writer_reports_exactly_one_failure():
+    # a no-source writer whose ops cannot be parsed gets the no-source error only
+    errs = check(["a_write.py", "b_write.py"], {"a_write.py": {("set", "g")}},
+                 lambda w: {"set"} if w == "a_write.py" else set(), {})
+    assert errs == ["b_write.py: no rule names an operation for it; add a route to its guard, "
+                    "or declare it in writer_no_rule_source.json with a reason"]
+    # a writer with no parsed ops gets the parser error only, not one error per required op
+    errs = check(["a_write.py"], {"a_write.py": {("set", "g"), ("bump", "g")}},
+                 lambda w: set(), {})
+    assert errs == ["a_write.py: no operations parsed from the writer; the op parser is broken"]
+
+
+def test_route_to_an_unknown_writer_fails():
+    req = {"a_write.py": {("set", "g")}, "ghost_write.py": {("put", "g")},
+           "named_write.py": set()}
+    errs = check(["a_write.py"], req, lambda w: {"set"}, {})
+    assert errs == ["ghost_write.py: a rule routes to it but it is not a tracked writer"]
+
+
 # ---- live ------------------------------------------------------------------------------------
 
 def test_live_sources_parse_to_something():
