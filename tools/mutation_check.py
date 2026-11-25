@@ -1501,8 +1501,14 @@ _VOLATILE_PREFIXES = ("CLAUDE", "ITERM", "TERM_", "SSH_", "XPC_", "__CF",
 # MUTATION_* and GIT_* are hashed (round 2 A.F4/C.F3/D.F4): a test can read them.
 
 
+# These name the run's own root, which --in-worktree makes fresh per run under a temp path.
+# They are hashed as "<root>" when they point at REPO_ROOT, so two runs of the same tree in
+# two temp worktrees share keys (S5, 2026-11-25); any other value is hashed as written.
 def _env_fingerprint() -> str:
     env = _test_env_base()
+    for k in ("MUTATION_REPO_ROOT", IN_WORKTREE_CHILD_ENV):
+        if k in env and Path(env[k]).resolve() == REPO_ROOT:
+            env[k] = "<root>"
     kept = sorted((k, v) for k, v in env.items()
                   if k not in _VOLATILE_ENV and not k.startswith(_VOLATILE_PREFIXES))
     return _sha(json.dumps(kept).encode("utf-8"))
@@ -2174,6 +2180,11 @@ def run_in_worktree(argv: list[str], args) -> int:
         # MUTATION_REPO_ROOT is pinned to the new worktree: inherited, it would point the
         # child back at the caller's tree and mutate it in place after all.
         env = {**git_env, "MUTATION_REPO_ROOT": str(wt), IN_WORKTREE_CHILD_ENV: str(wt)}
+        # The --cache store stays in the CALLER'S tree (S5, 2026-11-25): in the temp
+        # worktree it was deleted at exit, so a second run of the same HEAD replayed
+        # nothing (hits 0 on every --in-worktree record that day). A caller's own
+        # MUTATION_CACHE_DIR is kept.
+        env.setdefault(CACHE_DIR_ENV, str(cache_dir()))
         return subprocess.run([sys.executable, str(wt / "tools" / "mutation_check.py")]
                               + child_argv, cwd=str(wt), env=env).returncode
     finally:

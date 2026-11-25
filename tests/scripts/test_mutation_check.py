@@ -2538,3 +2538,50 @@ def test_a_relative_target_is_read_against_the_repo_root_not_the_cwd(tmp_path):
                        cwd=str(tmp_path / "tools"), env=env, timeout=300)
     d = json.loads(r.stdout)
     assert d["status"] == "ok" and d["target"] == "tools/subject.py", (d, r.stderr[-500:])
+
+
+# --- the --cache survives an --in-worktree run (S5, 2026-11-25) ------------------------------
+# Every --in-worktree run reported cache hits 0: the cache lived in the temp worktree, deleted
+# at exit, and the key hashed MUTATION_REPO_ROOT / MUTATION_IN_WORKTREE_CHILD, which name that
+# per-run path. suite_record's second run would have re-measured all 159 mutants (~4.6 h).
+
+def test_an_in_worktree_child_writes_its_cache_in_the_callers_tree(tmp_path):
+    wt = _linked_wt_with_stub(tmp_path)
+    stub = (wt / "tools" / "mutation_check.py")
+    stub.write_text(_STUB.replace("'marker':", "'cache': os.environ.get('MUTATION_CACHE_DIR'),\n"
+                                               "    'marker':"), encoding="utf-8")
+    _git(wt, "commit", "-qam", "stub records the cache dir")
+    record = tmp_path / "record.json"
+    r = _run(["tools/plain.py", "--in-worktree"], cwd=wt, env_extra={"STUB_RECORD": str(record)})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert json.loads(record.read_text())["cache"] == str(wt.resolve() / ".mutation-cache")
+
+
+def test_a_cache_dir_the_caller_set_is_kept(tmp_path):
+    wt = _linked_wt_with_stub(tmp_path)
+    (wt / "tools" / "mutation_check.py").write_text(
+        _STUB.replace("'marker':", "'cache': os.environ.get('MUTATION_CACHE_DIR'),\n    'marker':"),
+        encoding="utf-8")
+    _git(wt, "commit", "-qam", "stub records the cache dir")
+    record, mine = tmp_path / "record.json", str(tmp_path / "my-cache")
+    r = _run(["tools/plain.py", "--in-worktree"], cwd=wt,
+             env_extra={"STUB_RECORD": str(record), "MUTATION_CACHE_DIR": mine})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert json.loads(record.read_text())["cache"] == mine
+
+
+def test_the_env_fingerprint_does_not_see_which_temp_path_the_root_is(monkeypatch, tmp_path):
+    """Two runs of one tree in two temp worktrees: the variables naming the run's own root
+    hash the same. Any other value of them still changes the fingerprint."""
+    prints = []
+    for name in ("one", "two"):
+        root = (tmp_path / name).resolve()
+        root.mkdir()
+        monkeypatch.setattr(mc, "REPO_ROOT", root)
+        monkeypatch.setenv("MUTATION_REPO_ROOT", str(root))
+        # the marker carries the unresolved spelling run_in_worktree writes
+        monkeypatch.setenv(mc.IN_WORKTREE_CHILD_ENV, str(tmp_path / name))
+        prints.append(mc._env_fingerprint())
+    assert prints[0] == prints[1]
+    monkeypatch.setenv("MUTATION_REPO_ROOT", str(tmp_path / "elsewhere"))
+    assert mc._env_fingerprint() != prints[1]
