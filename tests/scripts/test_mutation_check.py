@@ -2594,8 +2594,9 @@ def test_the_env_fingerprint_does_not_see_which_temp_path_the_root_is(monkeypatc
     assert mc._env_fingerprint(root) != prints[1]
 
 
-@pytest.mark.parametrize("flags", [[], ["--cache", "--no-cache"]])
-def test_without_the_cache_the_child_gets_no_cache_dir(tmp_path, flags):
+@pytest.mark.parametrize("flags, inherited", [([], None), (["--cache", "--no-cache"], None),
+                                              ([], "caller-set")])
+def test_without_the_cache_the_child_gets_no_cache_dir(tmp_path, flags, inherited):
     """Grok 11-25 s5b F1 (org ruling: fix in code). With the cache off the variable does
     nothing for the child, and it leaked into every nested test run, which made a test that
     expects the default fail under an --in-worktree run (a false baseline_red)."""
@@ -2605,7 +2606,9 @@ def test_without_the_cache_the_child_gets_no_cache_dir(tmp_path, flags):
         encoding="utf-8")
     _git(wt, "commit", "-qam", "stub records the cache dir")
     record = tmp_path / "record.json"
-    r = _run(["tools/plain.py", "--in-worktree", *flags], cwd=wt,
-             env_extra={"STUB_RECORD": str(record)})
+    extra = {"STUB_RECORD": str(record)}
+    if inherited:   # a caller that set it (Codex 11-25 d220eeef F1): it must not pass through
+        extra["MUTATION_CACHE_DIR"] = str(tmp_path / inherited)
+    r = _run(["tools/plain.py", "--in-worktree", *flags], cwd=wt, env_extra=extra)
     assert r.returncode == 0, r.stdout + r.stderr
     assert json.loads(record.read_text())["cache"] is None

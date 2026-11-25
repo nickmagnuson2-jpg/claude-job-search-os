@@ -2197,6 +2197,8 @@ def run_in_worktree(argv: list[str], args) -> int:
         # expects the default then fails (a false baseline_red).
         if args.cache and not args.no_cache:
             env[CACHE_DIR_ENV] = str(cache_dir())
+        else:   # a caller-set one too: git_env copied os.environ (Codex 11-25 d220eeef F1)
+            env.pop(CACHE_DIR_ENV, None)
         return subprocess.run([sys.executable, str(wt / "tools" / "mutation_check.py")]
                               + child_argv, cwd=str(wt), env=env).returncode
     finally:
