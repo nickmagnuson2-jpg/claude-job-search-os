@@ -38,7 +38,8 @@ skips_by_reason (2026-11-24) is also in every failure payload that has a report.
 sum to "skipped" (xfails are filed under <skipped> by JUnit, so they appear here too).
 
 Exit codes: run 0 recorded / 1 not recorded. check 0 pass on record / 1 none (incl. a merge
-conflict) / 2 usage error, bad ref, or unreadable ledger.
+conflict) / 2 usage error, bad ref, or unreadable ledger. status 0 free / 1 held / 2 the lock
+could not be located or opened (no git repository, or an unusable lock directory).
 
 LOCK (C2, 2026-11-23): `run` holds inbox_lock.file_lock on the shared ledger for the whole run,
 and pytest inherits the lock fd, so the slot stays held until pytest itself exits. A second
@@ -341,6 +342,49 @@ def cmd_run(root: Path, branch: str, base: str, timeout: int, wait: float = 0) -
                      waited_s=wait)
 
 
+def cmd_status(root: Path) -> int:
+    """Whether a suite is running, read from the suite lock itself (2026-11-25, S6d).
+
+    The org used to grant the suite slot by parsing `ps`, and that reading was wrong twice in
+    one night. This asks the lock `run` takes: a single non-blocking attempt. Free: the probe
+    is released at once and the exit is 0. Held: exit 1, with the holder named from its record
+    (which names it; the lock alone decides held). With no holder record (a run that has not
+    named itself yet) the holder fields and pid_alive are null. pid_alive false means the run
+    that took the lock has exited while its pytest still holds it, as `run`'s refusal says.
+    LIMIT: a worktree branched before C2 runs its suite without this lock (see LOCK above), so
+    status cannot see it. LIMIT: the probe holds the lock for an instant, so a `run` started at that same instant
+    (with the default --wait 0) refuses with suite_locked. The slot flow (status, then a grant,
+    then run) never starts a run during the probe.
+    """
+    try:
+        ledger = common_dir(root).parent / LEDGER
+    except GitError as e:
+        # Exit 2, as `check` does: exit 1 means held, and an error must not read as either.
+        return _out({"status": "error", "code": "git_error", "message": str(e)}, 2)
+    def held() -> int:
+        h = read_holder(ledger)
+        pid = h.get("pid") if h else None
+        return _out({"status": "held", "branch": h.get("branch") if h else None,
+                     "started_at": h.get("started_at") if h else None, "pid": pid,
+                     "pid_alive": _alive(pid) if pid is not None else None}, 1)
+
+    # file_lock is re-entrant within a thread: inside this process's own hold the probe would
+    # enter without asking the kernel and read free (Codex S6d r4 F1, P0). Ask first.
+    if held_fd(ledger) is not None:
+        return held()
+    try:
+        with file_lock(ledger, timeout=0):
+            pass
+    except LockTimeout:
+        return held()
+    except OSError as e:
+        # The lock sidecar could not be created or opened (Codex S6d r3 F1): neither free nor
+        # held, so exit 2, never the 1 that means held. LockTimeout subclasses OSError, so
+        # it is caught first, above.
+        return _out({"status": "error", "code": "lock_error", "message": str(e)}, 2)
+    return _out({"status": "free"}, 0)
+
+
 def _run_locked(root: Path, common_git: Path, ledger: Path, branch: str, base: str,
                 timeout: int) -> int:
     base_sha = resolve_commit(root, base)
@@ -473,10 +517,14 @@ def main(argv: list[str] | None = None) -> int:
     chk.add_argument("--tip", required=True)
     chk.add_argument("--base", default=DEFAULT_BASE)
     chk.add_argument("--repo-root", dest="repo_root_sub", default=None)
+    st = sub.add_parser("status", help="is a suite running: exit 0 free, 1 held (reads the lock)")
+    st.add_argument("--repo-root", dest="repo_root_sub", default=None)
     args = ap.parse_args(argv)
     root = Path(args.repo_root_sub or args.repo_root)
     if args.command == "run":
         return cmd_run(root, args.branch, args.base, args.timeout, args.wait)
+    if args.command == "status":
+        return cmd_status(root)
     return cmd_check(root, args.tip, args.base)
 
 

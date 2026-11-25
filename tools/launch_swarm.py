@@ -105,6 +105,7 @@ class Section:
     log_file: str | None
     done_when: str | None
     body: str
+    workarounds: str | None = None
 
 
 @dataclass
@@ -153,7 +154,8 @@ def parse_brief(text: str) -> Brief:
         sections.append(Section(
             id=m.group(1), title=title.strip(), moves=moves.strip() or None,
             owns=_field(body, "Owns"), log_file=log_path.group(1) if log_path else None,
-            done_when=_field(body, "Done when"), body=body))
+            done_when=_field(body, "Done when"), body=body,
+            workarounds=_field(body, "Workarounds")))
     return Brief(org=org.group(1).strip() if org else None,
                  standby=standby.group(1).strip() if standby else None,
                  needs_nick=needs.group(1) if needs else None,
@@ -318,6 +320,10 @@ def brief_check(path: Path, org: str, template: Path = TEMPLATE, ledger_root: Pa
             problems.append(f"{s.id}: no '- **Log file:**' line with a backticked path")
         if not s.done_when:
             problems.append(f"{s.id}: no '- **Done when:**' line")
+        # A workaround needs a filed source fix in the same report (Nick, 2026-11-25: "always
+        # fix at the source"). Required here so the line is a gate, not template prose.
+        if not s.workarounds:
+            problems.append(f"{s.id}: no '- **Workarounds:**' line")
         for p in re.findall(r"`([^`]+)`", s.owns or ""):
             owners.setdefault(p, []).append(s.id)
     for p, ids in owners.items():
@@ -347,7 +353,8 @@ def section_prompt(section: Section, org: str, brief_rel: str) -> str:
         f"- Time comes from running `date`, never an estimate. Each entry states what changed, the evidence "
         f"(sha, report path, count with its denominator), and what is next.\n"
         f"- Log first, then message {org} with the same facts. {org}'s check-in cron reads your newest "
-        f"'| {x}:' heading and chases a gap over 30 minutes.\n"
+        f"'| {x}:' heading and chases a gap over 30 minutes.\n\n"
+        f"Workarounds: {section.workarounds}\n"
     )
 
 
