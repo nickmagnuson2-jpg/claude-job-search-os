@@ -46,6 +46,7 @@ memory/friction-log.md, table after the "## Entries" marker.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -420,7 +421,7 @@ def cmd_append(args: argparse.Namespace) -> None:
             "date": date_cell(first_seen(best["date"]), today),
             "surface": best["surface"],
             "nature": best["nature"],
-            "fix": fix if args.fix else best["fix"],
+            "fix": fix if args.fix else reopened_fix(best["fix"], today),
             "occurrences": str(occurrences),
             "promotion": promotion_for(occurrences, best["surface"], kind),
             "kind": kind,
@@ -470,10 +471,21 @@ def cmd_append(args: argparse.Namespace) -> None:
 
 
 RESOLVED_PREFIX = "RESOLVED"
+REOPENED_PREFIX = "REOPENED"
 
 
 def is_resolved(fix: str) -> bool:
     return fix.strip().startswith(RESOLVED_PREFIX)
+
+
+def reopened_fix(fix: str, today: str) -> str:
+    """The Fix cell after a re-fire that passed no --fix. A RESOLVED row reopens, keeping its
+    old text: a re-fire means the friction is not fixed. Before 2026-11-25 a manual append on
+    a RESOLVED row kept the marker, so the count rose while the row still read closed (the
+    auto-loggers pass --fix and never hit this). Any other Fix is kept as is."""
+    if not is_resolved(fix):
+        return fix
+    return f"{REOPENED_PREFIX} {today}; was: {fix.strip()}"
 
 
 def cmd_resolve(args: argparse.Namespace) -> None:
@@ -820,6 +832,126 @@ def cmd_migrate_kinds(args: argparse.Namespace) -> None:
         **report})
 
 
+# ------------------------------------------------------------------ close-stale
+# A counting, unresolved row whose last fire is past the half-life is closed as stale.
+# The half-life is never read here: learning_state.freshness_state decides, with tool
+# friction as kind MACHINERY (Nick, 2026-11-25: "the same method so the half live";
+# ruled 2026-11-22 07:03 in data/workstreams/memory-hygiene.md). The close is the RESOLVED
+# marker with a "(stale:" tag, so it counts as closed everywhere and reads apart from a fix;
+# a re-fire reopens it (reopened_fix, or the auto-loggers' --fix).
+STALE_KIND = "MACHINERY"
+STALE_TAG = "(stale:"
+STALE_SCOPES = {"due": ("due",), "open": ("open",), "both": ("due", "open")}
+
+
+def is_stale_close(fix: str) -> bool:
+    """True for a Fix cell written by close-stale."""
+    return bool(re.match(rf"\s*{RESOLVED_PREFIX} \S+ \(stale:", fix or ""))
+
+
+def stale_fix(as_of: date, last: date) -> str:
+    h = ls.HALF_LIFE_DAYS[STALE_KIND]
+    return (f"{RESOLVED_PREFIX} {as_of} {STALE_TAG} half-life {STALE_KIND} {h}d, "
+            f"last fire {last})")
+
+
+def stale_plan(parsed: list[dict], as_of: date) -> dict:
+    """{"due": [...], "open": [...], "skipped": [...], "window": (start, end)}.
+
+    due/open: rows in that learning_state.friction_state whose freshness_state is
+    "unverified", each with "_last" (its last fire). The window runs from the earliest date
+    in the ledger to as_of. skipped: due/open rows with no date, or a date past as_of.
+    """
+    dated = [d for r in parsed for d in _dates_in(r["date"])]
+    start = min((date.fromisoformat(d) for d in dated), default=as_of)
+    start = min(start, as_of)
+    out = {"due": [], "open": [], "skipped": [], "window": (start, as_of)}
+    for r in parsed:
+        state = ls.friction_state(r.get("kind", ""), r["fix"], r["occurrences"])
+        if state not in ("due", "open"):
+            continue
+        ds = _dates_in(r["date"])
+        if not ds:
+            out["skipped"].append({**r, "_why": "no date"})
+            continue
+        last = max(date.fromisoformat(d) for d in ds)
+        if last > as_of:
+            out["skipped"].append({**r, "_why": f"last fire {last} is after {as_of}"})
+            continue
+        if ls.freshness_state(STALE_KIND, last, start, as_of) == "unverified":
+            out[state].append({**r, "_last": last})
+    return out
+
+
+def _public(r: dict) -> dict:
+    return {k: (str(v) if k == "_last" else v) for k, v in r.items() if k != "_raw"}
+
+
+def with_fix(raw: str, fix: str) -> str:
+    """The raw row with only its Fix cell (the 4th) replaced; every other byte unchanged.
+    No cell can hold a '|' (append refuses one), so splitting on it is exact."""
+    parts = raw.split("|")
+    parts[4] = f" {fix} "
+    return "|".join(parts)
+
+
+def plan_digest(ledger_sha: str, as_of: date, scope: str, rows: list[dict]) -> str:
+    """SHA-256 binding everything an apply acts on: the ledger bytes, the as-of date, the
+    kind and its half-life, the scope and the exact rows. A dry run reports one per scope;
+    --apply recomputes it and refuses on any difference (Codex r1 F1, P0: a ledger hash
+    alone let an apply with a later --as-of close rows the approved dry run never listed)."""
+    blob = json.dumps({"ledger": ledger_sha, "as_of": str(as_of), "kind": STALE_KIND,
+                       "half_life_days": ls.HALF_LIFE_DAYS[STALE_KIND], "scope": scope,
+                       "rows": [r["_raw"] for r in rows]}, sort_keys=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def cmd_close_stale(args: argparse.Namespace) -> None:
+    try:
+        as_of = date.fromisoformat(args.as_of) if args.as_of else date.today()
+    except ValueError:
+        fail(f"--as-of must be YYYY-MM-DD, got {args.as_of!r}")
+    pre, header_block, data_rows, trailing = read_ledger()
+    parsed = [p for p in (parse_row(r) for r in data_rows) if p]
+    plan = stale_plan(parsed, as_of)
+    sha = ledger_sha256()
+    start, end = plan["window"]
+    chosen_by = {scope: [r for st in states for r in plan[st]]
+                 for scope, states in STALE_SCOPES.items()}
+    report = {
+        "ledger": str(LEDGER),
+        "sha256": sha,
+        "as_of": str(as_of),
+        "plan_sha256": {scope: plan_digest(sha, as_of, scope, rows)
+                        for scope, rows in chosen_by.items()},
+        "rows": len(parsed),
+        "already_stale_closed": sum(is_stale_close(r["fix"]) for r in parsed),
+        "kind": STALE_KIND,
+        "half_life_days": ls.HALF_LIFE_DAYS[STALE_KIND],
+        "window": {"start": str(start), "end": str(end)},
+        "due": {"count": len(plan["due"]), "rows": [_public(r) for r in plan["due"]]},
+        "open": {"count": len(plan["open"]), "rows": [_public(r) for r in plan["open"]]},
+        "skipped": [_public(r) for r in plan["skipped"]],
+    }
+    if args.dry_run:
+        ok({"action": "dry-run", **report})
+    if not args.scope:
+        fail(f"--apply needs --scope {'|'.join(STALE_SCOPES)} (no default: Nick picks it)")
+    if not args.expect_plan:
+        fail("--apply needs --expect-plan <plan_sha256[scope] from the approved dry run>")
+    chosen = chosen_by[args.scope]
+    if args.expect_plan != report["plan_sha256"][args.scope]:
+        fail(f"plan changed since the approved dry run (ledger bytes, --as-of {as_of}, "
+             f"half-life, scope or rows): plan sha256 is {report['plan_sha256'][args.scope]}, "
+             f"expected {args.expect_plan}; re-run --dry-run with the same --as-of and get it "
+             "approved again")
+    changes = {r["_raw"]: with_fix(r["_raw"], stale_fix(as_of, r["_last"])) for r in chosen}
+    new_rows = [changes.get(r, r) for r in data_rows]
+    atomic_write(LEDGER, assemble(pre, header_block, new_rows, trailing))
+    ok({"action": "applied", "scope": args.scope,
+        "changed": sum(o != n for o, n in zip(data_rows, new_rows)), **report})
+
+
 def main(argv: list[str]) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -861,6 +993,20 @@ def main(argv: list[str]) -> None:
     pm.add_argument("--expect-sha", default=None,
                     help="SHA-256 of the ledger as reported by the approved dry run")
     pm.set_defaults(func=cmd_migrate_kinds)
+
+    ps = sub.add_parser("close-stale",
+                        help="close rows past the friction half-life (hash-bound)")
+    smode = ps.add_mutually_exclusive_group(required=True)
+    smode.add_argument("--dry-run", action="store_true",
+                       help="list stale due and open rows and the ledger hash")
+    smode.add_argument("--apply", action="store_true",
+                       help="close the approved plan (needs --scope and --expect-plan)")
+    ps.add_argument("--scope", choices=list(STALE_SCOPES), default=None,
+                    help="which rows --apply closes; no default")
+    ps.add_argument("--expect-plan", default=None,
+                    help="plan_sha256[scope] as reported by the approved dry run")
+    ps.add_argument("--as-of", default=None, help="window end, YYYY-MM-DD (default: today)")
+    ps.set_defaults(func=cmd_close_stale)
 
     args = p.parse_args(argv)
     args.func(args)
