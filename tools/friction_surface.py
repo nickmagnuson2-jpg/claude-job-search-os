@@ -373,8 +373,9 @@ def traceback_blame(scripts: list[str], error_text: str) -> str:
     `scripts` are the tools/*.py the command runs, in order (already lowercased, exclusions
     removed). Before 2026-11-25 both auto-loggers blamed scripts[0] for ANY traceback, so
     `python3 tools/pipe_write.py ... 2>&1 | python3 -c "import json,sys; json.load(sys.stdin)"`
-    failing in the caller's json.load was filed as pipe_write friction (S6 replay: 0 of 6
-    finding_write JSONDecodeError events raised inside finding_write.py).
+    failing in the caller's json.load was filed as pipe_write friction (S6's replay found every
+    retained finding_write JSONDecodeError event was raised by the caller, not the tool;
+    output/overnight-112526/S6-friction-triage.md section 3).
 
       - no traceback in the output: scripts[0], unchanged (a tool's own JSON error, exit code);
       - a traceback frame in a named script: the deepest such script raised it, or was the
