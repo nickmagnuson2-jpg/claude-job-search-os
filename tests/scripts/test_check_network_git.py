@@ -296,3 +296,95 @@ def test_codex_r4_git_flags_are_not_command_lookup_flags(cmd):
 ])
 def test_codex_r5_attached_split_string_blocks(cmd):
     assert _run(cmd)[0] == 2, cmd
+
+
+# --- git stash (overnight-112526 S2, 2026-11-25) --------------------------------------
+# feedback_dont_git_stash_for_a_before_after_check: 6 fires. The stash list is one stack
+# shared by the main checkout and every worktree, and a stash taken for a red check has
+# stashed the test it meant to run. Blocked in every form that changes the stack; list,
+# show and create (writes an object, leaves the stack) pass. Restraint replay 2026-11-25:
+# 81,536 distinct Bash commands, 86 blocked, 86 of 86 real stack-changing calls.
+
+@pytest.mark.parametrize("cmd", [
+    "git stash",
+    "git stash -q",
+    "git stash -u",
+    "git stash push -q -- tools/foo.py",
+    "git stash push -m 'before'",
+    "git stash -m list",                 # a push whose message is "list"
+    "git stash pop",
+    "git stash apply stash@{0}",
+    "git stash drop stash@{0}",
+    "git stash clear",
+    "git stash save wip",
+    "git stash store -m x abc123",
+    "git stash branch tmp",
+    "git stash --keep-index",
+    "git stash -- tools/foo.py",
+    # forms a prefix deny-list misses, the brief's named shape first
+    "git -C some/dir stash",
+    "git -C ../wt stash pop -q",
+    "cd ~/Library/Caches/claude-worktrees/x && git stash -q",
+    "python3 -m pytest -q tests/x.py; git stash -q && python3 -m pytest -q tests/x.py",
+    "bash -c 'git stash'",
+    "echo $(git stash)",
+    "env GIT_DIR=.git git stash",
+    "time git stash pop",
+])
+def test_git_stash_that_changes_the_stack_blocks(cmd):
+    code, err = _run(cmd)
+    assert code == 2, f"{cmd!r} should block"
+    assert "git stash" in err and "BLOCKED" in err
+
+
+@pytest.mark.parametrize("cmd", [
+    "git status",
+    "git stash list",
+    "git stash list | head -2",
+    "git stash show",
+    "git stash show -p stash@{0}",
+    "git stash create",
+    "git -C some/dir stash list",
+    "git stash --help",
+    "git stash -h",
+    "git help stash",
+    "git diff stash@{0} main -- tests/x.py",
+    "echo 'do not git stash here'",
+    "grep -n 'git stash' tools/*.py",
+    'git commit -m "explain why git stash is blocked"',
+    "cat > notes.md <<'EOF'\ngit stash\nEOF",
+])
+def test_stash_reads_and_mentions_pass(cmd):
+    code, err = _run(cmd)
+    assert code == 0, f"{cmd!r} should pass: {err}"
+
+
+def test_stash_block_message_names_the_alternatives():
+    code, err = _run("git stash -q")
+    assert code == 2
+    assert "cp " in err and "git show HEAD:" in err and "`!`" in err
+
+
+def test_network_block_still_wins_over_stash():
+    code, err = _run("git stash -q && git push origin x")
+    assert code == 2 and "network git" in err
+
+
+@pytest.mark.parametrize("args, expected", [
+    (["stash"], "stash push"),
+    (["stash", "-q"], "stash push"),
+    (["stash", "pop"], "stash pop"),
+    (["-C", "d", "stash", "drop"], "stash drop"),
+    (["stash", "list"], None),
+    (["stash", "show"], None),
+    (["stash", "create"], None),
+    (["stash", "--help"], None),
+    (["stash", "pop", "-h"], None),
+    (["status"], None),
+    (["--help", "stash"], None),
+    ([], None),
+])
+def test_git_stash_judge(args, expected):
+    sys.path.insert(0, str(SCRIPT.parent))
+    import check_network_git as cng
+    assert cng._git_stash(args) == expected
