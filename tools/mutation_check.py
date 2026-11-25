@@ -2192,7 +2192,11 @@ def run_in_worktree(argv: list[str], args) -> int:
         # worktree it was deleted at exit, so a second run of the same HEAD replayed
         # nothing (hits 0 on every --in-worktree record that day). cache_dir() returns
         # a caller's own MUTATION_CACHE_DIR when one is set, so that one is kept.
-        env[CACHE_DIR_ENV] = str(cache_dir())
+        # ONLY with the cache on (Grok 11-25 s5b F1, org ruling): off, the variable does
+        # nothing for the child and leaks into every nested test run, where a test that
+        # expects the default then fails (a false baseline_red).
+        if args.cache and not args.no_cache:
+            env[CACHE_DIR_ENV] = str(cache_dir())
         return subprocess.run([sys.executable, str(wt / "tools" / "mutation_check.py")]
                               + child_argv, cwd=str(wt), env=env).returncode
     finally:

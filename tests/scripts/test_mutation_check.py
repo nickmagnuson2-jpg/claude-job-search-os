@@ -62,7 +62,8 @@ def _run(args, cwd=None, env_extra=None):
     it pass `env_extra`.
     """
     env = {k: v for k, v in os.environ.items()
-           if k not in ("MUTATION_CHECK_ACTIVE", "MUTATION_SWEEP_ACTIVE", "CLAUDECODE")}
+           if k not in ("MUTATION_CHECK_ACTIVE", "MUTATION_SWEEP_ACTIVE", "CLAUDECODE",
+                        "MUTATION_CACHE_DIR")}
     env["PYTHONIOENCODING"] = "utf-8"
     if cwd:
         env["MUTATION_REPO_ROOT"] = str(cwd)
@@ -2552,7 +2553,8 @@ def test_an_in_worktree_child_writes_its_cache_in_the_callers_tree(tmp_path):
                                                "    'marker':"), encoding="utf-8")
     _git(wt, "commit", "-qam", "stub records the cache dir")
     record = tmp_path / "record.json"
-    r = _run(["tools/plain.py", "--in-worktree"], cwd=wt, env_extra={"STUB_RECORD": str(record)})
+    r = _run(["tools/plain.py", "--in-worktree", "--cache"], cwd=wt,
+             env_extra={"STUB_RECORD": str(record)})
     assert r.returncode == 0, r.stdout + r.stderr
     assert json.loads(record.read_text())["cache"] == str(wt.resolve() / ".mutation-cache")
 
@@ -2564,7 +2566,7 @@ def test_a_cache_dir_the_caller_set_is_kept(tmp_path):
         encoding="utf-8")
     _git(wt, "commit", "-qam", "stub records the cache dir")
     record, mine = tmp_path / "record.json", str(tmp_path / "my-cache")
-    r = _run(["tools/plain.py", "--in-worktree"], cwd=wt,
+    r = _run(["tools/plain.py", "--in-worktree", "--cache"], cwd=wt,
              env_extra={"STUB_RECORD": str(record), "MUTATION_CACHE_DIR": mine})
     assert r.returncode == 0, r.stdout + r.stderr
     assert json.loads(record.read_text())["cache"] == mine
@@ -2590,3 +2592,20 @@ def test_the_env_fingerprint_does_not_see_which_temp_path_the_root_is(monkeypatc
     assert prints[0] == prints[1]
     monkeypatch.setenv("MUTATION_REPO_ROOT", str(tmp_path / "elsewhere"))
     assert mc._env_fingerprint(root) != prints[1]
+
+
+@pytest.mark.parametrize("flags", [[], ["--cache", "--no-cache"]])
+def test_without_the_cache_the_child_gets_no_cache_dir(tmp_path, flags):
+    """Grok 11-25 s5b F1 (org ruling: fix in code). With the cache off the variable does
+    nothing for the child, and it leaked into every nested test run, which made a test that
+    expects the default fail under an --in-worktree run (a false baseline_red)."""
+    wt = _linked_wt_with_stub(tmp_path)
+    (wt / "tools" / "mutation_check.py").write_text(
+        _STUB.replace("'marker':", "'cache': os.environ.get('MUTATION_CACHE_DIR'),\n    'marker':"),
+        encoding="utf-8")
+    _git(wt, "commit", "-qam", "stub records the cache dir")
+    record = tmp_path / "record.json"
+    r = _run(["tools/plain.py", "--in-worktree", *flags], cwd=wt,
+             env_extra={"STUB_RECORD": str(record)})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert json.loads(record.read_text())["cache"] is None
