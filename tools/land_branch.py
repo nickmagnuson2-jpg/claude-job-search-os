@@ -802,7 +802,8 @@ def preview_gate(root: Path, main: Path, checkers: Path, base: str, tip: str, ur
                  extra_cross: list[dict], extra_audit: list[dict]) -> dict:
     """Run the pre-push hook exactly as `git push origin <tip>:refs/heads/main` would, in a
     throwaway no-checkout worktree whose tools/ is `checkers` plus the main checkout's gate
-    data (GATE_DATA) plus rows not yet written there. Nothing in the main checkout changes."""
+    denylists (GATE_DATA[2:]) plus the backfill rows not yet in main; the hook reads main's
+    ledgers itself, through git's common dir. Nothing in the main checkout changes."""
     tmp = Path(tempfile.mkdtemp(prefix="merge-push-preview."))
     wt = tmp / "wt"
     try:
@@ -811,7 +812,10 @@ def preview_gate(root: Path, main: Path, checkers: Path, base: str, tip: str, ur
             return {"rc": None, "ok": False, "reason": f"preview worktree: {err.strip()[:200]}"}
         shutil.copytree(checkers, wt / "tools", dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns(".*", "__pycache__", "logs", "*.log"))
-        for name in GATE_DATA:
+        # The two ledgers are NOT copied: the hook in this linked worktree reads main's
+        # through git's common dir and adds this copy's backfill rows (S2d). Only the
+        # gitignored denylists, which nothing reads from main, are copied.
+        for name in GATE_DATA[2:]:
             src = main / "tools" / name
             if src.is_file():
                 shutil.copy2(src, wt / "tools" / name)

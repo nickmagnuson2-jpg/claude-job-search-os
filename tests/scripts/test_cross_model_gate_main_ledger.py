@@ -108,8 +108,8 @@ def test_main_ledger_unreadable_fails_closed(repos):
 
 def test_main_located_from_git_common_dir_not_a_fixed_path(repos):
     main, wt = repos
-    assert g._main_root(wt) == main.resolve()
-    assert g._main_root(main) is None                # the main checkout reads only its own
+    assert g.main_checkout_of(wt) == main.resolve()
+    assert g.main_checkout_of(main) is None                # the main checkout reads only its own
 
 
 def test_outside_a_linked_worktree_nothing_changes(tmp_path):

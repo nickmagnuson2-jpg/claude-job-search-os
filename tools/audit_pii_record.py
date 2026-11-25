@@ -86,34 +86,6 @@ def resolve_main(root: Path) -> Path:
     return Path(main) if main else Path(root)
 
 
-def branch_worktrees_at(main: Path, tree: str) -> list[Path]:
-    """Linked worktrees with a branch checked out at a commit whose tree is TREE.
-
-    From `git worktree list --porcelain`: the main checkout (listed first) is skipped, a
-    detached HEAD is skipped, and a worktree whose directory is gone is skipped. Raises
-    RuntimeError when git cannot list them, so the caller reports it instead of acting as
-    if there were none."""
-    r = subprocess.run(["git", "-C", str(main), "worktree", "list", "--porcelain"],
-                       capture_output=True, text=True)
-    if r.returncode != 0:
-        raise RuntimeError(f"git worktree list failed: {r.stderr.strip()}")
-    out: list[Path] = []
-    for block in r.stdout.split("\n\n"):
-        fields = {}
-        for line in block.splitlines():
-            key, _, val = line.partition(" ")
-            fields[key] = val
-        path = fields.get("worktree")
-        if not path or "branch" not in fields or "HEAD" not in fields:
-            continue
-        wt = Path(path)
-        if wt.resolve() == Path(main).resolve() or not wt.is_dir():
-            continue
-        if tree_of(main, fields["HEAD"]) == tree:
-            out.append(wt)
-    return out
-
-
 def read_rows(root: Path) -> list[dict]:
     path = root / LEDGER
     if not path.exists():
@@ -133,8 +105,23 @@ def read_rows(root: Path) -> list[dict]:
 
 
 def has_clean_record(root: Path, tree: str) -> bool:
+    """A clean record for TREE in this checkout's copy or, from a linked worktree, in the
+    main checkout's (S2d, 2026-11-25). The push guard reads the push worktree's copy; a
+    record made from main is in main's, so the guard reads both. This replaces the
+    write-side copy to every branch worktree (045ca9bc), which only existed so the worktree
+    copy would hold main's rows. FAILS CLOSED: a main checkout that cannot be placed, or a
+    main ledger that cannot be read, raises LedgerError; a missing main ledger holds no
+    record, so it grants nothing."""
+    import cross_model_gate as gate
+    rows = read_rows(root)
+    try:
+        main = gate.main_checkout_of(root)
+    except (RuntimeError, OSError) as e:
+        raise LedgerError(f"the main checkout's {LEDGER} could not be located ({e})") from None
+    if main is not None:
+        rows = rows + read_rows(main)
     return any(r.get("kind") == "audit" and r.get("verdict") == "clean" and r.get("tree") == tree
-               for r in read_rows(root))
+               for r in rows)
 
 
 def _now() -> str:
@@ -194,18 +181,10 @@ def main(argv: list[str] | None = None) -> int:
             append_row(root, row)
             return _out({"status": "ok", "action": "record", "tree": tree, "tip": args.tip,
                          "ledger": ledger}, 0)
-        # From main: every branch worktree at this tree pushes from its own copy (S4b).
-        try:
-            reached = branch_worktrees_at(main, tree)
-        except RuntimeError as e:
-            return _out({"status": "error", "code": "worktrees_unlisted", "tree": tree,
-                         "ledger": ledger,
-                         "message": f"{e}; main's record is written, but no worktree copy "
-                                    "was; re-record from the branch's worktree"}, 2)
-        for wt in reached:
-            append_row(wt, row)
+        # From main: a branch worktree's push reads main's copy too (has_clean_record), so
+        # nothing is copied into worktrees (S2d; replaces the 045ca9bc reach).
         return _out({"status": "ok", "action": "record", "tree": tree, "tip": args.tip,
-                     "ledger": ledger, "worktrees": [str(w) for w in reached]}, 0)
+                     "ledger": ledger}, 0)
     try:
         ok = has_clean_record(main, tree)
         stranded = not ok and in_worktree and has_clean_record(root, tree)

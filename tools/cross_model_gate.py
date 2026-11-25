@@ -392,10 +392,11 @@ def read_ledger_with_health(repo_root: Path) -> tuple[list[dict], int]:
     return rows, corrupt
 
 
-def _main_root(repo_root: Path) -> Path | None:
+def main_checkout_of(repo_root: Path) -> Path | None:
     """The main checkout when repo_root is a linked worktree, found from git's common dir
     (never a hard-coded path); None when repo_root is not a linked worktree. Raises
-    RuntimeError when a linked worktree's main checkout cannot be placed."""
+    RuntimeError when a linked worktree's main checkout cannot be placed. The one locator
+    both ledger readers use: read_gate_ledger here and audit_pii_record.has_clean_record."""
     root = Path(repo_root).resolve()
     if not (root / ".git").is_file():
         return None
@@ -430,7 +431,7 @@ def read_gate_ledger(repo_root: Path) -> tuple[list[dict], int, str]:
     unreadable line is counted, which blocks, and the third value says why."""
     rows, corrupt = read_ledger_with_health(repo_root)
     try:
-        main = _main_root(repo_root)
+        main = main_checkout_of(repo_root)
     except (RuntimeError, OSError, subprocess.SubprocessError) as e:
         return rows, corrupt + 1, f"the main checkout's ledger could not be located ({e})"
     if main is None:
@@ -1000,7 +1001,7 @@ def open_p0_against(repo_root: Path, required: set) -> list[dict]:
     # main still blocks; a run this worktree holds is judged from its own copy. If main
     # cannot be placed, check() already blocks through read_gate_ledger's corrupt count.
     try:
-        main = _main_root(repo_root)
+        main = main_checkout_of(repo_root)
     except (RuntimeError, OSError, subprocess.SubprocessError):
         main = None
     if main is not None and ledger_path(main).is_file():
