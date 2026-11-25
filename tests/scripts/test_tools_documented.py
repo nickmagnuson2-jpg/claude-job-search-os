@@ -26,8 +26,12 @@ def tracked_tools(root: Path) -> list[str]:
 
 
 def named_in(text: str, name: str) -> bool:
-    """`x.py` must not match inside `foo_x.py` or `tools/sub.x.py`."""
-    return re.search(r"(?<![\w.-])" + re.escape(name) + r"(?!\w)", text) is not None
+    """`x.py` must not match inside `foo_x.py`, `sub.x.py`, `x.py-old` or `x.py.bak`.
+
+    A trailing `.` or `-` only counts as the end of the name when it ends the sentence or
+    clause (followed by whitespace or end of text), so "see x.py." still names x.py."""
+    pat = r"(?<![\w.-])" + re.escape(name) + r"(?![\w-])(?!\.[\w-])"
+    return re.search(pat, text) is not None
 
 
 def undocumented(tools: list[str], docs_text: str) -> list[str]:
@@ -68,6 +72,12 @@ def test_named_in_is_bounded():
     assert not named_in("see `bar_foo.py`", "foo.py")
     assert not named_in("see `foo.pyc`", "foo.py")
     assert not named_in("see foo-x.py", "x.py")
+    # Codex r1 F1: a suffixed sibling names another artifact, not the tool
+    assert not named_in("historical: `foo.py-old`", "foo.py")
+    assert not named_in("backup foo.py.bak kept", "foo.py")
+    assert check(["foo.py"], "historical: `foo.py-old`", {})[0].startswith("foo.py:")
+    # sentence punctuation after the name still names it
+    assert named_in("run foo.py.", "foo.py") and named_in("foo.py, then bar", "foo.py")
 
 
 def test_undocumented_tool_fails_and_documented_passes():
