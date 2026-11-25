@@ -321,3 +321,298 @@ def test_mark_checks_and_appends_under_the_rulings_lock(tmp_path, monkeypatch):
     root = _root(tmp_path)
     assert tcr.mark(root, _key(CUTS[0]), "r")[0] == 0
     assert seen == [root / tcr.RULINGS_REL]
+
+
+# --- acceptances and the ladder (L2b, 2026-11-24) ------------------------------------------------
+# Nick, NEEDS-NICK 10: only an explicit acceptance counts; a cut seen and not marked counts for
+# nothing. The count is decision_write.ladder() (CLIMB_AT 20), never a copy.
+from tools import decision_write as dw  # noqa: E402
+
+SCAN = "2026-01-06T16:30:00+00:00"
+PREV = "2026-01-05T16:30:00+00:00"
+FIRST = "2026-01-04T16:30:00+00:00"   # the oldest stored scan: PREV has a predecessor
+SALES = "title in out-of-lane family 'sales'"
+
+
+def _sales_cut(n, company="Acme Corp"):
+    return {"company": company, "title": f"Sales Manager {n}", "location": "San Francisco, CA",
+            "url": f"https://jobs.example.com/acme/s{n}", "rule": "title_filter", "reason": SALES}
+
+
+def _page_root(tmp_path, cuts, previous=(), shown=True):
+    """A root where the morning page has shown SCAN: queue, targets, cut-scan store."""
+    root = _root(tmp_path, cuts=cuts)
+    (root / "data" / "calibration").mkdir(parents=True, exist_ok=True)
+    (root / "data" / "scan-targets.yaml").write_text(
+        "companies:\n  - name: Acme Corp\n  - name: Beta Inc\n")
+    store = {FIRST: [], PREV: sorted(previous)}
+    if shown:
+        store[SCAN] = sorted(tcr.load_cuts(root)["cuts"][i]["role_key"] for i in range(len(cuts)))
+    (root / "data" / "calibration" / "title-cut-scans.json").write_text(json.dumps(store))
+    return root
+
+
+def _rk(cut):
+    from tools.career_scanner.dedup import role_key
+    return role_key(cut)
+
+
+def test_accept_records_only_the_pages_list_and_skips_corrected_cuts(tmp_path):
+    eng = {"company": "Acme Corp", "title": "Software Engineer", "location": "San Francisco, CA",
+           "url": "https://jobs.example.com/acme/e1", "rule": "title_filter", "reason": "engineer title"}
+    old, cuts = _sales_cut(0), [_sales_cut(0), _sales_cut(1), _sales_cut(2), eng]
+    root = _page_root(tmp_path, cuts, previous=[_rk(old)])
+    assert tcr.mark(root, tcr.cut_key(cuts[2]), "in lane", now=NOW)[0] == 0
+    code, out = tcr.accept(root, SCAN, now=NOW)
+    assert code == 0
+    # Shown = review and new: s1 and s2 (s0 was in the previous scan; the engineer title is not
+    # on the review list). s2 was corrected, so only s1 is accepted.
+    assert (out["shown"], out["accepted"], out["skipped_corrected"]) == (2, 1, 1)
+    lines = [x for x in tcr.load_accepts(root)["rulings"] if x["ruling"] == "accepted"]
+    assert [x["role_key"] for x in lines] == [_rk(cuts[1])]
+    assert lines[0]["cut_reason"] == SALES and lines[0]["ruling"] == "accepted"
+    assert "lean_shown" not in lines[0]          # the adapter sets it, the log never stores it
+    # The morning page's reader sees no acceptance: the rulings log holds the correction only.
+    assert [r["ruling"] for r in tcr.load_rulings(root)["rulings"]] == ["should_have_shown"]
+
+
+def test_a_scan_is_accepted_once(tmp_path):
+    root = _page_root(tmp_path, [_sales_cut(1)])
+    assert tcr.accept(root, SCAN, now=NOW)[1]["accepted"] == 1
+    code, out = tcr.accept(root, SCAN, now=NOW)
+    assert code == 1 and "already accepted" in out["error"]
+    assert [x["ruling"] for x in tcr.load_accepts(root)["rulings"]] == ["accepted", "scan_accepted"]
+
+
+def test_accept_takes_the_label_the_page_prints(tmp_path):
+    from tools.morning_page import _when
+    root = _page_root(tmp_path, [_sales_cut(1)])
+    code, out = tcr.accept(root, _when(SCAN), now=NOW)
+    assert code == 0 and out["scan"] == SCAN
+
+
+def test_accept_refuses_a_scan_not_in_the_store_and_lists_the_valid_ones(tmp_path):
+    root = _page_root(tmp_path, [_sales_cut(1)])
+    code, out = tcr.accept(root, "2025-12-31T00:00:00+00:00", now=NOW)
+    assert code == 2 and "not a scan in the cut-scan store" in out["error"]
+    assert SCAN in out["error"] and PREV in out["error"]
+    assert not tcr.accepts_path(root).exists()
+
+
+def test_an_ambiguous_label_is_refused():
+    from tools.morning_page import _when
+    a, b = "2026-01-06T16:30:00+00:00", "2026-01-06T16:30:40+00:00"
+    assert _when(a) == _when(b)
+    got, why = tcr.resolve_scan({a: [], b: []}, _when(a))
+    assert got is None and "names 2 scans" in why
+
+
+def test_a_cut_corrected_in_an_earlier_scan_is_skipped(tmp_path):
+    cuts = [_sales_cut(1), _sales_cut(2)]
+    root = _page_root(tmp_path, cuts)
+    assert tcr.mark(root, tcr.cut_key(cuts[1]), "in lane", now=NOW)[0] == 0
+    out = tcr.accept(root, SCAN, now=NOW)[1]
+    assert (out["accepted"], out["skipped_corrected"]) == (1, 1)
+
+
+def test_accept_refuses_a_scan_the_page_has_not_shown(tmp_path):
+    root = _page_root(tmp_path, [_sales_cut(1)], shown=False)
+    store = tcr.Path(root / "data" / "calibration" / "title-cut-scans.json")
+    before = store.read_text()
+    code, out = tcr.accept(root, SCAN, now=NOW)
+    assert code == 2 and "not a scan in the cut-scan store" in out["error"]
+    assert store.read_text() == before          # read-only: the store is never written here
+    assert not tcr.accepts_path(root).exists()
+
+
+def _accepts(root, n, start=0):
+    root = Path(root)
+    (root / "data" / "calibration").mkdir(parents=True, exist_ok=True)
+    with open(tcr.accepts_path(root), "a") as f:
+        for i in range(start, start + n):
+            f.write(json.dumps({"accepted_at": f"2026-01-06T10:{i:02d}:00+00:00",
+                                "key": f"k{i}", "role_key": f"rk{i}", "ruling": "accepted",
+                                "by": "nick", "cut_reason": SALES}) + "\n")
+
+
+def _correction(root, minute, by="nick"):
+    Path(root, "data", "calibration").mkdir(parents=True, exist_ok=True)
+    with open(tcr.rulings_path(root), "a") as f:
+        f.write(json.dumps({"ruled_at": f"2026-01-06T10:{minute:02d}:00+00:00", "key": "kc",
+                            "role_key": f"rc{minute}", "ruling": "should_have_shown",
+                            "reason": "in lane", "by": by, "cut_reason": SALES}) + "\n")
+
+
+def test_twenty_accepted_cuts_with_no_correction_reach_the_climb(tmp_path):
+    _accepts(tmp_path, dw.CLIMB_AT - 1)
+    c = tcr.ladder(tmp_path, now=NOW)[1]["classes"][SALES]
+    assert (c["rung"], c["agreements_since_correction"]) == ("R1", dw.CLIMB_AT - 1)
+    _accepts(tmp_path, 1, start=dw.CLIMB_AT - 1)
+    c = tcr.ladder(tmp_path, now=NOW)[1]["classes"][SALES]
+    assert (c["rung"], c["agreements_since_correction"], c["corrections"]) == ("R2", dw.CLIMB_AT, 0)
+
+
+def test_one_correction_resets_the_class(tmp_path):
+    _accepts(tmp_path, dw.CLIMB_AT)
+    _correction(tmp_path, dw.CLIMB_AT + 1)
+    c = tcr.ladder(tmp_path, now=NOW)[1]["classes"][SALES]
+    assert (c["rung"], c["agreements_since_correction"], c["corrections"]) == ("R1", 0, 1)
+
+
+def test_order_is_time_so_acceptances_after_a_correction_count_from_zero(tmp_path):
+    _correction(tmp_path, 0)
+    _accepts(tmp_path, 3, start=1)
+    c = tcr.ladder(tmp_path, now=NOW)[1]["classes"][SALES]
+    assert (c["agreements_since_correction"], c["corrections"]) == (3, 1)
+
+
+def test_a_cut_seen_but_not_marked_counts_for_nothing(tmp_path):
+    # Nick, NEEDS-NICK 10: seen on the page and never accepted or corrected -> no count.
+    root = _page_root(tmp_path, [_sales_cut(n) for n in range(dw.CLIMB_AT + 5)])
+    assert len(tcr.shown_cuts(root, SCAN)[1]["cuts"]) == dw.CLIMB_AT + 5
+    assert tcr.ladder(root, now=NOW)[1]["classes"] == {}
+    assert not tcr.accepts_path(root).exists()
+
+
+def test_only_nicks_lines_count(tmp_path):
+    _accepts(tmp_path, dw.CLIMB_AT)
+    _correction(tmp_path, dw.CLIMB_AT + 1, by="claude")
+    c = tcr.ladder(tmp_path, now=NOW)[1]["classes"][SALES]
+    assert (c["rung"], c["corrections"]) == ("R2", 0)
+
+
+def test_the_adapter_marks_every_cut_held_out(tmp_path):
+    ev = tcr.ladder_events([], [{"accepted_at": "2026-01-06T10:00:00+00:00", "by": "nick",
+                                  "ruling": "accepted", "cut_reason": SALES}])
+    assert [e for e in ev if e["type"] == "resolved"][0]["lean_shown"] is False
+
+
+def test_accept_cli_runs(tmp_path):
+    root = _page_root(tmp_path, [_sales_cut(1)])
+    p = subprocess.run([sys.executable, str(TOOLS / "title_cut_ruling.py"), "--repo-root", str(root),
+                        "accept", "--scan", SCAN], capture_output=True, text=True)
+    assert p.returncode == 0 and json.loads(p.stdout)["accepted"] == 1
+    p = subprocess.run([sys.executable, str(TOOLS / "title_cut_ruling.py"), "--repo-root", str(root),
+                        "ladder"], capture_output=True, text=True)
+    assert p.returncode == 0 and json.loads(p.stdout)["classes"][SALES]["agreements_since_correction"] == 1
+
+
+def test_shown_cuts_takes_a_string_root_too(tmp_path):
+    root = _page_root(tmp_path, [_sales_cut(1)])
+    assert tcr.shown_cuts(str(root), SCAN)[0] == 0
+
+
+def test_shown_cuts_refuses_without_a_role_queue(tmp_path):
+    root = _page_root(tmp_path, [_sales_cut(1)])
+    (root / "tools" / ".role-queue.json").unlink()
+    code, out = tcr.accept(root, SCAN, now=NOW)
+    assert code == 2 and "no role queue" in out["error"]
+
+
+@pytest.mark.parametrize("body, text", [("{not json", "cut-scan store unreadable"),
+                                        ("[]", "not an object of scans")])
+def test_shown_cuts_refuses_a_bad_store(tmp_path, body, text):
+    root = _page_root(tmp_path, [_sales_cut(1)])
+    (root / "data" / "calibration" / "title-cut-scans.json").write_text(body)
+    code, out = tcr.accept(root, SCAN, now=NOW)
+    assert code == 2 and text in out["error"]
+    assert not tcr.accepts_path(root).exists()
+
+
+def test_shown_cuts_refuses_without_scan_targets(tmp_path):
+    root = _page_root(tmp_path, [_sales_cut(1)])
+    (root / "data" / "scan-targets.yaml").unlink()
+    code, out = tcr.accept(root, SCAN, now=NOW)
+    assert code == 2 and "scan-targets.yaml" in out["error"]
+
+
+@pytest.mark.parametrize("which", ["rulings", "accepts"])
+def test_accept_and_ladder_refuse_an_unreadable_log(tmp_path, which):
+    root = _page_root(tmp_path, [_sales_cut(1)])
+    path = tcr.rulings_path(root) if which == "rulings" else tcr.accepts_path(root)
+    path.mkdir(parents=True)                      # a directory: read_text raises OSError
+    code, out = tcr.ladder(root, now=NOW)
+    assert code == 2 and "unreadable" in out["error"]
+    if which == "rulings":                        # an accepts dir would also break the lock
+        code, out = tcr.accept(root, SCAN, now=NOW)
+        assert code == 2 and "unreadable" in out["error"]
+
+
+def test_accept_counts_each_skip_reason_apart(tmp_path):
+    cuts = [_sales_cut(n) for n in range(1, 6)]
+    root = _page_root(tmp_path, cuts)
+    assert tcr.mark(root, tcr.cut_key(cuts[0]), "in lane", now=NOW)[0] == 0
+    with open(tcr.accepts_path(root), "a") as f:   # accepted earlier, under another scan
+        f.write(json.dumps({"accepted_at": "2026-01-05T10:00:00+00:00", "key": tcr.cut_key(cuts[1]),
+                            "role_key": _rk(cuts[1]),
+                            "ruling": "accepted", "by": "nick", "cut_reason": SALES,
+                            "scan_at": "2026-01-03T00:00:00+00:00"}) + "\n")
+    out = tcr.accept(root, SCAN, now=NOW)[1]
+    assert (out["shown"], out["accepted"], out["skipped_corrected"],
+            out["skipped_already_accepted"]) == (5, 3, 1, 1)
+
+
+# --- current scan only (b7, after Codex r1 F1) and the r1 fixes F2-F4 ----------------------------
+
+def test_an_older_scan_is_refused_and_the_refusal_names_the_current_ones_label(tmp_path):
+    from tools.morning_page import _when
+    root = _page_root(tmp_path, [_sales_cut(1)])
+    code, out = tcr.accept(root, PREV, now=NOW)
+    assert code == 2 and "newer scan" in out["error"]
+    assert SCAN in out["error"] and _when(SCAN) in out["error"]
+    assert not tcr.accepts_path(root).exists()
+
+
+def test_a_scan_with_no_earlier_stored_scan_is_refused(tmp_path):
+    root = _page_root(tmp_path, [_sales_cut(1)])
+    store = root / "data" / "calibration" / "title-cut-scans.json"
+    store.write_text(json.dumps({SCAN: json.loads(store.read_text())[SCAN]}))
+    code, out = tcr.accept(root, SCAN, now=NOW)
+    assert code == 2 and "no earlier scan" in out["error"]
+
+
+def test_scan_targets_changed_after_the_page_showed_the_scan_is_refused(tmp_path):
+    import os
+    root = _page_root(tmp_path, [_sales_cut(1)])
+    store = root / "data" / "calibration" / "title-cut-scans.json"
+    t = store.stat().st_mtime
+    os.utime(root / "data" / "scan-targets.yaml", (t + 60, t + 60))
+    code, out = tcr.accept(root, SCAN, now=NOW)
+    assert code == 2 and "scan-targets.yaml changed" in out["error"]
+    os.utime(root / "data" / "scan-targets.yaml", (t - 60, t - 60))
+    assert tcr.accept(root, SCAN, now=NOW)[0] == 0
+
+
+def test_shown_cuts_never_writes_the_store(tmp_path):
+    root = _page_root(tmp_path, [_sales_cut(1)])
+    store = root / "data" / "calibration" / "title-cut-scans.json"
+    before = (store.read_text(), store.stat().st_mtime_ns)
+    assert tcr.shown_cuts(root, SCAN)[0] == 0 and tcr.accept(root, SCAN, now=NOW)[0] == 0
+    assert (store.read_text(), store.stat().st_mtime_ns) == before
+
+
+def test_an_accept_that_adds_no_cut_still_leaves_a_receipt_and_blocks_a_second(tmp_path):
+    # Codex r1 F2: every shown cut corrected, so no cut line; the scan is still accepted once.
+    cuts = [_sales_cut(1)]
+    root = _page_root(tmp_path, cuts)
+    assert tcr.mark(root, tcr.cut_key(cuts[0]), "in lane", now=NOW)[0] == 0
+    assert tcr.accept(root, SCAN, now=NOW)[1]["accepted"] == 0
+    lines = tcr.load_accepts(root)["rulings"]
+    assert [(x["ruling"], x["scan_at"], x["accepted"]) for x in lines] == [("scan_accepted", SCAN, 0)]
+    code, out = tcr.accept(root, SCAN, now=NOW)
+    assert code == 1 and "already accepted" in out["error"]
+
+
+def test_receipts_never_count_on_the_ladder(tmp_path):
+    root = _page_root(tmp_path, [_sales_cut(1)])
+    assert tcr.accept(root, SCAN, now=NOW)[1]["accepted"] == 1
+    c = tcr.ladder(root, now=NOW)[1]["classes"]
+    assert list(c) == [SALES] and c[SALES]["agreements_since_correction"] == 1
+
+
+def test_a_correction_in_the_same_second_as_an_acceptance_resets_the_class(tmp_path):
+    # Codex r1 F3: second-resolution timestamps; a tie must sort the correction last.
+    _accepts(tmp_path, 1)                     # accepted_at 10:00:00
+    _correction(tmp_path, 0)                  # ruled_at    10:00:00, the same second
+    c = tcr.ladder(tmp_path, now=NOW)[1]["classes"][SALES]
+    assert (c["agreements_since_correction"], c["corrections"]) == (0, 1)
