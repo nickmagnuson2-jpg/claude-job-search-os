@@ -120,6 +120,41 @@ def test_quoted_forecast_or_real_time_allows(msg):
     assert r.returncode == 0, (msg, r.stderr)
 
 
+# The shapes of feedback_run_date_dont_infer_local_time's own fires that the patterns above
+# missed (S1, 2026-11-25; a restraint replay of 2,310 real SendMessage calls since 2026-11-21
+# found exactly one new block, fire 11 itself). One test, so the rule file can name its node.
+RUN_DATE_FIRES = [
+    "f2 16:40ish: mutation done, 394 killed, 0 survived.",   # fire 11, generalized
+    "it's ~3:40, your screen is at 4:45",
+    "It's roughly 10:20, so there is time for one more round.",
+    "It's about 11:50.",
+    "it’s about 9:05 now",
+    "it is now about 16:50, the suite is next",
+    "The time is approximately 16:30.",
+]
+RUN_DATE_ALLOW = [
+    "ETA about 11:15.",                     # a forecast, not a claim about now
+    "done around 17:00",
+    "now around 17:00 it finishes",
+    "the run should end about 18:40",
+    'Your message said "16:40ish"; that was typed.',   # quoted mention
+    "the `16:40ish` shape is what the hook blocks",
+    "It is 16:35 by `date`.",               # a real reading
+]
+
+
+def test_run_date_fire_shapes_block():
+    for msg in RUN_DATE_FIRES:
+        assert hook.judge(msg) == "guessed_time", msg
+        r = run(send(msg))
+        assert r.returncode == 2 and "date" in r.stderr, (msg, r.stderr)
+
+
+def test_run_date_forecasts_and_mentions_still_allow():
+    for msg in RUN_DATE_ALLOW:
+        assert hook.judge(msg) is None, msg
+
+
 # ---------------------------------------------------------------- fields, scope, fail-open
 
 def test_content_field_is_judged_when_message_is_clean():
