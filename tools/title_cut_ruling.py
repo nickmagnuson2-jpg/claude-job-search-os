@@ -15,12 +15,25 @@ session recording its own labels must pass `--by claude`.
 
 Read-only on the queue: it is read directly and never quarantined or rewritten here.
 
+Acceptances (L2b, 2026-11-24). A class can climb only if agreement is recorded too, so
+`accept --scan` records Nick's EXPLICIT acceptance of the cuts the morning page put in front
+of him for the current scan. Nick, NEEDS-NICK 10, 2026-11-24: "a title cut ... that I saw
+but didn't correct. Does not count as accepted. I need an explicit acceptance." So nothing
+here infers agreement from silence: a cut counts toward the ladder only through a line in
+one of the two logs. Acceptances live in their own log, written only by this tool, because
+the morning page reads every line of the rulings log as "should have shown".
+`ladder` counts both logs with decision_write.ladder(), the one trust-ladder function.
+
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/title_cut_ruling.py list [--grep TEXT]
   PYTHONIOENCODING=utf-8 python3 tools/title_cut_ruling.py mark --key KEY --reason "..."
+  PYTHONIOENCODING=utf-8 python3 tools/title_cut_ruling.py accept --scan SCANNED_AT
+  PYTHONIOENCODING=utf-8 python3 tools/title_cut_ruling.py ladder
   PYTHONIOENCODING=utf-8 python3 tools/title_cut_ruling.py log
 
-Exit codes: 0 ok; 1 already ruled; 2 bad input (no queue, unknown key, empty reason).
+Exit codes: 0 ok; 1 already ruled, or the scan already accepted; 2 bad input (no queue,
+unknown key, empty reason, a scan that is not the current one or not yet shown by the page,
+or a scan-targets.yaml changed since the page showed it).
 """
 from __future__ import annotations
 
@@ -41,8 +54,11 @@ from tools.career_scanner.scanner import cut_list_problem, role_queue_path  # no
 from tools.inbox_lock import file_lock  # noqa: E402
 
 RULINGS_REL = Path("data") / "calibration" / "title-cut-rulings.jsonl"
+ACCEPTS_REL = Path("data") / "calibration" / "title-cut-accepts.jsonl"
 KEY_LEN = 8
 RULING = "should_have_shown"
+ACCEPTED = "accepted"
+RECEIPT = "scan_accepted"   # one per accept run, even when it appends no cut (Codex r1 F2)
 
 
 def cut_key(cut: dict) -> str:
@@ -92,10 +108,22 @@ def rulings_path(root: Path) -> Path:
     return Path(root) / RULINGS_REL
 
 
+def accepts_path(root: Path) -> Path:
+    return Path(root) / ACCEPTS_REL
+
+
 def load_rulings(root: Path) -> dict:
     """{"error", "rulings", "bad_lines"}. A line that is not a JSON object is counted,
     never silently dropped and never fatal."""
-    path = rulings_path(root)
+    return _read_log(rulings_path(root))
+
+
+def load_accepts(root: Path) -> dict:
+    """The acceptances log, same shape and rules as load_rulings ("rulings" holds the lines)."""
+    return _read_log(accepts_path(root))
+
+
+def _read_log(path: Path) -> dict:
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -174,6 +202,169 @@ def _check_and_append(root: Path, cut: dict, scanned_at, reason: str, by: str,
     return 0, {"logged": rec, "log": str(RULINGS_REL)}
 
 
+def resolve_scan(store: dict, scan: str) -> tuple[str | None, str | None]:
+    """(scanned_at, None) for `scan` given as the store's ISO key or as the label the morning
+    page prints for it (morning_page._when, e.g. "Tue Nov 24, 3:00 PM"), else (None, why).
+    The page's own formatter is imported, never copied, so the two cannot drift."""
+    from tools.morning_page import _when  # lazy, read-only use of the page's label
+    scan = (scan or "").strip()
+    if scan in store:
+        return scan, None
+    hits = [k for k in store if _when(k) == scan]
+    if len(hits) == 1:
+        return hits[0], None
+    valid = "; ".join(f"{k} ({_when(k)})" for k in sorted(store)) or "none"
+    if hits:
+        return None, f"--scan {scan!r} names {len(hits)} scans; pass the ISO value. Scans: {valid}"
+    return None, f"--scan {scan!r} is not a scan in the cut-scan store. Scans: {valid}"
+
+
+def shown_cuts(root: Path, scan: str) -> tuple[int, dict]:
+    """The cuts the morning page put in front of Nick for `scan`: its two-minute list, cuts
+    to_review and new against the stored scan before it (morning_page.py "to_look"), decided
+    by funnel_state's own functions, never re-derived here.
+
+    The CURRENT scan only (b7, 2026-11-24, after Codex r1 F1): the store keeps role keys, not
+    the list the page showed, so an older scan's list could only be rebuilt from today's queue
+    and today's scan-targets, and could then include a cut Nick was never shown. Nick's rule
+    is an explicit acceptance of what he saw, so that is refused. For the same reason, a
+    scan-targets.yaml changed since the page recorded the scan is refused: to_review would be
+    judged against a config the page did not use.
+    (0, {"scanned_at", "cuts"}) or (2, {"error"}). Read-only: it reads the queue, the store
+    and scan-targets once each and writes nothing."""
+    from tools import funnel_state as fs  # lazy: funnel_state imports this module
+    from tools.morning_page import _when
+    root = Path(root)
+    loaded = load_cuts(root)
+    if loaded["error"]:
+        return 2, {"error": loaded["error"]}
+    store_path = fs.scans_path(root)
+    try:
+        store = json.loads(store_path.read_text(encoding="utf-8"))
+        recorded = store_path.stat().st_mtime
+    except FileNotFoundError:
+        store, recorded = {}, None
+    except (OSError, ValueError) as e:
+        return 2, {"error": f"cut-scan store unreadable: {e}"}
+    if not isinstance(store, dict):
+        return 2, {"error": "cut-scan store is not an object of scans"}
+    scan, why = resolve_scan(store, scan)
+    if why:
+        return 2, {"error": why + " (the morning page records a scan when it shows it)"}
+    current = loaded["scanned_at"]
+    if scan != current:
+        return 2, {"error": f"a newer scan has replaced that list: {current} ({_when(current)}). "
+                            "Re-read the page and accept that one; only the list on the page "
+                            "now can be accepted"}
+    targets = root / "data" / "scan-targets.yaml"
+    try:
+        changed = recorded is not None and targets.stat().st_mtime > recorded
+    except OSError:
+        changed = False                     # a missing file is refused by load_companies below
+    if changed:
+        return 2, {"error": "data/scan-targets.yaml changed after the page showed this scan, so "
+                            "its list cannot be rebuilt as shown; accept the next scan's list"}
+    # The previous scan comes from the snapshot already read, never from record_scan: that is
+    # the store's writer, and a page render pruning between two reads would make it write
+    # (Codex r1 F4). Same rule as record_scan: the latest stored scan before this one.
+    earlier = sorted(k for k in store if k < scan)
+    if not earlier:
+        # The page compared this scan against one since pruned (KEEP_SCANS), or there was
+        # none; "new" would read as every cut (L2b live smoke: 173 for the oldest stored scan).
+        return 2, {"error": f"the scan of {scan} has no earlier scan in the cut-scan store, so "
+                            "its list of new cuts cannot be rebuilt"}
+    previous = set(store[earlier[-1]])
+    companies, err = fs.load_companies(root)
+    if err:
+        return 2, {"error": err}
+    by_name = {fs.normalize_name(str(c.get("name", ""))): c
+               for c in companies if isinstance(c, dict) and c.get("name")}
+    shown = [c for c in loaded["cuts"] if c["role_key"] not in previous
+             and fs.to_review(c, by_name.get(fs.normalize_name(str(c.get("company", "")))))]
+    return 0, {"scanned_at": scan, "cuts": shown}
+
+
+def accept(root: Path, scan: str, by: str = "nick",
+           now: datetime | None = None) -> tuple[int, dict]:
+    """Record Nick's explicit acceptance of every cut on the page's list for `scan`, except
+    the ones he ruled "should have shown" (in any scan) and the ones already accepted. This
+    command is the only way a cut counts as agreed: a cut that is shown and never accepted
+    counts for nothing (Nick, NEEDS-NICK 10, 2026-11-24). A scan is accepted once: a second
+    accept of it exits 1."""
+    code, got = shown_cuts(root, scan)
+    if code:
+        return code, got
+    scan = got["scanned_at"]
+    path = accepts_path(root)  # beside the cut-scan store, which shown_cuts found: the dir exists
+    with file_lock(path):
+        rulings, accepts = load_rulings(root), load_accepts(root)
+        for log in (rulings, accepts):
+            if log["error"]:
+                return 2, {"error": log["error"]}
+        mine = [r for r in accepts["rulings"] if (r.get("by") or "nick") == by]
+        # The receipt, not the cut lines, says a scan was accepted: a run that accepted no cut
+        # still writes one, so a second accept of that scan is refused too.
+        if any(r.get("scan_at") == scan for r in mine):
+            return 1, {"error": f"the scan of {scan} was already accepted"}
+        corrected = {r.get("role_key") for r in rulings["rulings"] if (r.get("by") or "nick") == by}
+        done = {r.get("role_key") for r in mine if r.get("ruling") == ACCEPTED}
+        at = (now or datetime.now(timezone.utc)).isoformat(timespec="seconds")
+        new = [c for c in got["cuts"] if c["role_key"] not in corrected | done]
+        with open(path, "a", encoding="utf-8") as f:
+            for c in new:
+                f.write(json.dumps({
+                    "accepted_at": at, "key": c["key"], "role_key": c["role_key"],
+                    "ruling": ACCEPTED, "by": by, "company": c.get("company", ""),
+                    "title": c.get("title", ""), "rule": c.get("rule", ""),
+                    "cut_reason": c.get("reason", ""), "scan_at": scan}, ensure_ascii=False) + "\n")
+            f.write(json.dumps({"accepted_at": at, "key": f"scan:{scan}", "ruling": RECEIPT,
+                                "by": by, "scan_at": scan, "accepted": len(new)}) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+    return 0, {"scan": scan, "shown": len(got["cuts"]), "accepted": len(new),
+               "skipped_corrected": sum(c["role_key"] in corrected for c in got["cuts"]),
+               "skipped_already_accepted": sum(c["role_key"] in done and c["role_key"] not in corrected
+                                               for c in got["cuts"]),
+               "log": str(ACCEPTS_REL)}
+
+
+def ladder_events(rulings: list, accepts: list) -> list:
+    """Nick's corrections and acceptances as decision_write.ladder() events, one asked +
+    resolved pair per line; class = the gate's cut reason at cut time (20 distinct values over
+    753 cuts in the 11-24 queue, none carrying a per-role detail). Only Nick's lines count.
+
+    lean_shown is False here and ONLY here, never stored in either log: the title-cut rule
+    (funnel-intake.md "Autonomy ladder", D2 of 2026-10-28: "20 consecutive cuts with 0
+    corrections") counts every cut Nick explicitly reviewed, and the cut is the gate's action
+    under review, not a lean Claude showed him. Without it ladder() would count none."""
+    # Timestamps are to the second. On a tie the correction sorts LAST, so a correction made in
+    # the same second as an acceptance always resets the class: the safe direction, never an
+    # agreement too many (Codex r1 F3). ladder() re-sorts by time, stably, keeping this order.
+    lines = [(r.get("ruled_at") or "", 1, "correction", r) for r in rulings] + \
+            [(a.get("accepted_at") or "", 0, "agreement", a) for a in accepts
+             if a.get("ruling") == ACCEPTED]
+    events = []
+    for n, (at, _, outcome, r) in enumerate(sorted(lines, key=lambda x: x[:2])):
+        if (r.get("by") or "nick") != "nick":
+            continue
+        eid = f"cut-{n}"
+        events.append({"type": "asked", "id": eid, "class": r.get("cut_reason") or "(no reason)"})
+        events.append({"type": "resolved", "id": eid, "at": at, "outcome": outcome,
+                       "lean_shown": False})
+    return events
+
+
+def ladder(root: Path, now: datetime | None = None) -> tuple[int, dict]:
+    """Per cut class: the rung from decision_write.ladder(), the one trust-ladder count."""
+    from tools.decision_write import ladder as count  # the shared function, never a copy
+    rulings, accepts = load_rulings(root), load_accepts(root)
+    for log in (rulings, accepts):
+        if log["error"]:
+            return 2, {"error": log["error"]}
+    return 0, {"classes": count(ladder_events(rulings["rulings"], accepts["rulings"]), now),
+               "bad_lines": rulings["bad_lines"] + accepts["bad_lines"]}
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--repo-root", default=str(REPO_ROOT))
@@ -185,11 +376,17 @@ def main(argv=None) -> int:
     mk.add_argument("--reason", required=True)
     mk.add_argument("--by", default="nick", choices=("nick", "claude"))
     sub.add_parser("log", help="print the rulings log")
+    ac = sub.add_parser("accept", help="accept every cut on today's page list you did not correct")
+    ac.add_argument("--scan", required=True,
+                    help="the current scan: its scanned_at, or the label the page prints")
+    ac.add_argument("--by", default="nick", choices=("nick", "claude"))
+    sub.add_parser("ladder", help="per cut class: rung, agreements since the last correction")
     a = ap.parse_args(argv)
     root = Path(a.repo_root)
 
-    if a.cmd == "mark":
-        code, out = mark(root, a.key, a.reason, a.by)
+    if a.cmd in ("mark", "accept", "ladder"):
+        code, out = (mark(root, a.key, a.reason, a.by) if a.cmd == "mark"
+                     else accept(root, a.scan, a.by) if a.cmd == "accept" else ladder(root))
         print(json.dumps(out, indent=2, ensure_ascii=False),
               file=sys.stdout if code == 0 else sys.stderr)
         return code
