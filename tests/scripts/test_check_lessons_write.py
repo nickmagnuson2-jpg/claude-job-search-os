@@ -85,6 +85,9 @@ def test_write_adding_an_invalid_row_is_blocked(lessons):
     assert err.startswith("BLOCKED by check_lessons_write: memory/lessons.md Section 2")
     assert "Invented new pattern" in err
     assert "lessons_write.py set-promoted" in err
+    # a block names the recurrence route too (S4 2026-11-24, org b7: a guard that blocks an
+    # increment and names no route to bump is the source of the next bypass)
+    assert "lessons_write.py bump <row-match> --evidence" in err
 
 
 def test_an_untouched_broken_row_does_not_block(lessons):
