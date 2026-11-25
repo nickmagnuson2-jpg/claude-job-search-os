@@ -310,10 +310,13 @@ def accept(root: Path, scan: str, by: str = "nick",
         code, again = shown_cuts(root, scan)
         if code:
             return code, again
-        if again["scanned_at"] != scan or \
-                [c["role_key"] for c in again["cuts"]] != [c["role_key"] for c in got["cuts"]]:
+        # Whole cuts, not role keys: a cut whose key held while its reason or rule changed
+        # would otherwise be recorded with stale fields (Codex 11-25 F1(b)). What is written
+        # below comes from this in-lock rebuild.
+        if again["scanned_at"] != scan or again["cuts"] != got["cuts"]:
             return 2, {"error": "the scan's list changed while accepting; nothing recorded. "
                                 "Re-read the page and accept again"}
+        got = again
         rulings, accepts = load_rulings(root), load_accepts(root)
         for log in (rulings, accepts):
             if log["error"]:

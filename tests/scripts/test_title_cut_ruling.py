@@ -733,3 +733,24 @@ def test_the_adapter_emits_decision_writes_own_word_agree():
     ev = tcr.ladder_events([], [{"accepted_at": "2026-01-06T10:00:00+00:00", "by": "nick",
                                   "ruling": "accepted", "cut_reason": SALES}])
     assert [e["outcome"] for e in ev if e["type"] == "resolved"] == ["agree"]
+
+
+def test_a_same_key_change_under_the_lock_is_refused_and_never_recorded_stale(tmp_path, monkeypatch):
+    """Codex 11-25 F1(b): the re-check compared role keys only and appended from the FIRST
+    list, so a cut whose key held while its details changed was recorded with stale fields.
+    The whole cut is compared now, and the append writes the rebuilt list."""
+    root = _page_root(tmp_path, [_sales_cut(1)])
+    real, calls = tcr.shown_cuts, []
+
+    def second_call_sees_new_details(r, scan):
+        code, got = real(r, scan)
+        calls.append(1)
+        if len(calls) == 2:
+            got = {**got, "cuts": [{**c, "reason": "a reworded gate reason"} for c in got["cuts"]]}
+        return code, got
+    monkeypatch.setattr(tcr, "shown_cuts", second_call_sees_new_details)
+    code, out = tcr.accept(root, SCAN, now=NOW)
+    assert len(calls) == 2
+    assert code == 2 and "changed" in out["error"], out
+    assert not tcr.accepts_path(root).exists() or not tcr.load_accepts(root)["rulings"]
+
