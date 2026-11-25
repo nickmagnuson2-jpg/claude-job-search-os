@@ -38,6 +38,8 @@ import sys
 import urllib.parse
 import urllib.request
 
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # so `import tools.<name>` finds siblings too (S2b, 2026-11-25)
 from count_report import format_line
 
 BASE = "https://data.sf.gov/resource/"

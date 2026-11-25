@@ -63,6 +63,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Iterator, Mapping, Sequence
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # so `import tools.<name>` finds siblings too (S2b, 2026-11-25)
 from json_leaves import leaves, numeric
 
 # Match with TOLERANCE, not exact equality. A JSON rounds for readability (451.2) while the

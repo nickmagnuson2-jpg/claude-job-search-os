@@ -24,6 +24,7 @@ import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # so `import tools.<name>` finds siblings too (S2b, 2026-11-25)
 import mutation_state  # noqa: E402
 DEFAULT_STATE = mutation_state.state_dir()
 TREND_NAME = mutation_state.TREND_NAME

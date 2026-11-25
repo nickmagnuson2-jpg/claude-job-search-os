@@ -18,10 +18,12 @@ import argparse
 import json
 import re
 import shutil
-from chrome_runner import ChromeNotFound, require_chrome, run as chrome_run
 import sys
 import tempfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # so `import tools.<name>` finds siblings too (S2b, 2026-11-25)
+from chrome_runner import ChromeNotFound, require_chrome, run as chrome_run
 
 
 # The face the deck renders in. Measuring the ink in a fallback face would tighten the

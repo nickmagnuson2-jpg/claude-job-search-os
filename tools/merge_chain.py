@@ -36,6 +36,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # so `import tools.<name>` finds siblings too (S2b, 2026-11-25)
 import allowlist_merge
 import allowlist_write
 

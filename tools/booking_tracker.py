@@ -49,6 +49,7 @@ import time
 import urllib.request
 from zoneinfo import ZoneInfo
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # so `import tools.<name>` finds siblings too (S2b, 2026-11-25)
 from count_report import report
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

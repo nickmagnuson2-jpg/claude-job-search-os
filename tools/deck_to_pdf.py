@@ -19,6 +19,7 @@ from pathlib import Path
 # The browser is located AND invoked through the shared runner: importing only
 # find_chrome and then hand-rolling the subprocess call would leave the base flags
 # duplicated here, which is half the duplication this promotion exists to remove.
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # so `import tools.<name>` finds siblings too (S2b, 2026-11-25)
 from chrome_runner import ChromeNotFound, render_with_injection, require_chrome
 
 W, H = 1280, 720

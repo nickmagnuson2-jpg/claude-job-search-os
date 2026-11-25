@@ -50,6 +50,8 @@ from pathlib import Path
 from typing import Callable, Iterable
 from zoneinfo import ZoneInfo
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # so `import tools.<name>` finds siblings too (S2b, 2026-11-25)
 from count_report import report
 
 LOCAL_TZ = ZoneInfo("America/Los_Angeles")

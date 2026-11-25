@@ -30,6 +30,7 @@ from pathlib import Path
 # its numbers are used to decide what is already hardened.
 BYTECODE_FIX_UTC = _dt.datetime(2026, 8, 31, tzinfo=_dt.timezone.utc).timestamp()
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # so `import tools.<name>` finds siblings too (S2b, 2026-11-25)
 import mutation_state  # noqa: E402
 DEFAULT_STATE = mutation_state.state_dir()
 
