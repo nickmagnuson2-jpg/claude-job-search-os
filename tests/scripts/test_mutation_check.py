@@ -2571,13 +2571,14 @@ def test_a_cache_dir_the_caller_set_is_kept(tmp_path):
 
 
 def test_the_env_fingerprint_does_not_see_which_temp_path_the_root_is(monkeypatch, tmp_path):
-    """Two runs of one tree in two temp worktrees: the variables naming the run's own root
-    hash the same. Any other value of them still changes the fingerprint."""
+    """Two runs of one tree in two temp worktrees: the variables naming the KEYED root hash
+    the same. Any other value of them still changes the fingerprint. The keyed root is the
+    argument, not this process's REPO_ROOT (test_mutation_check_speed seeds a fixture tree's
+    keys from this checkout)."""
     prints = []
     for name in ("one", "two"):
         root = (tmp_path / name).resolve()
         root.mkdir()
-        monkeypatch.setattr(mc, "REPO_ROOT", root)
         monkeypatch.setenv("MUTATION_REPO_ROOT", str(root))
         # the marker carries the unresolved spelling run_in_worktree writes: on macOS the
         # temp worktree is /var/folders/..., a symlink to the resolved /private/var root
@@ -2585,7 +2586,7 @@ def test_the_env_fingerprint_does_not_see_which_temp_path_the_root_is(monkeypatc
         if spelled.startswith("/private/var/") and Path("/var").is_symlink():
             spelled = spelled[len("/private"):]
         monkeypatch.setenv(mc.IN_WORKTREE_CHILD_ENV, spelled)
-        prints.append(mc._env_fingerprint())
+        prints.append(mc._env_fingerprint(root))
     assert prints[0] == prints[1]
     monkeypatch.setenv("MUTATION_REPO_ROOT", str(tmp_path / "elsewhere"))
-    assert mc._env_fingerprint() != prints[1]
+    assert mc._env_fingerprint(root) != prints[1]

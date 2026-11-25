@@ -1480,7 +1480,7 @@ def cache_context(target: Path, original: str, test_files: list, root: Path) -> 
         "version": CACHE_VERSION,
         "tool": _file_sha(SELF), "recorder": _file_sha(LINEMAP_MODULE),
         "python": sys.version,
-        "env": _env_fingerprint(),
+        "env": _env_fingerprint(root),
         "target": rel(target), "target_sha": _sha(original.encode("utf-8")),
         "tests": {rel(t): _file_sha(t) for t in tests},
         "support": support,
@@ -1504,10 +1504,13 @@ _VOLATILE_PREFIXES = ("CLAUDE", "ITERM", "TERM_", "SSH_", "XPC_", "__CF",
 # These name the run's own root, which --in-worktree makes fresh per run under a temp path.
 # They are hashed as "<root>" when they point at REPO_ROOT, so two runs of the same tree in
 # two temp worktrees share keys (S5, 2026-11-25); any other value is hashed as written.
-def _env_fingerprint() -> str:
+def _env_fingerprint(root: Path | None = None) -> str:
+    """`root` is the tree being keyed (cache_context's), never assumed to be this process's
+    REPO_ROOT: a caller can key a fixture tree from another checkout."""
     env = _test_env_base()
+    keyed = Path(root or REPO_ROOT).resolve()
     for k in ("MUTATION_REPO_ROOT", IN_WORKTREE_CHILD_ENV):
-        if k in env and Path(env[k]).resolve() == REPO_ROOT:
+        if k in env and Path(env[k]).resolve() == keyed:
             env[k] = "<root>"
     kept = sorted((k, v) for k, v in env.items()
                   if k not in _VOLATILE_ENV and not k.startswith(_VOLATILE_PREFIXES))
