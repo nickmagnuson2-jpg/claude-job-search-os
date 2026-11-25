@@ -909,8 +909,10 @@ PREFLIGHT_TIMEOUT = 600
 def dirty_tests(main: Path) -> tuple[list[str] | None, str | None]:
     """(paths under tests/ with uncommitted changes, None), or (None, why) when git status
     cannot be read. Untracked files count: pytest would collect them."""
-    rc, out, err = git(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--",
-                        "tests"], main)
+    # --no-renames: with -z a rename record carries the old path as a second NUL field,
+    # which this parser would read as another record (Codex 11-25 F2 on s5).
+    rc, out, err = git(["status", "--porcelain=v1", "-z", "--no-renames",
+                        "--untracked-files=all", "--", "tests"], main)
     if rc != 0:
         return None, f"git status in the main checkout failed: {(err or out).strip()[:200]}"
     paths = []
@@ -950,6 +952,7 @@ def preflight(main: Path, runs=PREFLIGHT_RUNS, timeout: int = PREFLIGHT_TIMEOUT)
     dirty, why = dirty_tests(main)
     if why or dirty:
         res["dirty_tests"] = dirty or []
+        res["git_status_error"] = why
         res["problem"] = why or ("uncommitted changes under tests/ in the main checkout: "
                                  + ", ".join(dirty))
         res["duration_s"] = 0.0
@@ -996,6 +999,11 @@ def preflight(main: Path, runs=PREFLIGHT_RUNS, timeout: int = PREFLIGHT_TIMEOUT)
 
 
 def preflight_refusal(pf: dict) -> str:
+    if pf.get("git_status_error"):
+        # Its own text (Grok 11-25 F1 on s5): no test ran, so neither "the failure is on
+        # main" nor a pointer at preflight.tail applies.
+        return ("live-data preflight refused before running: could not read git status of "
+                "the main checkout's tests/ (fail closed): " + pf["git_status_error"])
     if pf.get("dirty_tests"):
         return ("live-data preflight refused before running: the main checkout has "
                 "uncommitted changes under tests/ (working-tree dirt, not main): "

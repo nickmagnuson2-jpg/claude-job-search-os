@@ -2109,3 +2109,23 @@ def test_an_unreadable_git_status_refuses(pf_main):
     pf = lb.preflight(pf_main)
     assert not pf["ok"] and pf["runs"] == []
     assert "git status" in pf["problem"]
+
+
+def test_a_renamed_test_file_is_named_by_its_real_paths(pf_main):
+    """Codex 11-25 F2 on s5 (P2, b7: fix on s5b): with -z a rename record carries the old
+    path as a second field, which the parser read as another record."""
+    subprocess.run(["git", "-C", str(pf_main), "mv", "tests/test_live.py",
+                    "tests/test_live_renamed.py"], check=True)
+    pf = lb.preflight(pf_main)
+    assert not pf["ok"] and pf["runs"] == []
+    assert pf["dirty_tests"] == ["tests/test_live.py", "tests/test_live_renamed.py"]
+
+
+def test_an_unreadable_git_status_gets_its_own_refusal_text(pf_main):
+    """Grok 11-25 F1 on s5 (P2, b7: fix on s5b): it fell into the 'live-data preflight failed
+    ... the failure is on main' text and pointed at a tail never written."""
+    import shutil as _sh
+    _sh.rmtree(pf_main / ".git")
+    msg = lb.preflight_refusal(lb.preflight(pf_main))
+    assert "git status" in msg and "could not read" in msg
+    assert "the failure is on main" not in msg and "preflight.tail" not in msg
