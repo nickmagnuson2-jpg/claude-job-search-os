@@ -2524,3 +2524,17 @@ def test_a_symlinked_root_still_loads_tests_conftest(tmp_path):
     d = json.loads(r.stdout)
     assert d.get("code") != "baseline_red", d
     assert d["status"] == "ok" and d["killed"] >= 1, d
+
+
+def test_a_relative_target_is_read_against_the_repo_root_not_the_cwd(tmp_path):
+    """A relative target or --tests path names a file in the repo, wherever the caller's
+    shell is: the run starts in tools/ here, and still finds tools/subject.py."""
+    src, t = _committed_fixture(tmp_path)
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("MUTATION_CHECK_ACTIVE", "MUTATION_SWEEP_ACTIVE", "CLAUDECODE")}
+    env.update(PYTHONIOENCODING="utf-8", MUTATION_REPO_ROOT=str(tmp_path))
+    r = subprocess.run([sys.executable, str(TOOL), "tools/subject.py", "--tests",
+                        t.name, "--json"], capture_output=True, text=True,
+                       cwd=str(tmp_path / "tools"), env=env, timeout=300)
+    d = json.loads(r.stdout)
+    assert d["status"] == "ok" and d["target"] == "tools/subject.py", (d, r.stderr[-500:])
