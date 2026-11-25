@@ -1451,7 +1451,12 @@ def cache_context(target: Path, original: str, test_files: list, root: Path) -> 
 
     NOT covered, and the reason the cache is opt-in (--cache) since 2026-11-05:
     gitignored trees, --timeout, environment variables _env_fingerprint drops, the
-    network, the clock."""
+    network, the clock. The checkout's absolute path: MUTATION_REPO_ROOT and
+    MUTATION_IN_WORKTREE_CHILD hash as "<root>" (so two --in-worktree runs of one HEAD share
+    keys), and the cwd is not hashed, so a test whose result depends on where the checkout
+    sits can have a verdict replayed from another path (Codex 11-25 s5b F1, parked). Nor the
+    HEAD commit itself: _repo_state keys on its tree, so two commits with one tree share
+    verdicts (F2, parked)."""
     def rel(p: Path) -> str:
         try:
             return p.resolve().relative_to(root.resolve()).as_posix()
