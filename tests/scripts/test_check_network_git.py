@@ -388,3 +388,12 @@ def test_git_stash_judge(args, expected):
     sys.path.insert(0, str(SCRIPT.parent))
     import check_network_git as cng
     assert cng._git_stash(args) == expected
+
+
+@pytest.mark.parametrize("cmd", ["git stash -q", "git -C some/dir stash pop"])
+def test_a_stash_block_does_not_fall_through_to_the_network_message(cmd):
+    """Mutation 2026-11-25 (S2): dropping the stash branch's sys.exit(2) fell through to the
+    network message and still exited 2, so only the text showed the difference."""
+    code, err = _run(cmd)
+    assert code == 2
+    assert "network git" not in err and "None" not in err

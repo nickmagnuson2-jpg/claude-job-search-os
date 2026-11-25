@@ -276,3 +276,23 @@ def test_cli_refuses_an_equivalent_reason_without_evidence(repo):
     assert r.returncode == 2
     assert "EXECUTED:" in r.stderr
     assert OTHER_HASH not in _entries(repo)
+
+
+@pytest.mark.parametrize("result", ["[]", "{}", "''", "()", '""'])
+def test_an_empty_container_is_a_real_observed_result(repo, result):
+    """Grok tip r1 F1 (2026-11-25): the letter-or-digit rule refused 'EXECUTED: cmd -> []',
+    the rule's own canonical observation, and the accept test above only passed because its
+    result was padded with '(CPython 3.14)'. A field needs one character that is not
+    whitespace or part of an arrow."""
+    why = f"EQUIVALENT: rglob on a missing dir yields nothing. EXECUTED: python3 x.py -> {result}"
+    assert aw.add(repo, OTHER_HASH, why)["action"] == "added"
+
+
+@pytest.mark.parametrize("why", [
+    "EQUIVALENT. EXECUTED: python3 x.py ->",          # empty result
+    "EQUIVALENT. EXECUTED: python3 x.py -> -->",      # arrow characters only
+    "EQUIVALENT. EXECUTED: - > -> []",                # arrow characters only as the command
+])
+def test_a_field_of_only_arrow_characters_is_still_refused(repo, why):
+    with pytest.raises(ValueError, match="no executed evidence"):
+        aw.add(repo, OTHER_HASH, why)

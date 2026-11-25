@@ -144,17 +144,18 @@ def not_equivalent_precedents(data: dict, key: str) -> list[str]:
 # carry what was run and what it returned, so a later reader can audit it rather than trust
 # it: `EXECUTED: <command run> -> <observed result>`. Checked at add time only (org ruling,
 # 2026-11-25); the 292 existing EQUIVALENT reasons are not rewritten or validated.
-# Each field must hold a letter or digit, so an arrow cannot stand in for the command or the
-# result (`EXECUTED: -> -> x`, Codex S2 pre-commit F1): the command is the text up to the
-# FIRST arrow, the result is what follows it.
+# The command is the text up to the FIRST arrow, the result is what follows it. Each field
+# must hold one character that is not whitespace and not part of an arrow, so an arrow
+# cannot stand in for either (`EXECUTED: -> -> x`, Codex S2 pre-commit F1), while an empty
+# container is a real result (`-> []`, Grok S2 tip F1: a letter-or-digit rule refused it).
 _EXECUTED = re.compile(r"\bEXECUTED:(.*?)->(.*)", re.S)
-_WORD = re.compile(r"[A-Za-z0-9]")
+_CONTENT = re.compile(r"[^\s>-]")
 
 
 def has_executed_evidence(reason: str) -> bool:
     """True when the reason carries `EXECUTED: <command> -> <observed result>`."""
     m = _EXECUTED.search(reason)
-    return bool(m and _WORD.search(m.group(1)) and _WORD.search(m.group(2)))
+    return bool(m and _CONTENT.search(m.group(1)) and _CONTENT.search(m.group(2)))
 
 
 def _checked_reason(data: dict, key: str, why: str, differs_from: str | None) -> str:
