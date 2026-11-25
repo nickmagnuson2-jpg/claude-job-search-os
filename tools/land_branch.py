@@ -890,15 +890,42 @@ def held_inside(root: Path, held: list[dict], base: str, tip: str) -> list[str]:
 # every file under them before and after, and refuses when anything changed. Another session
 # appending a log in the same seconds trips it too, so the refusal says to re-run and treat a
 # repeat on the same file as a writer.
+#
+# Backup trees (Grok F1 on s3-preflight-1124, P1 parked; fixed 2026-11-25): tools/backup-data.sh
+# rsyncs the live memory tier into memory/canonical-sidecar/ and memory/global-claude-mirror/,
+# so a nightly backup overlapping the preflight changed files there and the refusal blamed a
+# test. Those two trees are copies written only by the backup, so they are left out.
+#
+# Dirty tests/ (Grok F2, same run): the checkers-current rule statuses tools/ only, so an
+# uncommitted change under the main checkout's tests/ would run here as if it were main and
+# could weaken the live check. The preflight refuses it before pytest, naming the paths as
+# working-tree dirt; an unreadable git status refuses too (fail closed).
 PREFLIGHT_RUNS = (("-m", "live_data", "tests"), ("tests/scripts/test_workstream_backlog.py",))
 PREFLIGHT_GUARDED = ("data", "memory")
+PREFLIGHT_BACKUP_TREES = ("memory/canonical-sidecar", "memory/global-claude-mirror")
 PREFLIGHT_TIMEOUT = 600
+
+
+def dirty_tests(main: Path) -> tuple[list[str] | None, str | None]:
+    """(paths under tests/ with uncommitted changes, None), or (None, why) when git status
+    cannot be read. Untracked files count: pytest would collect them."""
+    rc, out, err = git(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--",
+                        "tests"], main)
+    if rc != 0:
+        return None, f"git status in the main checkout failed: {(err or out).strip()[:200]}"
+    paths = []
+    for entry in out.split("\0"):
+        if len(entry) > 3:
+            paths.append(entry[3:])
+    return sorted(paths), None
 
 
 def data_snapshot(main: Path) -> dict[str, tuple[int, int]]:
     snap = {}
+    skip = {main / t for t in PREFLIGHT_BACKUP_TREES}
     for top in PREFLIGHT_GUARDED:
-        for dirpath, _dirs, files in os.walk(main / top):
+        for dirpath, dirs, files in os.walk(main / top):
+            dirs[:] = [d for d in dirs if Path(dirpath) / d not in skip]
             for name in files:
                 p = Path(dirpath) / name
                 try:
@@ -918,7 +945,15 @@ def preflight(main: Path, runs=PREFLIGHT_RUNS, timeout: int = PREFLIGHT_TIMEOUT)
     readable report, no failures or errors, more than 0 collected, and no file under
     data/ or memory/ changed."""
     import suite_record as sr   # one JUnit reader and one child env, shared with the suite
-    res = {"ok": False, "runs": [], "failing": [], "data_changed": [], "problem": None}
+    res = {"ok": False, "runs": [], "failing": [], "data_changed": [], "problem": None,
+           "dirty_tests": []}
+    dirty, why = dirty_tests(main)
+    if why or dirty:
+        res["dirty_tests"] = dirty or []
+        res["problem"] = why or ("uncommitted changes under tests/ in the main checkout: "
+                                 + ", ".join(dirty))
+        res["duration_s"] = 0.0
+        return res
     env = {**sr.child_env(), "PYTHONDONTWRITEBYTECODE": "1"}
     before = data_snapshot(main)
     start = time.monotonic()
@@ -961,6 +996,11 @@ def preflight(main: Path, runs=PREFLIGHT_RUNS, timeout: int = PREFLIGHT_TIMEOUT)
 
 
 def preflight_refusal(pf: dict) -> str:
+    if pf.get("dirty_tests"):
+        return ("live-data preflight refused before running: the main checkout has "
+                "uncommitted changes under tests/ (working-tree dirt, not main): "
+                + ", ".join(pf["dirty_tests"][:10])
+                + ". Commit or remove them in the main checkout, then re-run")
     if pf["problem"]:
         names = ", ".join(pf["failing"]) or "no test named (see preflight.tail)"
         return (f"live-data preflight failed in the main checkout after {pf['duration_s']} s; "

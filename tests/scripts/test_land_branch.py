@@ -1867,7 +1867,18 @@ def pf_main(tmp_path):
     for rel, text in files.items():
         (m / rel).parent.mkdir(parents=True, exist_ok=True)
         (m / rel).write_text(text)
+    # A git checkout with tests/ committed: the preflight refuses dirt under tests/ (Grok F2).
+    (m / ".gitignore").write_text("__pycache__/\ndata/\nmemory/\n")
+    _pf_commit(m, init=True)
     return m
+
+
+def _pf_commit(m, init=False):
+    g = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"]
+    if init:
+        subprocess.run(["git", "init", "-q", str(m)], check=True)
+    subprocess.run([*g, "-C", str(m), "add", "-A"], check=True)
+    subprocess.run([*g, "-C", str(m), "commit", "-q", "-m", "c"], check=True)
 
 
 def test_preflight_selects_live_data_tests_and_the_backlog_file(pf_main):
@@ -1920,6 +1931,7 @@ def test_preflight_zero_collected_and_no_report_are_failures(pf_main):
 def test_preflight_timeout_is_a_failure(pf_main):
     (pf_main / "tests" / "scripts" / "test_workstream_backlog.py").write_text(
         "import time\n\ndef test_slow():\n    time.sleep(30)\n")
+    _pf_commit(pf_main)
     pf = lb.preflight(pf_main, runs=(("tests/scripts/test_workstream_backlog.py",),),
                       timeout=2)
     assert not pf["ok"] and pf["problem"].endswith("timeout after 2 s")
@@ -1937,6 +1949,7 @@ def test_preflight_refuses_when_a_test_writes_live_data(pf_main, target):
     (pf_main / "tests" / "test_writer.py").write_text(
         "import pathlib, pytest\n\n\n@pytest.mark.live_data\ndef test_writes():\n"
         f"    pathlib.Path({target!r}).write_text('written by a test, longer\\n')\n")
+    _pf_commit(pf_main)
     pf = lb.preflight(pf_main)
     assert not pf["ok"] and pf["problem"] is None
     assert pf["data_changed"] == [target]
@@ -2017,6 +2030,7 @@ def test_preflight_zero_collected_under_a_forced_exit_0_is_a_failure(pf_main):
     (pf_main / "tests" / "conftest.py").write_text(
         PF_CONFTEST + "\n\ndef pytest_sessionfinish(session, exitstatus):\n"
                       "    session.exitstatus = 0\n")
+    _pf_commit(pf_main)
     pf = lb.preflight(pf_main, runs=(("-m", "no_such_marker", "tests"),))
     assert pf["runs"][0]["rc"] == 0 and pf["runs"][0]["collected"] == 0
     assert not pf["ok"] and pf["problem"] == "-m no_such_marker tests: collected 0 tests"
@@ -2029,3 +2043,69 @@ def test_preflight_removes_its_temp_dir(pf_main, tmp_path, monkeypatch):
     monkeypatch.setattr(tempfile, "tempdir", str(parent))
     assert lb.preflight(pf_main)["ok"]
     assert list(parent.iterdir()) == []
+
+
+# ---- 11-24 P1s on the preflight (Grok F1/F2 on s3-preflight-1124, parked) ------------------
+# F1: memory/canonical-sidecar/ and memory/global-claude-mirror/ are backup-data.sh's rsync
+# targets; a backup overlapping the preflight made it refuse and blame a test.
+# F2: the checkers-current rule statuses tools/ only, so a dirty tests/ in the main checkout
+# could weaken the live check; the preflight now refuses it before pytest, naming the paths.
+
+@pytest.mark.parametrize("tree", ["canonical-sidecar", "global-claude-mirror"])
+def test_a_write_under_a_backup_tree_does_not_trip_the_guard(pf_main, tree):
+    (pf_main / "memory" / tree).mkdir()
+    (pf_main / "tests" / "test_backup.py").write_text(
+        "import pathlib, pytest\n\n\n@pytest.mark.live_data\ndef test_backup_runs():\n"
+        f"    pathlib.Path('memory/{tree}/copy.md').write_text('rsync copy\\n')\n"
+        f"    pathlib.Path('memory/{tree}/sub').mkdir(exist_ok=True)\n"
+        f"    pathlib.Path('memory/{tree}/sub/x.md').write_text('deeper\\n')\n")
+    _pf_commit(pf_main)
+    pf = lb.preflight(pf_main)
+    assert pf["ok"], pf
+    assert pf["data_changed"] == []
+
+
+def test_the_backup_trees_are_left_out_of_the_snapshot_and_nothing_else(pf_main):
+    for rel in ("memory/canonical-sidecar/a.md", "memory/global-claude-mirror/b/c.md",
+                "memory/canonical-sidecar-not/d.md", "memory/other/e.md",
+                "data/canonical-sidecar/f.md"):
+        (pf_main / rel).parent.mkdir(parents=True, exist_ok=True)
+        (pf_main / rel).write_text("x")
+    assert sorted(lb.data_snapshot(pf_main)) == [
+        "data/canonical-sidecar/f.md", "data/notes.md", "data/workstreams/a.md",
+        "memory/canonical-sidecar-not/d.md", "memory/lessons" + ".md", "memory/other/e.md"]
+
+
+@pytest.mark.parametrize("dirt", ["modified", "untracked", "deleted"])
+def test_a_dirty_tests_dir_in_main_refuses_before_pytest_runs(pf_main, dirt):
+    if dirt == "modified":
+        rel = "tests/test_live.py"
+        (pf_main / rel).write_text(PF_LIVE + "\n# edited\n")
+    elif dirt == "untracked":
+        rel = "tests/test_new.py"
+        (pf_main / rel).write_text("def test_x():\n    pass\n")
+    else:
+        rel = "tests/scripts/test_workstream_backlog.py"
+        (pf_main / rel).unlink()
+    pf = lb.preflight(pf_main)
+    assert not pf["ok"]
+    assert pf["runs"] == []                        # no pytest ran
+    assert pf["dirty_tests"] == [rel]
+    msg = lb.preflight_refusal(pf)
+    assert rel in msg and "uncommitted changes under tests/" in msg
+    assert "working-tree dirt" in msg and "the failure is on main" not in msg
+
+
+def test_dirt_outside_tests_does_not_refuse(pf_main):
+    (pf_main / "README.md").write_text("edited\n")
+    pf = lb.preflight(pf_main)
+    assert pf["ok"], pf
+    assert pf["dirty_tests"] == []
+
+
+def test_an_unreadable_git_status_refuses(pf_main):
+    import shutil as _sh
+    _sh.rmtree(pf_main / ".git")
+    pf = lb.preflight(pf_main)
+    assert not pf["ok"] and pf["runs"] == []
+    assert "git status" in pf["problem"]
