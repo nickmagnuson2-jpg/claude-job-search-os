@@ -31,6 +31,9 @@ SAME_SHAPE = "tools/check_draft_pleasantry.py::main::DROP_CALL::db837ff3"
 OTHER_OP = "tools/check_draft_pleasantry.py::main::IF_FALSE::db837ff3"
 OTHER_HASH = "tools/check_draft_pleasantry.py::main::DROP_CALL::0badc0de"
 EQ_SIBLING = "tools/zzz.py::main::DROP_CALL::11112222"
+# Every EQUIVALENT reason added below carries executed evidence (S2, 2026-11-25), so these
+# tests reach the precedent check rather than stopping at the evidence check.
+EV = " EXECUTED: python3 -c 'run the mutant' -> same output"
 
 
 @pytest.fixture()
@@ -98,14 +101,14 @@ def test_a_key_is_not_its_own_precedent(repo):
 def test_equivalent_against_a_precedent_is_refused_and_names_it(repo):
     before = aw.allow_path(repo).read_text(encoding="utf-8")
     with pytest.raises(ValueError, match="is called EQUIVALENT") as exc:
-        aw.add(repo, SAME_SHAPE, "Equivalent: dropping the exit falls through")
+        aw.add(repo, SAME_SHAPE, "Equivalent: dropping the exit falls through" + EV)
     assert PRECEDENT in str(exc.value)
     assert "--differs-from" in str(exc.value)
     assert aw.allow_path(repo).read_text(encoding="utf-8") == before
 
 
 def test_equivalent_with_differs_from_is_recorded_in_the_reason(repo):
-    out = aw.add(repo, SAME_SHAPE, "Equivalent: no read follows the exit here",
+    out = aw.add(repo, SAME_SHAPE, "Equivalent: no read follows the exit here" + EV,
                  differs_from=f"{PRECEDENT}: this hook never calls read_text after exists()")
     assert out["action"] == "added"
     reason = _entries(repo)[SAME_SHAPE]
@@ -122,7 +125,7 @@ def test_equivalent_with_differs_from_is_recorded_in_the_reason(repo):
 def test_differs_from_must_name_the_precedent_and_give_a_reason(repo, differs, message):
     before = aw.allow_path(repo).read_text(encoding="utf-8")
     with pytest.raises(ValueError, match=message):
-        aw.add(repo, SAME_SHAPE, "Equivalent: x", differs_from=differs)
+        aw.add(repo, SAME_SHAPE, "Equivalent: x" + EV, differs_from=differs)
     assert aw.allow_path(repo).read_text(encoding="utf-8") == before
 
 
@@ -130,7 +133,7 @@ def test_differs_from_without_a_precedent_is_refused(repo):
     """A vacuous citation would read as engagement with a precedent that does not exist."""
     before = aw.allow_path(repo).read_text(encoding="utf-8")
     with pytest.raises(ValueError, match="no NOT EQUIVALENT precedent"):
-        aw.add(repo, OTHER_HASH, "Equivalent: x", differs_from=f"{PRECEDENT}: y")
+        aw.add(repo, OTHER_HASH, "Equivalent: x" + EV, differs_from=f"{PRECEDENT}: y")
     assert aw.allow_path(repo).read_text(encoding="utf-8") == before
 
 
@@ -143,7 +146,7 @@ def test_non_equivalent_reasons_need_no_differs_from(repo, why):
 
 
 def test_equivalent_with_no_precedent_needs_no_differs_from(repo):
-    assert aw.add(repo, OTHER_HASH, "EQUIVALENT: trailing exit")["action"] == "added"
+    assert aw.add(repo, OTHER_HASH, "EQUIVALENT: trailing exit" + EV)["action"] == "added"
 
 
 def test_mixed_phrasing_cannot_skip_the_check(repo):
@@ -152,7 +155,7 @@ def test_mixed_phrasing_cannot_skip_the_check(repo):
     before = aw.allow_path(repo).read_text(encoding="utf-8")
     with pytest.raises(ValueError, match="is called EQUIVALENT"):
         aw.add(repo, SAME_SHAPE, "Equivalent: no race here; check_draft_voice is NOT "
-                                 "EQUIVALENT because of exists/read_text")
+                                 "EQUIVALENT because of exists/read_text" + EV)
     assert aw.allow_path(repo).read_text(encoding="utf-8") == before
 
 
@@ -164,13 +167,13 @@ def test_a_bare_line_collision_with_only_equivalent_siblings_is_not_refused(repo
     data["tools/ll.py::read::DROP_CONTINUE::eee0bbba"] = (
         "Structurally equivalent `continue`. The branches that were NOT equivalent were killed.")
     aw.allow_path(repo).write_text(aw.serialize(data), encoding="utf-8")
-    assert aw.add(repo, k, "EQUIVALENT MUTANT. continue is last in the branch")["action"] == "added"
+    assert aw.add(repo, k, "EQUIVALENT MUTANT. continue is last in the branch" + EV)["action"] == "added"
 
 
 def test_a_recorded_differs_from_does_not_become_a_precedent(repo):
     """Grok r1: the stored '<why> DIFFERS FROM <key>: <because>' may say NOT EQUIVALENT in
     its because-part; it still leads with the claim, so it must not gate the next sibling."""
-    aw.add(repo, SAME_SHAPE, "Equivalent: no read here",
+    aw.add(repo, SAME_SHAPE, "Equivalent: no read here" + EV,
            differs_from=f"{PRECEDENT}: that hook is NOT EQUIVALENT because it reads after")
     assert aw.not_equivalent_precedents(_entries(repo), "tools/q.py::main::DROP_CALL::db837ff3") \
         == [PRECEDENT]
@@ -179,7 +182,7 @@ def test_a_recorded_differs_from_does_not_become_a_precedent(repo):
 def test_force_replacement_is_checked_too(repo):
     aw.add(repo, SAME_SHAPE, "NOT EQUIVALENT: first reason")
     with pytest.raises(ValueError, match="--differs-from"):
-        aw.add(repo, SAME_SHAPE, "Equivalent after all", force=True)
+        aw.add(repo, SAME_SHAPE, "Equivalent after all" + EV, force=True)
     assert _entries(repo)[SAME_SHAPE] == "NOT EQUIVALENT: first reason"
 
 
@@ -192,15 +195,84 @@ def _cli(repo, *args):
 
 
 def test_cli_refuses_with_exit_2_and_names_the_precedent(repo):
-    r = _cli(repo, "add", SAME_SHAPE, "--why", "Equivalent: x")
+    r = _cli(repo, "add", SAME_SHAPE, "--why", "Equivalent: x" + EV)
     assert r.returncode == 2
     assert PRECEDENT in r.stderr
     assert SAME_SHAPE not in _entries(repo)
 
 
 def test_cli_accepts_differs_from(repo):
-    r = _cli(repo, "add", SAME_SHAPE, "--why", "Equivalent: x",
+    r = _cli(repo, "add", SAME_SHAPE, "--why", "Equivalent: x" + EV,
              "--differs-from", f"{PRECEDENT}: no read_text after the check here")
     assert r.returncode == 0, r.stderr
     assert "DIFFERS FROM" in _entries(repo)[SAME_SHAPE]
 
+
+
+# --- executed evidence (overnight-112526 S2, 2026-11-25) -----------------------------
+# feedback_verify_equivalent_mutant_by_execution (5 fires): an EQUIVALENT claim must say
+# what was run and what it returned. Add time only; existing rows are never validated.
+
+@pytest.mark.parametrize("why", [
+    "EQUIVALENT: the guard is redundant",
+    "Equivalent mutant, reasoned from the source",
+    "EQUIVALENT. EXECUTED: ran it",                  # no '-> result'
+    "EQUIVALENT. EXECUTED: -> []",                    # no command
+    "EQUIVALENT. EXECUTED: python3 x.py ->   ",       # no result
+    "EQUIVALENT. executed: python3 x.py -> []",       # the marker is upper case
+    "EQUIVALENT. EXECUTED: -> -> observed",           # an arrow is not a command (Codex F1)
+    "EQUIVALENT. EXECUTED: python3 x.py -> ->",       # nor a result
+])
+def test_equivalent_without_executed_evidence_is_refused(repo, why):
+    before = aw.allow_path(repo).read_text(encoding="utf-8")
+    with pytest.raises(ValueError, match="no executed evidence"):
+        aw.add(repo, OTHER_HASH, why)
+    assert aw.allow_path(repo).read_text(encoding="utf-8") == before
+
+
+@pytest.mark.parametrize("why", [
+    "EQUIVALENT: rglob on a missing dir yields nothing. "
+    "EXECUTED: python3 -c 'print(list(Path(\"/nope\").rglob(\"*.md\")))' -> [] (CPython 3.14)",
+    "EQUIVALENT. EXECUTED: run_hook('x')->exit 0",
+])
+def test_equivalent_with_executed_evidence_is_accepted(repo, why):
+    assert aw.add(repo, OTHER_HASH, why)["action"] == "added"
+    assert _entries(repo)[OTHER_HASH] == why
+
+
+def test_evidence_is_checked_before_a_precedent_is_engaged(repo):
+    """A claim with no evidence is refused even when --differs-from would satisfy the
+    precedent check, so citing a precedent is not a way around running the mutant."""
+    with pytest.raises(ValueError, match="no executed evidence"):
+        aw.add(repo, SAME_SHAPE, "Equivalent: x",
+               differs_from=f"{PRECEDENT}: no read_text after the check here")
+    assert SAME_SHAPE not in _entries(repo)
+
+
+def test_force_replacement_needs_evidence_too(repo):
+    aw.add(repo, OTHER_HASH, "NOT EQUIVALENT: first reason")
+    with pytest.raises(ValueError, match="no executed evidence"):
+        aw.add(repo, OTHER_HASH, "Equivalent after all", force=True)
+    assert _entries(repo)[OTHER_HASH] == "NOT EQUIVALENT: first reason"
+
+
+@pytest.mark.parametrize("why", [
+    "NOT EQUIVALENT: kept as a speed guard",
+    "UNREACHABLE BY CONSTRUCTION under the runner",
+])
+def test_non_equivalent_reasons_need_no_evidence(repo, why):
+    assert aw.add(repo, OTHER_HASH, why)["action"] == "added"
+
+
+def test_existing_equivalent_rows_without_evidence_are_left_alone(repo):
+    """The fixture's 'EQUIVALENT: trailing exit.' sibling has no evidence; adding an
+    unrelated entry must neither refuse nor rewrite it (org ruling: add time only)."""
+    aw.add(repo, OTHER_HASH, "NOT EQUIVALENT: unrelated")
+    assert _entries(repo)["tools/yyy.py::main::DROP_CALL::11112222"] == "EQUIVALENT: trailing exit."
+
+
+def test_cli_refuses_an_equivalent_reason_without_evidence(repo):
+    r = _cli(repo, "add", OTHER_HASH, "--why", "EQUIVALENT: reasoned")
+    assert r.returncode == 2
+    assert "EXECUTED:" in r.stderr
+    assert OTHER_HASH not in _entries(repo)

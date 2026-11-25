@@ -23,6 +23,8 @@ replacing someone else's justification erases the argument it recorded.
 
 Usage:
   PYTHONIOENCODING=utf-8 python3 tools/allowlist_write.py add <key> --why "<reason>"
+      (a reason that says EQUIVALENT must contain "EXECUTED: <command run> -> <observed
+      result>"; see the executed-evidence check below)
       [--differs-from "<NOT EQUIVALENT precedent key>: <why this site differs>"]
       (required when the reason says EQUIVALENT and an entry with the same operator and
       line hash says NOT EQUIVALENT; see the precedent check below)
@@ -135,8 +137,35 @@ def not_equivalent_precedents(data: dict, key: str) -> list[str]:
                   and is_not_equivalent_label(v))
 
 
+# --- executed evidence (overnight-112526 S2, 2026-11-25) ------------------------------
+# memory/feedback_verify_equivalent_mutant_by_execution.md: a mutant may be called
+# EQUIVALENT only after the mutated behaviour was RUN and observed (5 fires; reasons written
+# from reading the source were refuted by review on 2026-11-17, -18 and -23). The claim must
+# carry what was run and what it returned, so a later reader can audit it rather than trust
+# it: `EXECUTED: <command run> -> <observed result>`. Checked at add time only (org ruling,
+# 2026-11-25); the 292 existing EQUIVALENT reasons are not rewritten or validated.
+# Each field must hold a letter or digit, so an arrow cannot stand in for the command or the
+# result (`EXECUTED: -> -> x`, Codex S2 pre-commit F1): the command is the text up to the
+# FIRST arrow, the result is what follows it.
+_EXECUTED = re.compile(r"\bEXECUTED:(.*?)->(.*)", re.S)
+_WORD = re.compile(r"[A-Za-z0-9]")
+
+
+def has_executed_evidence(reason: str) -> bool:
+    """True when the reason carries `EXECUTED: <command> -> <observed result>`."""
+    m = _EXECUTED.search(reason)
+    return bool(m and _WORD.search(m.group(1)) and _WORD.search(m.group(2)))
+
+
 def _checked_reason(data: dict, key: str, why: str, differs_from: str | None) -> str:
     why = why.strip()
+    if claims_equivalent(why) and not has_executed_evidence(why):
+        raise ValueError(
+            f"{key}: no executed evidence for an EQUIVALENT claim. Run the mutated "
+            f"behaviour, then put what you ran and what it returned in the reason: "
+            f"'EXECUTED: <command run> -> <observed result>'. If you cannot produce that "
+            f"in a minute, write a test instead of an entry "
+            f"(memory/feedback_verify_equivalent_mutant_by_execution.md).")
     precedents = not_equivalent_precedents(data, key) if claims_equivalent(why) else []
     if differs_from is None:
         if precedents:
