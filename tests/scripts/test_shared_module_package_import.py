@@ -214,3 +214,18 @@ def test_fixed_1125_names_are_real_and_not_listed_unimportable():
 def test_fixed_1125_tool_imports_as_part_of_the_tools_package(name):
     r = _imports(name)
     assert r.returncode == 0, r.stderr[-800:]
+
+
+
+def test_no_tool_name_shadows_a_stdlib_or_installed_module():
+    """Each tool puts tools/ at sys.path[0], so a tools/X.py named like a stdlib or
+    installed module would replace it for the whole process (S2c, 2026-11-25; 0 of 246
+    at the time)."""
+    import pkgutil
+    tools_dir = str(REPO / "tools")
+    ours = set(ALL_TOOLS) | {p.name for p in (REPO / "tools").iterdir()
+                              if p.is_dir() and (p / "__init__.py").exists()}
+    others = {m.name for m in pkgutil.iter_modules()
+              if str(getattr(m.module_finder, "path", "")).rstrip("/") != tools_dir}
+    clash = sorted(ours & (set(sys.stdlib_module_names) | others))
+    assert clash == [], f"tools/ names that shadow another module: {clash}"

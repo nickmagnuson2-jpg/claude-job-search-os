@@ -296,3 +296,28 @@ def test_an_empty_container_is_a_real_observed_result(repo, result):
 def test_a_field_of_only_arrow_characters_is_still_refused(repo, why):
     with pytest.raises(ValueError, match="no executed evidence"):
         aw.add(repo, OTHER_HASH, why)
+
+
+# S2c (2026-11-25), from S5's per-site mutation keys: occurrence 2+ of the same line, op
+# and function gets "<hash>.<N>" (N >= 2). An EQUIVALENT claim on occurrence 2 must still
+# meet the NOT EQUIVALENT precedent recorded on occurrence 1, and the reverse.
+def test_an_occurrence_suffix_still_finds_the_precedent(repo):
+    occ2 = "tools/check_draft_pleasantry.py::main::DROP_CALL::db837ff3.2"
+    with pytest.raises(ValueError, match="is called EQUIVALENT"):
+        aw.add(repo, occ2, "Equivalent: dropping the exit falls through" + EV)
+    assert occ2 not in _entries(repo)
+
+
+def test_a_suffixed_not_equivalent_entry_is_a_precedent(repo):
+    data = _entries(repo)
+    data["tools/zz.py::main::DROP_CALL::0badc0de.3"] = "NOT EQUIVALENT: real survivor."
+    aw.allow_path(repo).write_text(aw.serialize(data), encoding="utf-8")
+    assert aw.not_equivalent_precedents(_entries(repo), OTHER_HASH) == \
+        ["tools/zz.py::main::DROP_CALL::0badc0de.3"]
+
+
+def test_a_suffix_is_not_a_different_shape_but_a_different_hash_is():
+    data = {PRECEDENT: "NOT EQUIVALENT: x"}
+    assert aw.not_equivalent_precedents(data, SAME_SHAPE + ".2") == [PRECEDENT]
+    assert aw.not_equivalent_precedents(data, OTHER_HASH + ".2") == []
+    assert aw.not_equivalent_precedents(data, SAME_SHAPE.replace("db837ff3", "db837ff3x")) == []
