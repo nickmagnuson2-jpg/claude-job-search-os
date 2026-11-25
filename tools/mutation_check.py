@@ -2182,9 +2182,9 @@ def run_in_worktree(argv: list[str], args) -> int:
         env = {**git_env, "MUTATION_REPO_ROOT": str(wt), IN_WORKTREE_CHILD_ENV: str(wt)}
         # The --cache store stays in the CALLER'S tree (S5, 2026-11-25): in the temp
         # worktree it was deleted at exit, so a second run of the same HEAD replayed
-        # nothing (hits 0 on every --in-worktree record that day). A caller's own
-        # MUTATION_CACHE_DIR is kept.
-        env.setdefault(CACHE_DIR_ENV, str(cache_dir()))
+        # nothing (hits 0 on every --in-worktree record that day). cache_dir() returns
+        # a caller's own MUTATION_CACHE_DIR when one is set, so that one is kept.
+        env[CACHE_DIR_ENV] = str(cache_dir())
         return subprocess.run([sys.executable, str(wt / "tools" / "mutation_check.py")]
                               + child_argv, cwd=str(wt), env=env).returncode
     finally:
