@@ -2800,3 +2800,29 @@ def test_a_signal_that_lands_before_the_child_exists_is_forwarded_once_it_does(m
     monkeypatch.setattr(mc.subprocess, "Popen", _P)
     assert mc._run_forwarding_signals(["x"], cwd=str(tmp_path), env={}) == 0
     assert sent == [signal.SIGTERM]
+
+
+# --- the ".N" keys and allowlist_write's precedent check: s5c depends on s2c ---------------
+# Org b7, 2026-11-25, on Codex 11-25 s5c F1 (P0): occurrence N >= 2 keys carry ".N", and
+# allowlist_write's NOT EQUIVALENT precedent lookup must read "db837ff3.2" as "db837ff3", or
+# an occurrence-2 EQUIVALENT claim skips its precedent. The strip is on s2c (c5382da8);
+# landing constraint s2c before s5c. RED on s5c alone, GREEN on the merged tree. Lives here,
+# not in test_allowlist_write_precedent.py, because s2c appends to that file too.
+
+_PRECEDENT = "tools/check_draft_voice.py::main::DROP_CALL::db837ff3"
+_SAME_SHAPE = "tools/check_draft_pleasantry.py::main::DROP_CALL::db837ff3"
+
+
+def _aw():
+    import importlib
+    return importlib.import_module("allowlist_write")
+
+
+def test_an_occurrence_suffixed_key_meets_its_unsuffixed_precedent():
+    data = {_PRECEDENT: "NOT EQUIVALENT: real survivor (placeholder)."}
+    assert _aw().not_equivalent_precedents(data, _SAME_SHAPE + ".2") == [_PRECEDENT]
+
+
+def test_an_unsuffixed_claim_meets_an_occurrence_suffixed_precedent():
+    data = {_PRECEDENT + ".2": "NOT EQUIVALENT: real survivor (placeholder)."}
+    assert _aw().not_equivalent_precedents(data, _SAME_SHAPE) == [_PRECEDENT + ".2"]
