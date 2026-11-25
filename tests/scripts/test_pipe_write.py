@@ -1068,3 +1068,143 @@ def test_no_dry_run_anywhere_still_writes(tmp_path):
                                           "note", "Acme Corp", "--append", "a note")
     assert code == 0 and not json.loads(stdout).get("dry_run")
     assert (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8") != before
+
+
+# ---------------------------------------------------------------------------
+# S6c (2026-11-25): behaviors the whole-file mutation run showed no test observed
+# ---------------------------------------------------------------------------
+
+FULL_ROW_MD = """\
+# Job Pipeline
+
+## Active
+
+| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Acme Corp | Director | Researching | 2026-01-01 | Call Jane | cv-acme.pdf | warm lead | https://acme.example/jobs/1 |
+
+## Archived
+
+| Company | Role | Stage | Date Updated | Next Action | CV Used | Notes | URL |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+"""
+
+
+def _s6c_row(tmp_path, company):
+    text = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    return [c.strip() for c in next(l for l in text.splitlines()
+                                    if l.startswith(f"| {company} |")).strip().strip("|").split("|")]
+
+
+def _s6c_pw(tmp_path, *args):
+    return run_pipe_write("--repo-root", str(tmp_path), *args)
+
+
+def test_update_keeps_every_cell_it_was_not_told_to_change(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", FULL_ROW_MD)
+    out, code = _s6c_pw(tmp_path, "update", "Acme Corp", "Interviewing")
+    assert code == 0, out
+    cols = _s6c_row(tmp_path, "Acme Corp")
+    assert cols[0:2] == ["Acme Corp", "Director"] and cols[2] == "Interviewing"
+    assert cols[4:] == ["Call Jane", "cv-acme.pdf", "warm lead", "https://acme.example/jobs/1"]
+
+
+def test_remove_archives_the_row_with_its_cells(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", FULL_ROW_MD)
+    out, code = _s6c_pw(tmp_path, "remove", "Acme Corp")
+    assert code == 0, out
+    cols = _s6c_row(tmp_path, "Acme Corp")
+    from datetime import date as _d
+    assert cols[:4] == ["Acme Corp", "Director", "Withdrawn", "2026-01-01"]
+    assert cols[4:6] == ["Call Jane", "cv-acme.pdf"]
+    assert cols[6] == f"warm lead - Withdrawn {_d.today():%Y-%m-%d}"
+    assert cols[7] == "https://acme.example/jobs/1"
+    text = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    assert text.index("| Acme Corp |") > text.index("## Archived")
+
+
+def test_remove_with_empty_notes_writes_only_the_stage(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    _s6c_pw(tmp_path, "remove", "Acme Corp")
+    from datetime import date as _d
+    assert _s6c_row(tmp_path, "Acme Corp")[6] == f"Withdrawn {_d.today():%Y-%m-%d}"
+
+
+def test_remove_creates_the_archived_section_when_missing(tmp_path):
+    md = FULL_ROW_MD[:FULL_ROW_MD.index("## Archived")].rstrip("\n") + "\n"
+    write_fixture(tmp_path, "data/job-pipeline.md", md)
+    out, code = _s6c_pw(tmp_path, "remove", "Acme Corp")
+    assert code == 0, out
+    lines = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8").splitlines()
+    i = lines.index("## Archived")
+    assert lines[i - 1] == "" and lines[i + 1] == ""
+    assert lines[i + 2].startswith("| Company | Role |") and lines[i + 3].startswith("| --- |")
+    assert lines[i + 4].startswith("| Acme Corp | Director | Withdrawn |")
+
+
+@pytest.mark.parametrize("argv", [["add", "Beta Co", "PM"], ["update", "Acme Corp", "Interviewing"]])
+def test_a_pipeline_without_an_active_section_is_refused(tmp_path, argv):
+    md = FULL_ROW_MD.replace("## Active", "## Current")
+    write_fixture(tmp_path, "data/job-pipeline.md", md)
+    out, code = _s6c_pw(tmp_path, *argv)
+    assert code != 0 and out["code"] == "missing_section"
+    assert (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8") == md
+
+
+def test_the_header_row_is_not_a_pipeline_entry(tmp_path):
+    """A company named like the header cell is not a duplicate of the header, and is not
+    found by update: only data rows count."""
+    write_fixture(tmp_path, "data/job-pipeline.md", FULL_ROW_MD)
+    out, code = _s6c_pw(tmp_path, "update", "Company", "Interviewing")
+    assert code != 0 and out["code"] == "not_found"
+    out, code = _s6c_pw(tmp_path, "add", "Company", "Role")
+    assert code == 0, out
+
+
+@pytest.mark.parametrize("trailing", [True, False])
+def test_a_write_keeps_the_files_trailing_newline_state(tmp_path, trailing):
+    write_fixture(tmp_path, "data/job-pipeline.md",
+                  FULL_ROW_MD if trailing else FULL_ROW_MD.rstrip("\n"))
+    _s6c_pw(tmp_path, "update", "Acme Corp", "Interviewing")
+    assert (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8").endswith("\n") is trailing
+
+
+def test_fit_reason_on_empty_notes_is_the_tag_alone(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_MD)
+    out, code = _s6c_pw(tmp_path, "add", "Delta", "PM", "--fit-reason", "strong ops match")
+    assert code == 0, out
+    notes = _s6c_row(tmp_path, "Delta")[6]
+    assert notes.startswith("[fit-reason ") and notes.endswith(": strong ops match]")
+
+
+def test_a_write_adds_the_company_to_the_company_dimension(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_MD)
+    write_fixture(tmp_path, "data/companies.yaml",
+                  "schema: 1\ncompanies:\n- canonical: Acme Corp\n  type: target\n")
+    _s6c_pw(tmp_path, "add", "Zeta Labs", "PM")
+    dim = tmp_path / "data" / "companies.yaml"
+    assert dim.is_file() and "Zeta Labs" in dim.read_text(encoding="utf-8")
+
+
+def test_a_missing_company_dimension_module_warns_and_keeps_the_write(tmp_path, monkeypatch, capsys):
+    sys.path.insert(0, str(TOOLS_DIR))
+    try:
+        import pipe_write as pw
+    finally:
+        sys.path.remove(str(TOOLS_DIR))
+    monkeypatch.setitem(sys.modules, "company_dim", None)     # import raises ImportError
+    p = tmp_path / "f.md"
+    pw.save_lines(p, ["a", "b"], "x\n")
+    assert p.read_text(encoding="utf-8") == "a\nb\n"
+    assert "WARNING: company dimension not updated" in capsys.readouterr().err
+
+
+def test_no_subcommand_is_a_usage_error_here_too(tmp_path):
+    out, code = _s6c_pw(tmp_path)
+    assert code != 0 and out["message"].startswith("Usage:")
+
+
+def test_pipe_write_imports_as_a_package_module():
+    r = subprocess.run([sys.executable, "-c", "import tools.pipe_write"], capture_output=True,
+                       text=True, cwd=str(REPO_ROOT), env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    assert r.returncode == 0 and r.stdout == "", r.stderr
