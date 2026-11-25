@@ -16,9 +16,27 @@ import re
 import subprocess
 from pathlib import Path
 
+import sys  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "tools"))
+from vault_paths import main_checkout  # noqa: E402
+
 HOME = os.path.expanduser("~").rstrip("/")
-NEEDLES = (HOME + "/", HOME.replace("/", "-") + "-")
+
+
+def _needles() -> tuple:
+    """This machine's home, its slug, and (Grok s1c r1 F3) the main checkout's path under
+    $HOME / ~, a machine layout that carries no username: "$HOME/<rel>" slipped past."""
+    out = [HOME + "/", HOME.replace("/", "-") + "-"]
+    try:
+        rel = main_checkout(REPO_ROOT).resolve().relative_to(Path(HOME).resolve())
+    except ValueError:      # the repo is not under HOME: no layout to leak
+        return tuple(out)
+    return tuple(out + [f"$HOME/{rel}", f"${{HOME}}/{rel}", f"~/{rel}"])
+
+
+NEEDLES = _needles()
 LABEL_PREFIX = re.compile(r"com\.[A-Za-z0-9]+\.jobsearch\.")   # the one allowed exception
 
 
