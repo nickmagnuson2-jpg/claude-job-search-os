@@ -2210,9 +2210,16 @@ def _run_forwarding_signals(cmd: list[str], cwd: str, env: dict) -> int:
     Own session: a terminal Ctrl-C signals the whole foreground process group, so a child
     in this parent's group would get SIGINT twice (once direct, once forwarded), and the
     second could interrupt its own restore. Only the forwarded copy reaches it now."""
-    proc = subprocess.Popen(cmd, cwd=cwd, env=env, start_new_session=True)
+    # Handlers BEFORE the child starts (Codex 11-25 s5c F2): a signal that lands while Popen
+    # is still starting it is queued and forwarded the moment the child exists, instead of
+    # killing this parent with no forwarding and no cleanup.
+    proc = None
+    pending: list[int] = []
 
     def forward(signum, _frame):
+        if proc is None:
+            pending.append(signum)
+            return
         try:
             proc.send_signal(signum)
         except ProcessLookupError:
@@ -2220,6 +2227,12 @@ def _run_forwarding_signals(cmd: list[str], cwd: str, env: dict) -> int:
 
     previous = {s: signal.signal(s, forward) for s in _FORWARDED_SIGNALS}
     try:
+        proc = subprocess.Popen(cmd, cwd=cwd, env=env, start_new_session=True)
+        for signum in pending:
+            try:
+                proc.send_signal(signum)
+            except ProcessLookupError:
+                pass
         return proc.wait()
     finally:
         for s, handler in previous.items():

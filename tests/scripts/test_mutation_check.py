@@ -2780,3 +2780,23 @@ def test_an_existing_entry_covers_occurrence_1_only_and_the_twin_surfaces(tmp_pa
     survivors = {s["key"] for s in d["survivors"]}
     assert old_key in allowed, d.get("allowlisted_detail")
     assert old_key + ".2" in survivors, survivors
+
+
+def test_a_signal_that_lands_before_the_child_exists_is_forwarded_once_it_does(monkeypatch, tmp_path):
+    """Codex 11-25 s5c F2: the handlers went in after Popen, so a signal in that window
+    killed the parent with no forwarding and no worktree cleanup."""
+    sent = []
+
+    class _P:
+        def __init__(self, cmd, **kw):
+            # the signal arrives while Popen is still starting the child
+            signal.raise_signal(signal.SIGTERM)
+
+        def send_signal(self, sig):
+            sent.append(sig)
+
+        def wait(self):
+            return 0
+    monkeypatch.setattr(mc.subprocess, "Popen", _P)
+    assert mc._run_forwarding_signals(["x"], cwd=str(tmp_path), env={}) == 0
+    assert sent == [signal.SIGTERM]
