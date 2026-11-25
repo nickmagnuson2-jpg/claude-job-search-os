@@ -580,3 +580,106 @@ def test_bump_on_row_167_real_text(tmp_path):
     _disp, _due, defects = ls.lessons_state(new_cells, memory_dir=tmp_path / "no-memory-here",
                                             repo_root=main_checkout(REPO))
     assert list(defects) == []
+
+
+# ------------------------------------------------------------------ lock across check and write
+#
+# Codex 1335.F1 / Grok 1341.F1 (P1, parked 2026-11-24): --expect-sha was checked, then the
+# file was read and replaced with nothing holding it, so a write landing in between was
+# overwritten. Every writer now holds inbox_lock.file_lock across read and replace, and
+# re-hashes the file just before os.replace (a writer that ignores the lock is caught there).
+
+def _inproc(monkeypatch, path, tmp_path):
+    sys.path.insert(0, str(REPO / "tools"))
+    import lessons_write
+    monkeypatch.setenv("JOBSEARCH_LOCK_DIR", str(tmp_path / "locks"))
+    monkeypatch.setenv("CLAUDECODE", "1")
+    monkeypatch.setattr(lessons_write, "POINTER_ROOT", tmp_path)
+    monkeypatch.setattr(lessons_write, "memory_dir", lambda: tmp_path / "no-memory-here")
+    return lessons_write
+
+
+def _interpose(monkeypatch, lw, path):
+    """After the writer's own read, another writer changes the file."""
+    real = lw.read_lines
+
+    def read_then_someone_writes(p):
+        out = real(p)
+        p.write_text(p.read_text(encoding="utf-8").replace("Invented rule gamma",
+                                                           "Invented rule gamma, edited"),
+                     encoding="utf-8")
+        return out
+    monkeypatch.setattr(lw, "read_lines", read_then_someone_writes)
+
+
+def _calls(lw, path):
+    sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    lines = path.read_text(encoding="utf-8").split("\n")
+    return {
+        "bump": lambda: lw.bump(path, "Invented pattern alpha", "nudge again, 2026-11-25", sha),
+        "bump-no-sha": lambda: lw.bump(path, "Invented pattern alpha", "nudge again, 2026-11-25"),
+        "set-promoted": lambda: lw.set_promoted(path, "Invented pattern alpha", "Yes", sha),
+        "set-promoted-no-sha": lambda: lw.set_promoted(path, "Invented pattern alpha", "Yes"),
+        "repair-row": lambda: lw.repair_row(path, lines.index(BROKEN) + 1, sha, BROKEN, FIXED),
+        "append-row": lambda: lw.append_row(path, ["Invented pattern omega", "rule", "1",
+                                                   "No", "2026-11-25"]),
+    }
+
+
+@pytest.mark.parametrize("cmd", ["bump", "bump-no-sha", "set-promoted", "set-promoted-no-sha",
+                                 "repair-row", "append-row"])
+def test_a_write_between_read_and_replace_is_refused_not_overwritten(broken, tmp_path,
+                                                                     monkeypatch, cmd):
+    lw = _inproc(monkeypatch, broken, tmp_path)
+    call = _calls(lw, broken)[cmd]
+    _interpose(monkeypatch, lw, broken)
+    with pytest.raises(lw.Refused) as exc:
+        call()
+    assert exc.value.reasons[0].startswith("file changed while writing"), exc.value.reasons
+    after = broken.read_text(encoding="utf-8")
+    assert "Invented rule gamma, edited" in after          # the other writer's change survives
+    assert "Invented pattern omega" not in after and "2nd occurrence" not in after
+    assert sorted(x.name for x in broken.parent.iterdir() if x.name.startswith(".lessons-")) == []
+
+
+@pytest.mark.parametrize("cmd", ["bump", "set-promoted", "repair-row", "append-row"])
+def test_without_interference_each_writer_still_writes(broken, tmp_path, monkeypatch, cmd):
+    lw = _inproc(monkeypatch, broken, tmp_path)
+    before = broken.read_text(encoding="utf-8")
+    _calls(lw, broken)[cmd]()
+    assert broken.read_text(encoding="utf-8") != before
+
+
+@pytest.mark.parametrize("cmd", ["bump", "set-promoted", "repair-row", "append-row"])
+def test_each_writer_waits_for_the_lock_and_refuses_when_it_cannot_take_it(broken, tmp_path,
+                                                                         monkeypatch, cmd):
+    """A second lessons_write holding the lock: this one must not read or write."""
+    lw = _inproc(monkeypatch, broken, tmp_path)
+    monkeypatch.setattr(lw, "LOCK_TIMEOUT", 0.0)
+    holder = subprocess.Popen(
+        [sys.executable, "-c",
+         "import sys,time; sys.path.insert(0, sys.argv[1]); import inbox_lock\n"
+         "with inbox_lock.file_lock(sys.argv[2]):\n print('HELD', flush=True); time.sleep(30)",
+         str(REPO / "tools"), str(broken)],
+        stdout=subprocess.PIPE, text=True,
+        env={**os.environ, "JOBSEARCH_LOCK_DIR": str(tmp_path / "locks")})
+    try:
+        assert holder.stdout.readline().strip() == "HELD"
+        before = broken.read_text(encoding="utf-8")
+        with pytest.raises(lw.Refused) as exc:
+            _calls(lw, broken)[cmd]()
+        assert "locked" in exc.value.reasons[0], exc.value.reasons
+        assert broken.read_text(encoding="utf-8") == before
+    finally:
+        holder.kill()
+        holder.wait(timeout=10)
+
+
+def test_main_reports_a_lock_refusal_as_json(lessons, tmp_path, monkeypatch):
+    lw = _inproc(monkeypatch, lessons, tmp_path)
+    monkeypatch.setenv("LESSONS_PATH", str(lessons))
+
+    def refuse(*a, **k):
+        raise lw.Refused(["lessons.md is locked by another writer"])
+    monkeypatch.setattr(lw, "set_promoted", refuse)
+    assert lw.main(["set-promoted", "Invented pattern alpha", "Yes"]) == 1

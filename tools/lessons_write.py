@@ -68,6 +68,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import learning_state as ls  # noqa: E402
 from vault_paths import main_checkout  # noqa: E402
 from hook_runtime import claude_project_dir  # noqa: E402
+import inbox_lock  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -139,14 +140,41 @@ def validate_cells(cells: list[str]) -> list[str]:
     return list(defects)
 
 
-def atomic_write(path: Path, text: str) -> None:
-    """Write via a temp file and os.replace, keeping the file's permission bits."""
+# Every writer holds inbox_lock.file_lock (the repo's sidecar flock) from its read to its
+# replace, and re-hashes the file just before os.replace. Codex 1335.F1 / Grok 1341.F1
+# (2026-11-24): the --expect-sha check and the write were not serialized, so a write landing
+# between them was overwritten. The lock serializes lessons_write runs; the re-hash catches a
+# writer that ignores the lock (an editor, a Write call), narrowing that window to the
+# microseconds between the hash and the rename, which no advisory lock can close.
+LOCK_TIMEOUT = 30.0
+
+
+def _locked(fn):
+    """Run a writer under the file lock; a lock held past LOCK_TIMEOUT is a refusal."""
+    def run(path, *args, **kwargs):
+        try:
+            with inbox_lock.file_lock(path, timeout=LOCK_TIMEOUT):
+                return fn(path, *args, **kwargs)
+        except inbox_lock.LockTimeout as exc:
+            raise Refused([f"lessons.md is locked by another writer: {exc}"]) from None
+    run.__name__, run.__doc__ = fn.__name__, fn.__doc__
+    return run
+
+
+def atomic_write(path: Path, text: str, sha_before: str | None = None) -> None:
+    """Write via a temp file and os.replace, keeping the file's permission bits. With
+    `sha_before`, refuse (writing nothing) when the file no longer hashes to it."""
     mode = stat.S_IMODE(path.stat().st_mode)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".lessons-", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
         os.chmod(tmp, mode)
+        if sha_before is not None:
+            now = hashlib.sha256(path.read_bytes()).hexdigest()
+            if now != sha_before:
+                raise Refused([f"file changed while writing: sha256 is {now}, read as "
+                               f"{sha_before}; nothing written, re-read and retry"])
         os.replace(tmp, path)
     except BaseException:
         os.unlink(tmp)          # mkstemp created it; a failed replace leaves it behind
@@ -166,6 +194,7 @@ def file_sha(path: Path, expect: str | None) -> str:
     return sha
 
 
+@_locked
 def set_promoted(path: Path, match: str, value: str, expect_sha: str | None = None) -> dict:
     if len(match.strip()) < MIN_MATCH:
         raise Refused([f"row-match must be at least {MIN_MATCH} characters"])
@@ -186,20 +215,22 @@ def set_promoted(path: Path, match: str, value: str, expect_sha: str | None = No
     if reasons:
         raise Refused(reasons)
     lines[i] = format_row(new_cells)
-    atomic_write(path, "\n".join(lines))
+    atomic_write(path, "\n".join(lines), sha)
     return {"action": "set-promoted", "line": i + 1, "old": old, "new": value.strip(),
             "sha256_before": sha}
 
 
+@_locked
 def append_row(path: Path, cells: list[str]) -> dict:
     cells = [c.strip() for c in cells]
+    sha = file_sha(path, None)
     lines, _ = read_lines(path)
     first, _end = section2_bounds(lines)
     reasons = validate_cells(cells)
     if reasons:
         raise Refused(reasons)
     lines.insert(first, format_row(cells))
-    atomic_write(path, "\n".join(lines))
+    atomic_write(path, "\n".join(lines), sha)
     return {"action": "append-row", "line": first + 1}
 
 
@@ -208,6 +239,7 @@ def row_text(row: str) -> str:
     return " ".join(row.replace("|", " ").split())
 
 
+@_locked
 def repair_row(path: Path, line: int, expect_sha: str, old: str, new: str) -> dict:
     reasons = []
     if os.environ.get("CLAUDECODE") != "1":
@@ -231,7 +263,7 @@ def repair_row(path: Path, line: int, expect_sha: str, old: str, new: str) -> di
     if reasons:
         raise Refused(reasons)
     lines[line - 1] = new
-    atomic_write(path, "\n".join(lines))
+    atomic_write(path, "\n".join(lines), sha)
     return {"action": "repair-row", "line": line, "sha256_before": sha}
 
 
@@ -247,6 +279,7 @@ def ordinal(n: int) -> str:
     return f"{n}" + {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
 
 
+@_locked
 def bump(path: Path, match: str, evidence: str, expect_sha: str | None = None,
          dry_run: bool = False) -> dict:
     # A "|" or newline in the evidence lands verbatim in the Pattern cell, where
@@ -285,7 +318,7 @@ def bump(path: Path, match: str, evidence: str, expect_sha: str | None = None,
     before, after = lines[i], format_row(new_cells)
     if not dry_run:
         lines[i] = after
-        atomic_write(path, "\n".join(lines))
+        atomic_write(path, "\n".join(lines), sha)
     return {"action": "dry-run" if dry_run else "bumped", "line": i + 1,
             "occurrences_before": n - 1, "occurrences_after": n,
             "before": before, "after": after, "sha256_before": sha}
