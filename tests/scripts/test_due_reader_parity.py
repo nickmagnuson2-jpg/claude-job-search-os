@@ -25,10 +25,12 @@ import friction_log  # noqa: E402
 import learning_ledger as ll  # noqa: E402
 import learning_state as ls  # noqa: E402
 import memory_frontmatter as mf  # noqa: E402
+from hook_runtime import claude_project_dir  # noqa: E402
+from vault_paths import main_checkout  # noqa: E402
 
 SCANNER = REPO_ROOT / "tools" / "scan_promotion_candidates.py"
-LIVE_MEMORY = (Path.home() / ".claude" / "projects"
-               / "-Users-mag-Documents-Obsidian-30-projects-job-search" / "memory")
+# Derived, never one machine's folder name: the live tier belongs to the main checkout.
+LIVE_MEMORY = claude_project_dir(main_checkout(REPO_ROOT)) / "memory"
 
 
 def learning_state_due(memory_dir: Path) -> set[str]:

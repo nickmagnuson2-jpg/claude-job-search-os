@@ -16,6 +16,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "tools"))
 
 import learning_ledger as ll  # noqa: E402
+from hook_runtime import claude_project_dir  # noqa: E402
+from vault_paths import main_checkout  # noqa: E402
 
 
 # ---------------------------------------------------------------- table parsing
@@ -301,7 +303,7 @@ def test_json_output_is_parseable(tmp_path, capsys):
 
 @pytest.mark.live_data
 def test_the_live_ledger_reads_every_lane():
-    mem = Path.home() / ".claude/projects/-Users-mag-Documents-Obsidian-30-projects-job-search/memory"
+    mem = claude_project_dir(main_checkout(REPO_ROOT)) / "memory"
     if not mem.is_dir():
         pytest.skip("live memory tier not present")
     if not (REPO_ROOT / "memory" / "friction-log.md").is_file():
