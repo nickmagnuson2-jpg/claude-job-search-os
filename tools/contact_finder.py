@@ -181,23 +181,22 @@ def company_mentioned(text: str, company: str) -> bool:
 
 
 def load_role_tokens(goals_path: Path) -> str:
-    """Extract query tokens for the top-ranked target role from goals.md.
-    Runtime read (goals.md is gitignored). Empty string on any failure."""
+    """The role query: the first title on goals.md's Open to Work line.
+
+    Read through the scorer's parser (tools/career_scanner/scorer.py
+    _extract_target_titles), the one source for target titles (Nick, 2026-11-24:
+    "The goals should read the open-to-work titles"). Until l1-contact-finder-1124 this
+    read a "Role types" list that goals.md no longer has, so the role query was dropped
+    on every run. Runtime read (goals.md is gitignored). Empty string on any failure."""
     try:
-        lines = goals_path.read_text(encoding="utf-8").splitlines()
+        text = goals_path.read_text(encoding="utf-8")
     except OSError:
         return ""
-    in_roles = False
-    for ln in lines:
-        if ln.strip().startswith("**Role types**"):
-            in_roles = True
-            continue
-        if in_roles and re.match(r"^\s*1\.\s+", ln):
-            role = re.sub(r"^\s*1\.\s+", "", ln)
-            role = re.split(r"\bat an?\b|\(", role)[0]  # drop "at an AI-native..." / parenthetical
-            role = role.replace("/", " ").strip()
-            return re.sub(r"\s+", " ", role)
-    return ""
+    # tools/ is on sys.path (module top, for exa_search), so the scorer imports as
+    # career_scanner.scorer in script mode, which is how /scan-contacts runs this file.
+    from career_scanner.scorer import _extract_target_titles
+    titles = _extract_target_titles(text)
+    return titles[0] if titles else ""
 
 
 def load_affinity_tokens(profile_path: Path) -> list:
