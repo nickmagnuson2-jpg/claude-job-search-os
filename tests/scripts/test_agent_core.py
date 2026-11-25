@@ -53,3 +53,99 @@ def test_score_company_candidates_sorts_and_excludes(monkeypatch):
     out = ad.score_company_candidates(cands, weights=None, keywords=[])
     assert [c["name"] for c in out] == ["Acme", "MidCo"]   # FarCo excluded, sorted desc
     assert out[0]["score"] == 8
+
+
+# --------------------------------------------------------------------------- #
+# agent_discover excludes the company queue (l1b-funnel-fixes-1124, 2026-11-24)
+# --------------------------------------------------------------------------- #
+def _write_queue(root, pending, decided):
+    import json as _json
+    q = root / "tools" / ".company-queue.json"
+    q.parent.mkdir(parents=True, exist_ok=True)
+    q.write_text(_json.dumps({"pending": pending, "decided": decided}), encoding="utf-8")
+
+
+def _queue_fixture(root):
+    _write_queue(root,
+                 pending=[{"entity": "company", "name": "Queuedco", "key": "queuedco"},
+                          {"entity": "person", "name": "Casey Doe", "key": "casey doe|acme"}],
+                 decided=[{"entity": "company", "name": "Decidedco", "key": "decidedco",
+                           "decision": "reject"}])
+
+
+def test_known_names_include_pending_and_decided_queue_companies(tmp_path):
+    from tools.agent_core import filter_known
+    from tools.agent_discover import known_names
+    _queue_fixture(tmp_path)
+    known = known_names([], "company", tmp_path)
+    cands = [{"name": "Queuedco"}, {"name": "Decidedco"}, {"name": "Newco"},
+             {"name": "Casey Doe"}]
+    kept = [c["name"] for c in filter_known(cands, known)]
+    # pending and decided companies are dropped; a new name and a person name pass
+    assert kept == ["Newco", "Casey Doe"]
+
+
+def test_known_names_tags_a_near_match_instead_of_dropping_it(tmp_path):
+    """company-key-1121 ruling: a looser match is kept and tagged, never dropped."""
+    from tools.agent_core import filter_known
+    from tools.agent_discover import known_names
+    _queue_fixture(tmp_path)
+    out = filter_known([{"name": "Queuedco AI"}], known_names([], "company", tmp_path))
+    assert [c["name"] for c in out] == ["Queuedco AI"]
+    assert out[0].get("possible_duplicate") == "Queuedco"
+
+
+def test_known_names_person_run_ignores_the_queue(tmp_path):
+    from tools.agent_discover import known_names
+    _queue_fixture(tmp_path)
+    assert len(known_names([], "person", tmp_path)) == 0
+
+
+def test_known_names_without_a_queue_is_the_file_set(tmp_path):
+    from tools.agent_discover import known_names
+    targets = tmp_path / "targets.yaml"
+    targets.write_text("companies:\n  - name: Fileco\n", encoding="utf-8")
+    assert len(known_names([str(targets)], "company", tmp_path)) == 1
+
+
+def _run_main(monkeypatch, root, argv, structured):
+    import tools.agent_discover as ad
+    calls = []
+    monkeypatch.setattr(ad, "_REPO_ROOT", root)
+    monkeypatch.setattr(ad, "load_dotenv", lambda: None)
+    monkeypatch.setattr(ad, "make_client", lambda: object())
+
+    def fake_run(client, query, schema, effort, timeout_s=600):
+        calls.append(query)
+        return {"status": "completed", "structured": structured, "cost": None,
+                "grounding": None}
+    monkeypatch.setattr(ad, "run_agent", fake_run)
+    monkeypatch.setattr(ad, "score_company_candidates", lambda c, w, k: c)
+    monkeypatch.setattr("sys.argv", ["agent_discover.py", *argv])
+    return ad, calls
+
+
+def test_main_drops_a_queue_pending_company(tmp_path, monkeypatch, capsys):
+    import json as _json
+    _queue_fixture(tmp_path)
+    ad, calls = _run_main(monkeypatch, tmp_path, ["--query", "q", "--entity", "company"],
+                          {"companies": [{"name": "Queuedco"}, {"name": "Newco"}]})
+    ad.main()
+    out = _json.loads(capsys.readouterr().out)
+    assert [c["name"] for c in out["candidates"]] == ["Newco"]
+    assert calls == ["q"]
+
+
+def test_main_refuses_an_unreadable_queue_before_the_paid_run(tmp_path, monkeypatch, capsys):
+    import json as _json
+    import pytest as _pytest
+    q = tmp_path / "tools" / ".company-queue.json"
+    q.parent.mkdir(parents=True)
+    q.write_text("{not json", encoding="utf-8")
+    ad, calls = _run_main(monkeypatch, tmp_path, ["--query", "q", "--entity", "company"],
+                          {"companies": [{"name": "Newco"}]})
+    with _pytest.raises(SystemExit) as e:
+        ad.main()
+    assert e.value.code == 1
+    assert calls == []          # no agent run was paid for
+    assert "company queue unreadable" in _json.loads(capsys.readouterr().out)["error"]

@@ -5,6 +5,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 from tools.agent_core import (load_dotenv, make_client, run_agent, create_run_async,
                               get_run, _shape, filter_known, load_known_names, guess_slug)
+from tools import company_queue
 
 # Default output schemas so an ad-hoc --query (no preset) still yields structured
 # output. A preset's own output_schema takes precedence when present.
@@ -78,6 +79,24 @@ def score_company_candidates(candidates, weights=None, keywords=None):
     return kept
 
 
+def known_names(paths, entity, repo_root=_REPO_ROOT):
+    """Names a discovery run must not propose again: the --exclude-names-from files, plus,
+    for a company run, every company already in the company queue, pending or decided.
+
+    The queue is read through company_queue.load (its own reader; this file never writes
+    it). Without this, 5 of 8 lane-a results on 2026-11-24 were companies already waiting
+    there. Matching is filter_known's: an exact normalized name is dropped, a looser key
+    match is kept and tagged possible_duplicate (company-key-1121 ruling). People are not
+    matched against the queue: its person rows are keyed by person+company, not by name."""
+    known = load_known_names(paths)
+    if entity == "company":
+        data = company_queue.load(repo_root)
+        for e in data["pending"] + data["decided"]:
+            if isinstance(e, dict) and e.get("entity") != "person" and e.get("name"):
+                known.add_name(e["name"])
+    return known
+
+
 def _fail(msg):
     print(json.dumps({"candidates": [], "error": msg})); sys.exit(1)
 
@@ -112,6 +131,11 @@ def main():
     schema = resolve_schema(preset, entity)
     if not query:
         _fail("no query: pass --preset or --query")
+    # Before the paid agent run: an unreadable queue stops here, not after the spend.
+    try:
+        known = known_names(args.exclude_names_from, entity, _REPO_ROOT)
+    except (OSError, ValueError) as e:
+        _fail(f"company queue unreadable ({company_queue.QUEUE_NAME}): {e}")
 
     if args.collect:
         result = _shape(get_run(client, args.collect))
@@ -125,8 +149,7 @@ def main():
     if result["status"] not in ("completed",):
         _fail(f"agent run {result['status']} (run_id {result.get('run_id')})")
 
-    candidates = filter_known(struct_to_candidates(result["structured"], entity),
-                              load_known_names(args.exclude_names_from))
+    candidates = filter_known(struct_to_candidates(result["structured"], entity), known)
     if entity == "company":
         candidates = score_company_candidates(candidates, weights, preset.get("keywords"))
 
