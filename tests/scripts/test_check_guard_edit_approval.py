@@ -613,8 +613,10 @@ _PY_BLOCKS_2 = {
     "module_as_a_value": f"python3 - <<'PY'\nimport os\no = os\no.replace('/tmp/x', '{_G}')\nopen('n', 'w')\nPY",
     "module_passed_to_a_function":
         f"python3 - <<'PY'\nimport os\ndef f(m):\n    m.replace('/tmp/x', '{_G}')\nf(os)\nopen('n', 'w')\nPY",
+    # S2c (2026-11-25): a chdir to ONE known absolute path is followed now (see
+    # _PY_CHDIR_*); a chdir it cannot place still blocks.
     "working_directory_changed":
-        f"python3 - <<'PY'\nimport os\nprint('{_G}')\nos.chdir('/tmp')\nopen('n', 'w')\nPY",
+        f"python3 - <<'PY'\nimport os\nprint('{_G}')\nos.chdir(input())\nopen('n', 'w')\nPY",
     "process_spawned": f"python3 - <<'PY'\nimport os\nos.posix_spawn('/bin/rm', ['rm', '{_G}'], {{}})\nopen('n', 'w')\nPY",
     # The two below also write elsewhere, so the pre-filter (unchanged) examines them.
     "path_copy_onto_a_guard": f"python3 - <<'PY'\nfrom pathlib import Path\nPath('/tmp/x').copy('{_G}')\nopen('n', 'w')\nPY",
@@ -940,3 +942,71 @@ def test_when_ops_and_commands_disagree_no_chain_is_used(tmp_path, monkeypatch):
     assert g.bash_guard_writes(cmd, str(_REPO)) == []          # the chain applies
     monkeypatch.setattr(g, "_following_ops", lambda c: [])
     assert g.bash_guard_writes(cmd, str(_REPO)) != []          # the union, which blocks
+
+
+
+# --- S2c (overnight-112526, 2026-11-25): chdir, argparse, git pathspecs -----------------
+# Two read-only scripts were blocked because the analysis gave up: one called
+# os.chdir(<literal repo path>), the other imported argparse (friction ledger, 2 fires,
+# 2026-11-16 and 2026-11-25). Both are followed now. A script that is analysable ONLY
+# because of this change gets a strict verdict: every write target must be fully known.
+_PY_CHDIR_PASSES = {
+    "chdir_literal_then_write_elsewhere":
+        f"python3 - <<'PY'\nimport os\nprint('{_G}')\nos.chdir('/private/tmp')\nopen('/private/tmp/o.json', 'w').write('x')\nPY",
+    "chdir_literal_relative_write_not_a_guard":
+        f"python3 - <<'PY'\nimport os\nprint('{_G}')\nos.chdir('/private/tmp')\nopen('o.json', 'w').write('x')\nPY",
+    "argparse_reads_a_guard_writes_elsewhere":
+        f"python3 - <<'PY'\nimport argparse\nap = argparse.ArgumentParser()\nap.add_argument('--n')\nprint(open('{_G}').read())\nopen('/private/tmp/o.json', 'w').write('x')\nPY",
+    "argparse_filetype_read":
+        f"python3 - <<'PY'\nimport argparse\nap = argparse.ArgumentParser()\nap.add_argument('f', type=argparse.FileType('r'))\nprint('{_G}')\nopen('/private/tmp/o.json', 'w')\nPY",
+    "git_log_unknown_pathspec_after_dashdash":
+        f"python3 - <<'PY'\nimport subprocess\nfor p in ['{_G}']:\n    subprocess.run(['git', 'log', '-1', '--format=%cs', '--', p])\nopen('/private/tmp/o.json', 'w')\nPY",
+}
+_PY_CHDIR_BLOCKS = {
+    "chdir_from_environment":
+        f"python3 - <<'PY'\nimport os\nprint('{_G}')\nos.chdir(os.environ['D'])\nopen('/private/tmp/o.json', 'w')\nPY",
+    "chdir_relative_literal":
+        f"python3 - <<'PY'\nimport os\nprint('{_G}')\nos.chdir('tools')\nopen('/private/tmp/o.json', 'w')\nPY",
+    "chdir_aliased":
+        f"python3 - <<'PY'\nimport os\nprint('{_G}')\ncd = os.chdir\ncd('/private/tmp')\nopen('/private/tmp/o.json', 'w')\nPY",
+    "chdir_from_import":
+        f"python3 - <<'PY'\nfrom os import chdir\nprint('{_G}')\nchdir(input())\nopen('/private/tmp/o.json', 'w')\nPY",
+    # relative guard target, checked against the START cwd too (the repo)
+    "chdir_elsewhere_then_relative_guard_write":
+        f"python3 - <<'PY'\nimport os\nos.chdir('/private/tmp')\nopen('{_G}', 'w').write('x')\nPY",
+    # strict: an unknown directory part is allowed elsewhere, not after a chdir. The
+    # path sits in a variable because the pre-filter's open(...) pattern stops at a ')'.
+    "chdir_then_unknown_dir_target":
+        f"python3 - <<'PY'\nimport os\nprint('{_G}')\nos.chdir('/private/tmp')\nt = os.getcwd() + '/o.json'\nopen(t, 'w')\nPY",
+    "argparse_then_unknown_dir_target":
+        f"python3 - <<'PY'\nimport argparse, os\nprint('{_G}')\nt = os.getcwd() + '/o.json'\nopen(t, 'w')\nPY",
+    "argparse_filetype_write":
+        f"python3 - <<'PY'\nimport argparse\nap = argparse.ArgumentParser()\nap.add_argument('f', type=argparse.FileType('w'))\nprint('{_G}')\nopen('/private/tmp/o.json', 'w')\nPY",
+    "argparse_filetype_aliased":
+        f"python3 - <<'PY'\nimport argparse\nF = argparse.FileType\nprint('{_G}')\nopen('/private/tmp/o.json', 'w')\nPY",
+    "argparse_filetype_unknown_mode":
+        f"python3 - <<'PY'\nimport argparse\nm = input()\nargparse.FileType(m)\nprint('{_G}')\nopen('/private/tmp/o.json', 'w')\nPY",
+    # an unknown word BEFORE git's `--` may be an option that writes
+    "git_log_unknown_word_before_dashdash":
+        f"python3 - <<'PY'\nimport subprocess\nfor p in ['x']:\n    subprocess.run(['git', 'log', p, '--', 'a'])\nprint('{_G}')\nopen('/private/tmp/o.json', 'w')\nPY",
+}
+
+
+@pytest.mark.parametrize("name", sorted(_PY_CHDIR_PASSES))
+def test_s2c_python_script_now_followed_passes(name):
+    code, err = _bash(_PY_CHDIR_PASSES[name])
+    assert code == 0, (name, err)
+
+
+@pytest.mark.parametrize("name", sorted(_PY_CHDIR_BLOCKS))
+def test_s2c_python_script_still_blocks(name):
+    code, _ = _bash(_PY_CHDIR_BLOCKS[name])
+    assert code == 2, name
+
+
+def test_s2c_chdir_records_the_directory():
+    import ast
+    g = _hook_module()
+    w = g._PyWrites(ast.parse("import os\nos.chdir('/private/tmp')\nopen('o', 'w')\n"), ["-"])
+    assert w.targets(".") == ["o"]
+    assert w.chdirs == ["/private/tmp"] and w.strict is True
