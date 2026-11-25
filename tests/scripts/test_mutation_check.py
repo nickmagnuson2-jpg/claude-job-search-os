@@ -2456,3 +2456,71 @@ def test_writing_the_target_without_a_cache_directory_is_fine(tmp_path):
     target.write_text("x = 1\n", encoding="utf-8")
     mc._write_owned(target, "x = 2\n")
     assert target.read_text(encoding="utf-8") == "x = 2\n"
+
+
+# --- a root reached through a symlink (S5, 2026-11-25) ---------------------------------------
+# --in-worktree makes its tree under tempfile.mkdtemp(), /var/folders/... on macOS, and /var
+# is a symlink to /private/var. REPO_ROOT kept the /var spelling, pytest's cwd resolved to
+# /private/var, and the /var test paths then sat outside pytest's rootdir, so
+# tests/conftest.py never loaded: "Unknown pytest.mark.live_data", the LIVE-DATA-ABSENT skip
+# never fired, and every whole-file baseline with a live_data test was red (S1, twice, 11-25).
+
+_SKIP_CONFTEST = textwrap.dedent("""
+    import pytest
+
+    def pytest_configure(config):
+        config.addinivalue_line("markers", "needs_owner_data: skipped here")
+
+    def pytest_runtest_setup(item):
+        if item.get_closest_marker("needs_owner_data"):
+            pytest.skip("OWNER-DATA-ABSENT")
+""")
+
+
+def _symlinked_repo(tmp_path):
+    real = tmp_path / "real" / "repo"
+    (real / "tools").mkdir(parents=True)
+    (real / "tests" / "scripts").mkdir(parents=True)
+    (real / "tools" / "subject.py").write_text(
+        "def classify(n):\n    if n > 0:\n        return 'pos'\n    return 'neg'\n", encoding="utf-8")
+    (real / "tests" / "conftest.py").write_text(_SKIP_CONFTEST, encoding="utf-8")
+    (real / "tests" / "scripts" / "test_subject.py").write_text(textwrap.dedent("""
+        import sys
+        from pathlib import Path
+        import pytest
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+        from subject import classify
+
+        def test_pos(): assert classify(1) == 'pos'
+        def test_neg(): assert classify(-1) == 'neg'
+
+        @pytest.mark.needs_owner_data
+        def test_owner_data(): raise AssertionError("conftest did not load: ran a skipped test")
+    """), encoding="utf-8")
+    # The shape that failed is a symlink at the TOP of the path (/var -> /private/var); a
+    # symlink lower down still loads the conftest. So the fixture is reached through the
+    # /var spelling of a /private/var tmp_path, which is where mkdtemp puts it on macOS.
+    resolved = str(real.resolve())
+    if not resolved.startswith("/private/var/") or not Path("/var").is_symlink():
+        pytest.skip("needs macOS's /var -> /private/var symlink")
+    return real, Path(resolved[len("/private"):])
+
+
+def test_repo_root_is_resolved_when_reached_through_a_symlink(tmp_path):
+    real, via_link = _symlinked_repo(tmp_path)
+    env = {**os.environ, "MUTATION_REPO_ROOT": str(via_link)}
+    p = subprocess.run([sys.executable, "-c",
+                        "import sys; sys.path.insert(0, sys.argv[1]); import mutation_check as m;"
+                        " print(m.REPO_ROOT)", str(REPO_ROOT / "tools")],
+                       capture_output=True, text=True, env=env, timeout=60)
+    assert p.stdout.strip() == str(real.resolve()), p.stderr
+
+
+def test_a_symlinked_root_still_loads_tests_conftest(tmp_path):
+    real, via_link = _symlinked_repo(tmp_path)
+    r = _run([str(via_link / "tools" / "subject.py"),
+              "--tests", str(via_link / "tests" / "scripts" / "test_subject.py")], cwd=via_link)
+    assert r.stdout.strip().startswith("{"), (r.stdout[-800:], r.stderr[-1500:])
+    d = json.loads(r.stdout)
+    assert d.get("code") != "baseline_red", d
+    assert d["status"] == "ok" and d["killed"] >= 1, d

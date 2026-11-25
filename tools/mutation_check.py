@@ -80,8 +80,14 @@ from pathlib import Path
 # Tests set it. Floored at 1: 0 would divide by zero after the first mutant (Codex
 # commit-3 round 2 F3).
 PROGRESS_EVERY = max(1, int(os.environ.get("MUTATION_PROGRESS_EVERY", "25")))
+# RESOLVED (S5, 2026-11-25): --in-worktree roots its tree in tempfile.mkdtemp(), which is
+# /var/folders/... on macOS, and /var is a symlink to /private/var. Unresolved, the root
+# kept the /var spelling while pytest's cwd resolved to /private/var, so every /var test
+# path sat outside pytest's rootdir and tests/conftest.py never loaded ("Unknown
+# pytest.mark.live_data"); the LIVE-DATA-ABSENT skip never fired and whole-file baselines
+# went red (S1, twice on 2026-11-25). One resolve here makes every cwd and path agree.
 REPO_ROOT = Path(os.environ.get("MUTATION_REPO_ROOT",
-                                str(Path(__file__).resolve().parent.parent)))
+                                str(Path(__file__).resolve().parent.parent))).resolve()
 ALLOW_FILE = REPO_ROOT / "tools" / "mutation-allow.json"
 
 # tests/conftest.py exits with this when a *.mutation_backup exists anywhere in the tree.
@@ -2077,6 +2083,17 @@ IN_WORKTREE_FLAG = "--in-worktree"
 IN_WORKTREE_CHILD_ENV = "MUTATION_IN_WORKTREE_CHILD"
 
 
+def _under_root(arg: str) -> Path:
+    """A command-line path, absolute, with its DIRECTORY resolved the way REPO_ROOT is, so a
+    /var spelling of a /private/var tree still lies under the root and pytest gets paths
+    that agree with its cwd. The file name is kept as given: a symlinked file stays the
+    path the caller named."""
+    p = Path(arg)
+    if not p.is_absolute():
+        p = REPO_ROOT / p
+    return p.parent.resolve() / p.name
+
+
 def _is_worktree_child() -> bool:
     """True only in the child a worktree run started: the marker names this REPO_ROOT."""
     marker = os.environ.get(IN_WORKTREE_CHILD_ENV)
@@ -2264,9 +2281,7 @@ def main() -> int:
     if args.in_worktree and not _is_worktree_child():
         return run_in_worktree(sys.argv[1:], args)
 
-    target = Path(args.target)
-    if not target.is_absolute():
-        target = REPO_ROOT / target
+    target = _under_root(args.target)
     if not target.exists():
         print(json.dumps({"status": "error", "message": f"no such file: {target}"}))
         return 1
@@ -2339,7 +2354,7 @@ def main() -> int:
         return 1
 
     rel = str(target.relative_to(REPO_ROOT))
-    test_files = ([Path(t) for t in args.tests] if args.tests else map_tests(target))
+    test_files = ([_under_root(t) for t in args.tests] if args.tests else map_tests(target))
     if not test_files:
         print(json.dumps({"status": "error", "code": "no_tests",
                           "message": f"no test files map to {rel}; a file with no tests "
