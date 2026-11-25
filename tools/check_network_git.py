@@ -217,9 +217,13 @@ def _git_stash(args: list[str]) -> str | None:
     if found is None or found[0] != "stash":
         return None
     rest = found[1]
-    if "--help" in rest or "-h" in rest:
-        return None
     sub = rest[0] if rest and not rest[0].startswith("-") else "push"
+    # Help counts only where git reads it as help: first after `stash`, or first after the
+    # subcommand. Anywhere else it may be an option's value: `git stash push -m --help`
+    # stashes with the message "--help" (Codex S2 tip r1 F1, 2026-11-25).
+    after = rest[1:] if rest and not rest[0].startswith("-") else rest
+    if rest[:1] in (["--help"], ["-h"]) or after[:1] in (["--help"], ["-h"]):
+        return None
     return None if sub in STASH_READ_ONLY else f"stash {sub}"
 
 
