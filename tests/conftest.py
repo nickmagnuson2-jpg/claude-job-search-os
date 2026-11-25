@@ -24,11 +24,17 @@ from conftest_guard import (  # noqa: E402
 # stopped at baseline_red (plan A1, output/mutation-parallel-102826/plan.md). From then
 # until 2026-11-25 they skipped in EVERY linked worktree, data or not, so a worktree that
 # had the data (a symlinked memory tier, the home-folder tier) still skipped the check
-# (Codex/Grok S1 rounds 1-5). Now the data decides (S1, 2026-11-25):
-#   every path present          -> the test RUNS, in any checkout;
-#   one absent, linked worktree -> SKIP, reason starting LIVE_DATA_SKIP (suite_record counts it);
-#   one absent, main checkout   -> FAIL: the main checkout is where the data lives;
-#   no path declared            -> FAIL: a new live test cannot skip without saying why.
+# (Codex/Grok S1 rounds 1-5). Now the data decides (S1, 2026-11-25; org b7 ruling, option 2):
+#   every path present                         -> RUN, in any checkout;
+#   one absent, not the owner's data checkout  -> SKIP "not the owner's data checkout" (a
+#                                                 public clone: no live memory tier);
+#   one absent, the owner's linked worktree    -> SKIP, absent in this checkout;
+#   one absent, the owner's main checkout      -> FAIL: that is where the data lives;
+#   no path declared                           -> FAIL: a live test must say what it reads.
+# "The owner's data checkout" = the live memory tier of this repo's main checkout exists
+# (hook_runtime.claude_project_dir). Blind spot: the owner on a fresh machine before the
+# tier exists skips instead of failing; the LIVE_DATA_SKIP count in suite_record shows it.
+# Every skip reason starts with LIVE_DATA_SKIP, which suite_record counts.
 LIVE_DATA_SKIP = "LIVE-DATA-ABSENT"
 
 
@@ -38,13 +44,20 @@ def _is_linked_worktree(root: Path) -> bool:
     return (root / ".git").is_file()
 
 
+def _is_owner_checkout(root: Path) -> bool:
+    """True when the live memory tier of root's main checkout exists on this machine."""
+    from hook_runtime import claude_project_dir
+    from vault_paths import main_checkout
+    return (claude_project_dir(main_checkout(root)) / "memory").is_dir()
+
+
 def pytest_configure(config):
     config.addinivalue_line(
         "markers", "live_data(*paths): reads the owner's gitignored data at these paths; "
-                   "runs when they exist, skips in a linked worktree when one is absent")
+                   "runs when they exist; see tests/conftest.py for skip and fail")
 
 
-def live_data_verdict(paths, root: Path, linked: bool) -> tuple[str, str]:
+def live_data_verdict(paths, root: Path, linked: bool, owner: bool) -> tuple[str, str]:
     """('run' | 'skip' | 'fail', reason) for a live_data test needing `paths`."""
     if not paths:
         return "fail", ("@pytest.mark.live_data needs the paths the test reads, e.g. "
@@ -56,6 +69,9 @@ def live_data_verdict(paths, root: Path, linked: bool) -> tuple[str, str]:
             missing.append(str(p))
     if not missing:
         return "run", ""
+    if not owner:
+        return "skip", (f"{LIVE_DATA_SKIP}: not the owner's data checkout (no live memory "
+                        f"tier); absent: {', '.join(missing)}")
     if linked:
         return "skip", f"{LIVE_DATA_SKIP}: absent in this checkout: {', '.join(missing)}"
     return "fail", f"live data missing in the main checkout: {', '.join(missing)}"
@@ -65,7 +81,8 @@ def pytest_runtest_setup(item):
     mark = item.get_closest_marker("live_data")
     if mark is None:
         return
-    verdict, reason = live_data_verdict(mark.args, REPO_ROOT, _is_linked_worktree(REPO_ROOT))
+    verdict, reason = live_data_verdict(mark.args, REPO_ROOT, _is_linked_worktree(REPO_ROOT),
+                                        _is_owner_checkout(REPO_ROOT))
     if verdict == "skip":
         pytest.skip(reason)
     if verdict == "fail":
