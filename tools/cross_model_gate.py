@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -391,6 +392,61 @@ def read_ledger_with_health(repo_root: Path) -> tuple[list[dict], int]:
     return rows, corrupt
 
 
+def _main_root(repo_root: Path) -> Path | None:
+    """The main checkout when repo_root is a linked worktree, found from git's common dir
+    (never a hard-coded path); None when repo_root is not a linked worktree. Raises
+    RuntimeError when a linked worktree's main checkout cannot be placed."""
+    root = Path(repo_root).resolve()
+    if not (root / ".git").is_file():
+        return None
+    r = subprocess.run(["git", "-C", str(root), "rev-parse", "--path-format=absolute",
+                        "--git-common-dir"], capture_output=True, text=True, timeout=10)
+    common = Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
+    if common is None or common.name != ".git" or not common.is_dir():
+        raise RuntimeError(f"git did not name a .git common dir for {root}")
+    main = common.parent.resolve()
+    if main == root:
+        raise RuntimeError(f"the common dir of {root} is its own")
+    return main
+
+
+def _row_key(row: dict) -> tuple:
+    """What makes a mirrored row the same run as a worktree row: finding_write's match."""
+    return row.get("report"), row.get("model"), row.get("recorded")
+
+
+def read_gate_ledger(repo_root: Path) -> tuple[list[dict], int, str]:
+    """The rows the push gate judges: this checkout's ledger, plus, from a linked worktree,
+    the main checkout's (S2d, 2026-11-25).
+
+    WHY. The gate run from a branch's worktree read only that worktree's copy. A review run
+    from ANOTHER worktree at the same tree reached its own copy and main's mirror, never
+    this one, so the push was refused and both reviews were repeated (S5, tree 734f1e8f).
+    main's ledger is the copy codex_verify mirrors every review into and finding_write keeps
+    in step, dispositions included, so reading it is enough; nothing is copied. On the same
+    run (report, model, recorded) this worktree's own row wins.
+
+    FAILS CLOSED: if main's ledger cannot be located, is missing or cannot be read, one
+    unreadable line is counted, which blocks, and the third value says why."""
+    rows, corrupt = read_ledger_with_health(repo_root)
+    try:
+        main = _main_root(repo_root)
+    except (RuntimeError, OSError, subprocess.SubprocessError) as e:
+        return rows, corrupt + 1, f"the main checkout's ledger could not be located ({e})"
+    if main is None:
+        return rows, corrupt, ""
+    if not ledger_path(main).is_file():
+        return rows, corrupt + 1, f"the main checkout's ledger is missing ({ledger_path(main)})"
+    try:
+        main_rows, main_corrupt = read_ledger_with_health(main)
+    except (OSError, UnicodeDecodeError) as e:
+        return rows, corrupt + 1, f"the main checkout's ledger cannot be read ({e})"
+    own = {_row_key(r) for r in rows}
+    merged = rows + [r for r in main_rows if _row_key(r) not in own]
+    note = f"the main checkout's ledger has {main_corrupt} unreadable line(s)" if main_corrupt else ""
+    return merged, corrupt + main_corrupt, note
+
+
 def read_ledger(repo_root: Path) -> list[dict]:
     """Rows, or a raise-free empty list. Callers MUST distinguish empty from satisfied."""
     return read_ledger_with_health(repo_root)[0]
@@ -680,14 +736,15 @@ def check(repo_root: Path, changes: list[tuple[str, int, int]],
     # Every path that CAUSED qualification must be covered. Coverage accumulates across
     # rows, so two focused reviews still clear a push that spans both.
     required = set(v.triggers or changed)
-    rows, corrupt = read_ledger_with_health(repo_root)
+    rows, corrupt, note = read_gate_ledger(repo_root)
 
     if corrupt:
         v.blocked = True
         v.changed = sorted(changed)
         v.message = (
             f"This push {v.reason}.\n"
-            f"The ledger has {corrupt} unreadable line(s), so its coverage is unknown "
+            + (f"{note}.\n" if note else "")
+            + f"The ledger has {corrupt} unreadable line(s), so its coverage is unknown "
             f"and it cannot be trusted to clear anything.\n\n"
             f"  Inspect:   tools/{LEDGER_NAME}\n"
             f"  Or waive:  CODEX_VERIFY_WAIVE='<why>' git push\n")
@@ -843,10 +900,10 @@ def check_chain(repo_root: Path, base: str, tip: str | None) -> Verdict | None:
         v.message = f"This push is a merge chain, but its diff could not be read: {e}"
         return v
     v.changed = changed
-    rows, corrupt = read_ledger_with_health(repo_root)
+    rows, corrupt, note = read_gate_ledger(repo_root)
     if corrupt:
         v.blocked = True
-        v.message = (f"This push {v.reason}.\nThe ledger has {corrupt} unreadable "
+        v.message = (f"This push {v.reason}.\n{(note + '.\n') if note else ''}The ledger has {corrupt} unreadable "
                      f"line(s), so its coverage is unknown and it cannot be trusted to "
                      f"clear anything.\n\n  Inspect:   tools/{LEDGER_NAME}\n"
                      f"  Or waive:  CODEX_VERIFY_WAIVE='<why>' git push\n")
@@ -938,8 +995,19 @@ def open_p0_against(repo_root: Path, required: set) -> list[dict]:
     push does (2026-10-15).
     """
     import finding_write
-    return [f for f in finding_write.collect(repo_root, severity="P0")
-            if required & set(f["paths"]) and blocks_push(f)]
+    found = finding_write.collect(repo_root, severity="P0")
+    # From a linked worktree, main's mirror too (S2d, read_gate_ledger): a P0 open only in
+    # main still blocks; a run this worktree holds is judged from its own copy. If main
+    # cannot be placed, check() already blocks through read_gate_ledger's corrupt count.
+    try:
+        main = _main_root(repo_root)
+    except (RuntimeError, OSError, subprocess.SubprocessError):
+        main = None
+    if main is not None and ledger_path(main).is_file():
+        own = {(r.get("report"), r.get("recorded")) for r in read_ledger(repo_root)}
+        found += [f for f in finding_write.collect(main, severity="P0")
+                  if (f["report"], f["recorded"]) not in own]
+    return [f for f in found if required & set(f["paths"]) and blocks_push(f)]
 
 
 def blocks_push(f: dict) -> bool:
