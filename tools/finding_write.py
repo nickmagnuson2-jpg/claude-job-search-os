@@ -172,18 +172,20 @@ def live_worktree(row: dict) -> Path | None:
 def worktree_command(row: dict, fid: str, verb_args: list[str]) -> str:
     """The refusal text: where to run this write instead, as a command to paste."""
     wt = live_worktree(row)
-    tool = "PYTHONIOENCODING=utf-8 python3 tools/finding_write.py"
+    # EVERY printed command starts with the cd (org b7, S4b Grok r1 F1): run numbers differ
+    # per ledger, so a command pasted without it, from main, edits main's row at that number.
+    here = f"cd {shlex.quote(str(wt))} && PYTHONIOENCODING=utf-8 python3 tools/finding_write.py"
     rest = " ".join(shlex.quote(a) for a in verb_args[1:])
     run = row.get("worktree_run")
     if isinstance(run, int) and not isinstance(run, bool):
-        cmd = f"cd {shlex.quote(str(wt))} && {tool} {verb_args[0]} {run}.{fid} {rest}"
         return (f"this run belongs to the worktree {wt}, whose own ledger copy the pre-push "
-                f"gate reads; nothing was written. Run it there (it mirrors to main): {cmd}")
+                f"gate reads; nothing was written. Run it there (it mirrors to main): "
+                f"{here} {verb_args[0]} {run}.{fid} {rest}")
     return (f"this run belongs to the worktree {wt}, whose own ledger copy the pre-push gate "
             f"reads; nothing was written. Main does not record the run's number there, so "
-            f"find it with: cd {shlex.quote(str(wt))} && {tool} list (report="
-            f"{row.get('report')!r}, recorded={row.get('recorded')!r}), then run: {tool} "
-            f"{verb_args[0]} <run>.{fid} {rest}")
+            f"find it with: {here} list (report={row.get('report')!r}, "
+            f"recorded={row.get('recorded')!r}), then run: {here} {verb_args[0]} "
+            f"<run>.{fid} {rest}")
 
 
 def _edit_finding(repo_root: Path, addr: str, apply, verb_args: list[str] | None = None) -> dict:

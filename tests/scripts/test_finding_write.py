@@ -940,7 +940,7 @@ def test_set_from_main_without_a_recorded_position_points_to_list(mirrored, caps
     msg = json.loads(err)["error"]
     assert rc == 2 and _bytes(main) == before
     assert f"cd {wt} && {TOOL} list" in msg and W_ROW["report"] in msg
-    assert msg.endswith(f"{TOOL} set <run>.F2 --disposition parked --why w")
+    assert msg.endswith(f"cd {wt} && {TOOL} set <run>.F2 --disposition parked --why w")
 
 
 def test_set_from_main_on_a_gone_worktrees_row_writes_main(l2, capsys):
@@ -982,3 +982,30 @@ def test_a_boolean_worktree_run_is_not_taken_for_a_position(l2, capsys):
 def test_a_keyerror_message_is_printed_without_its_quotes(repo, capsys):
     rc, _, err = _cli(capsys, repo, "set", "9.F1", "--disposition", "fixed", "--why", "w")
     assert rc == 2 and json.loads(err)["error"].startswith("no run 9")
+
+
+def _printed_commands(msg):
+    """Every command the refusal prints: each starts where the tool is named."""
+    import re
+    return [m.start() for m in re.finditer(re.escape(TOOL), msg)]
+
+
+@pytest.mark.parametrize("positioned", [True, False])
+@pytest.mark.parametrize("verb", [["set", "2.F1", "--disposition", "fixed", "--why", "w"],
+                                  ["accept", "2.F1", "--why", "w"]])
+def test_every_command_the_refusal_prints_starts_with_the_cd(l2, capsys, positioned, verb):
+    """Org b7 (S4b Grok r1 F1, ruled a P0 in effect): run numbers differ per ledger, so a
+    printed command without the cd, pasted from main, dispositions main's row at that
+    number. Each command the refusal prints must carry it."""
+    main, wt = l2
+    row = {**W_OPEN, "worktree": str(wt)}
+    if positioned:
+        row["worktree_run"] = 1
+    _write_ledger(main, [MAIN_OWN, row])
+    rc, _, err = _cli(capsys, main, *verb)
+    msg = json.loads(err)["error"]
+    starts = _printed_commands(msg)
+    assert rc == 2 and len(starts) == (1 if positioned else 2)
+    prefix = f"cd {wt} && "
+    for at in starts:
+        assert msg[:at].endswith(prefix), msg
