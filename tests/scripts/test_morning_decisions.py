@@ -311,6 +311,26 @@ def test_shown_lean_rulings_are_named_as_not_counted():
     assert "4 shown-lean rulings not counted" in sec
 
 
+def test_no_shown_lean_clause_when_none_were_shown():
+    """Mutation 2026-11-24 (_ladder_line IF_TRUE): a zero count is not printed."""
+    sec = _ladder_section({"scope": _rung(shown_rulings=0)})
+    assert "shown-lean" not in sec
+
+
+def test_no_last_ruling_clause_without_a_ruling_date():
+    """Mutation 2026-11-24 (_ladder_line IF_TRUE): no sample and no ruling date prints neither."""
+    sec = _ladder_section({"scope": _rung(days_since_ruling=None, last_ruling_at=None)})
+    assert "last blind ruling" not in sec and "None" not in sec and "last sample" not in sec
+
+
+def test_a_ladder_that_is_not_a_mapping_is_unavailable_not_a_crash():
+    """Mutation 2026-11-24 (checked_ladder IF_FALSE / RETURN_NONE)."""
+    page = _page({"error": None, "board": "ok", "open": [_q(1)], "ladder": ["scope"]})
+    sec = _section(page, "decisions")
+    assert "Trust ladder unavailable: ladder is list, not a mapping" in sec
+    assert "Question 1?" in sec
+
+
 def test_no_ladder_says_none_resolved_yet():
     assert "No blind rulings resolved yet" in _ladder_section({})
 

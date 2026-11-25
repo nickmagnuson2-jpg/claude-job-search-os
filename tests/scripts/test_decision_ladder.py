@@ -163,6 +163,13 @@ def test_amendments_count_toward_the_climb_d6():
     assert lad["rung"] == "R2" and lad["amendments"] == 10
 
 
+def test_only_amendment_outcomes_count_as_amendments():
+    """Mutation 2026-11-24 (decision_write.py ladder, NEGATE_CMP): 10 agree + 10 amendment
+    counted 10 either way, so an unequal mix pins which outcome is counted."""
+    lad = dw.ladder(history(["agree"] * 3 + ["amendment"]), now=at(4))["workstream-status"]
+    assert lad["amendments"] == 1 and lad["agreements_since_correction"] == 4
+
+
 def test_one_correction_demotes_and_resets_the_count_d1():
     lad = dw.ladder(history(["agree"] * 20 + ["correction"]), now=at(21))["workstream-status"]
     assert lad["rung"] == "R1" and lad["agreements_since_correction"] == 0
