@@ -363,12 +363,51 @@ def hook_crash(error_text: str) -> str:
     return h[0] if h and not h[1] else ""
 
 
+_TRACEBACK_HEADER_RE = re.compile(r"Traceback \(most recent call last\):")
+_TOOLS_DIR_RE = re.compile(r"(?:^|/)tools/[^/]+\.py$")
+
+
+def traceback_blame(scripts: list[str], error_text: str) -> str:
+    """Which named tools script a failure belongs to, read from the traceback when there is one.
+
+    `scripts` are the tools/*.py the command runs, in order (already lowercased, exclusions
+    removed). Before 2026-11-25 both auto-loggers blamed scripts[0] for ANY traceback, so
+    `python3 tools/pipe_write.py ... 2>&1 | python3 -c "import json,sys; json.load(sys.stdin)"`
+    failing in the caller's json.load was filed as pipe_write friction (S6 replay: 0 of 6
+    finding_write JSONDecodeError events raised inside finding_write.py).
+
+      - no traceback in the output: scripts[0], unchanged (a tool's own JSON error, exit code);
+      - a traceback frame in a named script: the deepest such script raised it, or was the
+        entry point of the library call that did, so it keeps the blame;
+      - else a frame in another file under a tools/ directory (a tools module the caller
+        imported): that module;
+      - else no frame in any tool: the caller's own code raised it, so the row is
+        "inline python3 (caller of <scripts[0]>)", never the tool.
+    """
+    if not scripts:
+        return ""
+    text = error_text or ""
+    if not _TRACEBACK_HEADER_RE.search(text):
+        return scripts[0]
+    frames = _TRACEBACK_PYFILE_RE.findall(text)
+    names = [f.replace("\\", "/").rsplit("/", 1)[-1].lower() for f in frames]
+    for name in reversed(names):
+        if name in scripts:
+            return name
+    for frame, name in zip(reversed(frames), reversed(names)):
+        if _TOOLS_DIR_RE.search(frame.replace("\\", "/")) and "site-packages" not in frame \
+                and name not in EXCLUDE_SCRIPTS:
+            return name
+    return f"inline python3 (caller of {scripts[0]})"
+
+
 def derive_surface(tool_name: str, command: str, error_text: str = "") -> str:
     """The 'surface' is what failed. Precedence:
     0. harness event       -> harness:<kind>  (never a script's friction; callers skip it)
     1. hook block header   -> block:<hook>    (any tool; Q9 model-habit ladder)
     2. non-Bash tool       -> tool:<name>
-    3. explicit tools/*.py -> that script (existing, well-tested path)
+    3. explicit tools/*.py -> that script, unless the traceback shows the caller raised it
+                              (traceback_blame)
     4. inline python -c    -> real .py in traceback, else first import
     5. fallback            -> bash:<first-non-env-token>
     A BLOCKED word anywhere else in the output is NOT a hook block (2026-11-16: run-log text
@@ -391,7 +430,7 @@ def derive_surface(tool_name: str, command: str, error_text: str = "") -> str:
     matches = SCRIPT_RE.findall(command)
     scripts = [(m + ".py").lower() for m in matches if (m + ".py").lower() not in EXCLUDE_SCRIPTS]
     if scripts:
-        return scripts[0]
+        return traceback_blame(scripts, error_text)
 
     s = _surface_from_inline(command, error_text)
     if s:
