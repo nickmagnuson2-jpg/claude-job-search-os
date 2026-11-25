@@ -41,9 +41,51 @@ def run_dir(tmp_path):
     return d
 
 
-def write_brief(run_dir: Path, text: str) -> Path:
+def ledger_file(root: Path) -> Path:
+    return root / "tools" / ".cross-model-ledger.jsonl"
+
+
+def framed(text: str) -> str:
+    """A review target the way /verify inlines a brief (ledger 1323-1332)."""
+    return "Plan review of the brief. BAR: ... ===BRIEF START===\n" + text + "\n===BRIEF END==="
+
+
+def add_row(root: Path, brief: str, model: str = "codex", family: str = "openai", drop=(),
+            frame: bool = True, **extra) -> int:
+    """Append one ledger row reviewing `brief`; returns its run number (finding_write's numbering)."""
+    target = framed(brief) if frame else brief
+    import json
+    f = ledger_file(root)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    row = {"recorded": "2026-01-01T00:00:00+00:00", "target": target, "paths": [], "findings": [],
+           "waived": False, "model": model, "family": family, "rc": 0, "report_written": True,
+           "verified": True, "tree": None}
+    row.update(extra)
+    for k in drop:
+        row.pop(k)
+    with f.open("a") as fh:
+        fh.write(json.dumps(row) + "\n")
+    return len([ln for ln in f.read_text().splitlines() if ln.strip()])
+
+
+def review(root: Path, text: str) -> None:
+    """A Codex and a Grok review of this exact text."""
+    add_row(root, text, "codex", "openai")
+    add_row(root, text, "grok", "xai")
+
+
+@pytest.fixture(autouse=True)
+def tmp_ledger(tmp_path, monkeypatch):
+    """brief_check's default ledger is the test's tmp root, never the real one."""
+    monkeypatch.setattr(ls, "LEDGER_ROOT", tmp_path)
+    return tmp_path
+
+
+def write_brief(run_dir: Path, text: str, reviewed: bool = True) -> Path:
     p = run_dir / "brief.md"
     p.write_text(text)
+    if reviewed:
+        review(run_dir.parents[1], text)
     return p
 
 
@@ -368,3 +410,281 @@ def test_a_brief_missing_a_rule_addition_is_refused(run_dir, n, sentence):
     assert sentence in t
     p = write_brief(run_dir, t.replace(sentence, "", 1))
     assert any(x.startswith(f"rule {n} does not match") for x in ls.brief_check(p, org="proj-org"))
+
+
+# ---------------------------------------------------------------- the window command's env
+# Cause of the 11-23 missing transcripts (orchestration.md 2026-11-24 17:38, S1): the windows
+# inherited a parent Claude session's env, so each claude ran as a child session and wrote no
+# transcript. These tests run the exact line main() hands to Terminal, with a fake `claude`
+# first on PATH that records its own env and argv.
+PARENT_ENV = {
+    "CLAUDECODE": "1",
+    "CLAUDE_CODE_CHILD_SESSION": "1",
+    "CLAUDE_CODE_SESSION_ID": "00000000-0000-0000-0000-000000000000",
+    "CLAUDE_PID": "12345",
+    "CLAUDE_SOME_FUTURE_VAR": "x",
+    "AI_AGENT": "claude-code",
+}
+
+
+def _run_window_line(run_dir, monkeypatch, shell):
+    import os
+    import shutil
+    import subprocess
+    if not shutil.which(shell):
+        pytest.skip(f"{shell} not installed")
+    opened = []
+    monkeypatch.setattr(ls, "open_window", lambda cmd: opened.append(cmd))
+    monkeypatch.setattr(ls.time, "sleep", lambda s: None)
+    p = write_brief(run_dir, filled_template())
+    repo = run_dir.parents[1]
+    assert ls.main([str(p), "--org", "proj-org", "--repo", str(repo)]) == 0
+    assert len(opened) == 1
+    bindir = run_dir / "bin"
+    bindir.mkdir()
+    out = run_dir / "child-env.txt"
+    fake = bindir / "claude"
+    fake.write_text(f'#!/bin/sh\npwd > "{out}"\nprintf "%s\\n" "$1" >> "{out}"\nenv >> "{out}"\n')
+    fake.chmod(0o755)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE") and k != "AI_AGENT"}
+    env.update(PARENT_ENV, PATH=f"{bindir}:{os.environ['PATH']}", KEEP_ME="kept")
+    subprocess.run([shell, "-c", opened[0]], env=env, check=True, timeout=30)
+    return out.read_text().splitlines(), repo
+
+
+@pytest.mark.parametrize("shell", ["zsh", "bash"])
+def test_the_window_line_drops_every_parent_claude_var(run_dir, monkeypatch, shell):
+    lines, repo = _run_window_line(run_dir, monkeypatch, shell)
+    names = {ln.split("=", 1)[0] for ln in lines if "=" in ln}
+    assert not names & set(PARENT_ENV), f"leaked into claude: {sorted(names & set(PARENT_ENV))}"
+    assert "KEEP_ME=kept" in lines  # only the Claude vars go, not the whole env
+
+
+def test_the_window_line_still_cds_to_the_repo_and_passes_the_prompt(run_dir, monkeypatch):
+    lines, repo = _run_window_line(run_dir, monkeypatch, "zsh")
+    assert Path(lines[0]).resolve() == repo.resolve()
+    assert lines[1].startswith("You are S1 in the swarm. Org is proj-org.")
+
+
+def test_a_failed_cd_does_not_start_claude(tmp_path):
+    import subprocess
+    out = tmp_path / "ran"
+    line = ls.window_command(tmp_path / "missing", tmp_path / "p.txt", program=f"touch '{out}' #")
+    subprocess.run(["zsh", "-c", line], capture_output=True, timeout=30)
+    assert not out.exists()
+
+
+# ---------------------------------------------------------------- the review check
+# 2026-11-24: a brief passed brief_check while Codex and Grok both carried the same P0 in it
+# (ledger 1323/1324 F1). Org ruling 2026-11-24: match on the brief's current text, both
+# families, no open finding on the covering rows; earlier-text open P0s print as a WARNING.
+def review_problems(problems):
+    return [p for p in problems if "review" in p or "open finding" in p or "ledger" in p]
+
+
+def test_a_brief_with_no_review_is_refused(run_dir):
+    p = write_brief(run_dir, filled_template(), reviewed=False)
+    probs = ls.brief_check(p, org="proj-org")
+    assert any("no codex review" in x for x in probs)
+    assert any("no grok review" in x for x in probs)
+
+
+def test_a_brief_edited_by_one_character_after_review_is_refused(run_dir):
+    t = filled_template()
+    p = write_brief(run_dir, t)
+    assert ls.brief_check(p, org="proj-org") == []
+    i = t.index("Organizer:") - 2  # a character outside every structural check
+    p.write_text(t[:i] + ("X" if t[i] != "X" else "Y") + t[i + 1:])
+    probs = ls.brief_check(p, org="proj-org")
+    assert any("no codex review" in x for x in probs) and any("no grok review" in x for x in probs)
+    assert len(review_problems(probs)) == len(probs)  # refused for the review, nothing else
+
+
+def test_an_open_finding_on_a_covering_review_is_refused_and_named(run_dir, tmp_ledger):
+    t = filled_template()
+    p = write_brief(run_dir, t)
+    n = add_row(tmp_ledger, t, "codex", "openai",
+                findings=[{"id": "F1", "severity": "P0", "summary": "x"},
+                          {"id": "F2", "severity": "P1", "summary": "y", "disposition": "parked"}])
+    probs = ls.brief_check(p, org="proj-org")
+    assert probs == [f"open finding {n}.F1 (P0, codex) on a review of this brief; "
+                     f"disposition it with finding_write.py set"]
+    assert ls.review_warnings(t, tmp_ledger) == []  # it blocks; it is not also a warning
+
+
+def test_dispositioned_findings_on_both_reviews_pass(run_dir, tmp_ledger):
+    t = filled_template()
+    p = write_brief(run_dir, t, reviewed=False)
+    add_row(tmp_ledger, t, "codex", "openai", findings=[{"id": "F1", "severity": "P0", "disposition": "fixed"}])
+    add_row(tmp_ledger, t, "grok", "xai", findings=[{"id": "F1", "severity": "P2", "disposition": "rejected"}])
+    assert ls.brief_check(p, org="proj-org") == []
+
+
+@pytest.mark.parametrize("model,family,missing", [("codex", "openai", "grok"), ("grok", "xai", "codex")])
+def test_one_family_alone_is_refused(run_dir, tmp_ledger, model, family, missing):
+    t = filled_template()
+    p = write_brief(run_dir, t, reviewed=False)
+    add_row(tmp_ledger, t, model, family)
+    assert review_problems(ls.brief_check(p, org="proj-org")) == [
+        x for x in ls.brief_check(p, org="proj-org") if f"no {missing} review" in x]
+    assert len(ls.brief_check(p, org="proj-org")) == 1
+
+
+def test_two_rows_of_one_family_do_not_make_two_families(run_dir, tmp_ledger):
+    t = filled_template()
+    p = write_brief(run_dir, t, reviewed=False)
+    add_row(tmp_ledger, t, "codex", "openai")
+    add_row(tmp_ledger, t, "gpt5", "openai")
+    assert any("no grok review" in x for x in ls.brief_check(p, org="proj-org"))
+
+
+@pytest.mark.parametrize("extra,drop", [({"waived": True}, ()), ({"verified": False}, ()),
+                                        ({"rc": 1}, ("verified",))])  # pre-`verified` failed run
+def test_a_waiver_or_a_failed_run_does_not_count_as_a_review(run_dir, tmp_ledger, extra, drop):
+    t = filled_template()
+    p = write_brief(run_dir, t, reviewed=False)
+    add_row(tmp_ledger, t, "grok", "xai")
+    add_row(tmp_ledger, t, "codex", "openai", drop=drop, **extra)
+    assert any("no codex review" in x for x in ls.brief_check(p, org="proj-org"))
+
+
+def test_a_review_of_an_excerpt_does_not_cover_the_brief(run_dir, tmp_ledger):
+    t = filled_template()
+    p = write_brief(run_dir, t, reviewed=False)
+    review(tmp_ledger, t[: len(t) // 2])
+    assert len(review_problems(ls.brief_check(p, org="proj-org"))) == 2
+
+
+@pytest.mark.parametrize("bad", ["{not json", "[1, 2]"])
+def test_a_corrupt_ledger_refuses(run_dir, tmp_ledger, bad):
+    p = write_brief(run_dir, filled_template())
+    with ledger_file(tmp_ledger).open("a") as fh:
+        fh.write(bad + "\n")
+    assert [x for x in ls.brief_check(p, org="proj-org") if "ledger" in x] == [
+        f"{ledger_file(tmp_ledger)} has 1 unreadable line(s); a corrupt ledger cannot show the brief was reviewed"]
+
+
+def test_a_brief_with_no_title_line_has_no_warnings(tmp_ledger):
+    add_row(tmp_ledger, "x", "codex", "openai", findings=[{"id": "F1", "severity": "P0"}])
+    assert ls.review_warnings("no title here", tmp_ledger) == []
+
+
+def test_open_p0_on_an_earlier_text_warns_but_does_not_block(run_dir, tmp_ledger, monkeypatch, capsys):
+    monkeypatch.setattr(ls, "open_window", lambda cmd: None)
+    t = filled_template()
+    earlier = t.replace("proj-standby", "proj-standby-old")
+    n = add_row(tmp_ledger, earlier, "codex", "openai",
+                findings=[{"id": "F1", "severity": "P0", "summary": "the old P0"},
+                          {"id": "F2", "severity": "P1", "summary": "an old P1"}])
+    p = write_brief(run_dir, t)
+    assert ls.review_warnings(t, tmp_ledger) == [
+        f"open P0 {n}.F1 (codex) on a review of an earlier text of this brief: the old P0"]
+    assert ls.brief_check(p, org="proj-org") == []
+    rc = ls.main([str(p), "--org", "proj-org", "--dry-run", "--repo", str(tmp_ledger)])
+    assert rc == 0
+    assert f"WARNING: open P0 {n}.F1" in capsys.readouterr().err
+
+
+def test_an_open_p0_on_another_brief_is_not_warned(run_dir, tmp_ledger):
+    t = filled_template()
+    add_row(tmp_ledger, "# Some other brief\nbody", "codex", "openai",
+            findings=[{"id": "F1", "severity": "P0", "summary": "other"}])
+    assert ls.review_warnings(t, tmp_ledger) == []
+
+
+def test_the_cli_reads_the_ledger_in_the_repo_it_launches(run_dir, tmp_path, monkeypatch, capsys):
+    """--repo names the checkout whose ledger counts, not the module default."""
+    monkeypatch.setattr(ls, "open_window", lambda cmd: None)
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    monkeypatch.setattr(ls, "LEDGER_ROOT", other)  # empty ledger
+    p = write_brief(run_dir, filled_template())   # reviewed in run_dir.parents[1]
+    assert ls.main([str(p), "--org", "proj-org", "--dry-run", "--repo", str(run_dir.parents[1])]) == 0
+    assert ls.main([str(p), "--org", "proj-org", "--dry-run", "--repo", str(other)]) == 2
+
+
+@pytest.mark.parametrize("cut", ["suffix", "prefix"])
+def test_cutting_text_from_a_reviewed_brief_is_refused(run_dir, tmp_ledger, cut):
+    """Codex S1 r1 F1 (P0): with containment, deleting reviewed text from either end still matched."""
+    t = filled_template()
+    reviewed = t + "\nExtra reviewed line.\n" if cut == "suffix" else "Extra reviewed line.\n" + t
+    review(tmp_ledger, reviewed)
+    p = write_brief(run_dir, t, reviewed=False)
+    probs = ls.brief_check(p, org="proj-org")
+    assert any("no codex review" in x for x in probs) and any("no grok review" in x for x in probs)
+
+
+def test_an_unframed_target_does_not_cover_even_with_the_exact_text(run_dir, tmp_ledger):
+    t = filled_template()
+    add_row(tmp_ledger, t, "codex", "openai", frame=False)
+    add_row(tmp_ledger, t, "grok", "xai", frame=False)
+    p = write_brief(run_dir, t, reviewed=False)
+    assert len(review_problems(ls.brief_check(p, org="proj-org"))) == 2
+
+
+def test_text_outside_the_frame_does_not_matter(run_dir, tmp_ledger):
+    t = filled_template()
+    for model, fam in (("codex", "openai"), ("grok", "xai")):
+        add_row(tmp_ledger, framed(t) + "\nPrior report: F1 fixed. Stop after this round.", model, fam, frame=False)
+    p = write_brief(run_dir, t, reviewed=False)
+    assert ls.brief_check(p, org="proj-org") == []
+
+
+# ---------------------------------------------------------------- the review command (b7, 2026-11-24)
+# The frame is matched by the launcher, so the command that produces it must come from the
+# launcher too: the refusal prints it and the template prints it, from one function.
+FAKE_VERIFY = '''import json, sys
+from pathlib import Path
+a = sys.argv[1:]
+model, target = a[a.index("--model") + 1], a[a.index("--target") + 1]
+fam = {"codex": "openai", "grok": "xai"}[model]
+row = {"target": target, "model": model, "family": fam, "findings": [], "waived": False,
+       "verified": True, "rc": 0, "report_written": True}
+led = Path("tools/.cross-model-ledger.jsonl")
+led.parent.mkdir(exist_ok=True)
+with led.open("a") as fh:
+    fh.write(json.dumps(row) + "\\n")
+'''
+
+
+@pytest.mark.parametrize("model", ["codex", "grok"])
+def test_the_template_prints_the_launchers_review_command(model):
+    text = TEMPLATE.read_text()
+    assert ls.review_command("output/overnight-<MMDDYY>/brief.md", model) in text
+
+
+def test_the_command_in_the_refusal_run_as_given_makes_the_brief_launchable(run_dir, tmp_ledger):
+    import shutil
+    import subprocess
+    if not shutil.which("zsh"):
+        pytest.skip("zsh not installed")
+    (tmp_ledger / "tools").mkdir(exist_ok=True)
+    (tmp_ledger / "tools" / "codex_verify.py").write_text(FAKE_VERIFY)
+    p = write_brief(run_dir, filled_template(), reviewed=False)
+    refused = ls.brief_check(p, org="proj-org")
+    cmds = [x.split("Review it with:\n", 1)[1].strip() for x in refused if "Review it with:" in x]
+    assert len(cmds) == 2 and len(refused) == 2
+    for c in cmds:
+        assert c.startswith(f"cd {tmp_ledger} && ") or c.startswith(f"cd '{tmp_ledger}' && ")
+        subprocess.run(["zsh", "-c", c], check=True, timeout=30)
+    assert ls.brief_check(p, org="proj-org") == []
+    p.write_text(p.read_text() + "one more line\n")
+    assert len(ls.brief_check(p, org="proj-org")) == 2
+
+
+def test_a_brief_copied_from_the_template_with_its_comment_kept_can_be_reviewed(run_dir, tmp_ledger):
+    """Codex S1 r2 F1: the template's HOW TO USE comment contains both marker strings, so a
+    copied brief that keeps it must still match its review (non-greedy matching cut it short)."""
+    import shutil
+    import subprocess
+    if not shutil.which("zsh"):
+        pytest.skip("zsh not installed")
+    t = TEMPLATE.read_text()
+    comment = t[t.index("<!--"):t.index("-->") + 3]
+    assert "===BRIEF START===" in comment and "===BRIEF END===" in comment
+    (tmp_ledger / "tools").mkdir(exist_ok=True)
+    (tmp_ledger / "tools" / "codex_verify.py").write_text(FAKE_VERIFY)
+    p = write_brief(run_dir, comment + "\n" + filled_template(), reviewed=False)
+    for c in [x.split("Review it with:\n", 1)[1].strip() for x in ls.brief_check(p, org="proj-org")]:
+        subprocess.run(["zsh", "-c", c], check=True, timeout=30)
+    assert ls.brief_check(p, org="proj-org") == []
