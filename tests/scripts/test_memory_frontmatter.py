@@ -397,10 +397,13 @@ def test_record_fire_refuses_without_claudecode(tmp_path, monkeypatch):
 @pytest.mark.parametrize("evidence", ["", "   ", "the same miss again, no date"])
 def test_record_fire_refuses_without_dated_evidence(tmp_path, monkeypatch, evidence):
     monkeypatch.setenv("CLAUDECODE", "1")
-    p = _file(tmp_path)
-    with pytest.raises(mf.WriteRefused):
+    # GATED, so the threshold refusal (2026-11-25) cannot be what refuses: mutation found
+    # this test passing with the evidence check deleted while it used RULE.
+    p = _file(tmp_path, GATED)
+    with pytest.raises(mf.WriteRefused) as e:
         mf.record_fire(p, evidence)
-    assert p.read_text(encoding="utf-8") == RULE
+    assert "YYYY-MM-DD" in str(e.value)
+    assert p.read_text(encoding="utf-8") == GATED
 
 
 @pytest.mark.parametrize("line", ["  occurrences: many", "  occurrences: -1", "  occurrences: true"])
@@ -502,12 +505,13 @@ def test_record_fire_on_a_file_without_final_newline(tmp_path, monkeypatch):
 
 def test_record_fire_refuses_when_the_count_edit_touches_another_key(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAUDECODE", "1")
-    p = _file(tmp_path)
+    p = _file(tmp_path, GATED)   # GATED: see test_record_fire_refuses_without_dated_evidence
     real = mf._set_keys
     monkeypatch.setattr(mf, "_set_keys", lambda t, u: real(t, u).replace("name: feedback_example_rule", "name: other"))
-    with pytest.raises(mf.WriteRefused):
+    with pytest.raises(mf.WriteRefused) as e:
         mf.record_fire(p, "2026-11-22 a fire")
-    assert p.read_text(encoding="utf-8") == RULE
+    assert "reopen_at is missing" not in str(e.value)
+    assert p.read_text(encoding="utf-8") == GATED
 
 
 def test_write_keeps_metadata_indent_when_a_top_level_key_follows(tmp_path):
