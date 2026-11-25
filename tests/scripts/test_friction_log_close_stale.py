@@ -44,7 +44,7 @@ LEDGER = """# Friction Log
 """
 
 STALE_DUE = {"widget parse failed on empty input", "cog boundary row sixty one days",
-             "FP: blocked a legitimate widget edit"}
+             "FP: blocked a legitimate widget edit", "lever row has no date"}
 STALE_OPEN = {"gadget usage line printed"}
 STALE = STALE_DUE | STALE_OPEN
 
@@ -102,10 +102,25 @@ def test_resolved_and_non_counting_rows_are_never_candidates():
     assert "blocked a widget write as designed" not in names
 
 
-def test_undated_row_is_reported_not_closed():
-    plan = fl.stale_plan(parsed(), fl.date.fromisoformat(AS_OF))
-    assert "lever row has no date" not in natures(cands(plan))
-    assert "lever row has no date" in natures(plan["skipped"])
+def test_undated_row_is_judged_by_the_shared_rule(monkeypatch):
+    """No unjudged bucket: a row with no date reaches freshness_state with last_entry=None,
+    and the shared rule decides it (stale when the window is at least the half-life)."""
+    as_of = fl.date.fromisoformat(AS_OF)                       # window 188 days >= 60
+    assert "lever row has no date" in natures(fl.stale_plan(parsed(), as_of)["due"])
+    monkeypatch.setitem(ls.HALF_LIFE_DAYS, "MACHINERY", 365)   # window 188 days < 365
+    assert "lever row has no date" not in natures(cands(fl.stale_plan(parsed(), as_of)))
+
+
+def test_undated_row_reaches_freshness_state_with_no_entry(monkeypatch):
+    seen = {}
+
+    def spy(kind, last, start, end):
+        seen.setdefault(last, 0)
+        return "current"
+
+    monkeypatch.setattr(ls, "freshness_state", spy)
+    fl.stale_plan(parsed(), fl.date.fromisoformat(AS_OF))
+    assert None in seen
 
 
 def test_the_half_life_comes_from_learning_state(monkeypatch):
@@ -189,18 +204,32 @@ def test_bad_as_of_is_refused(ledger):
     assert "--as-of must be YYYY-MM-DD" in out["message"]
 
 
-def test_a_fire_after_as_of_is_skipped_not_closed():
-    """A row whose last fire is after --as-of is reported, never closed, and does not
-    crash freshness_state (which refuses an entry outside its window)."""
-    rows = parsed()
-    early = fl.date(2026, 7, 1)
-    plan = fl.stale_plan(rows, early)
-    names = natures(plan["skipped"])
-    assert "sprocket row not found" in names                     # last fire 2026-11-20
-    assert "sprocket row not found" not in natures(cands(plan))
-    why = [r["_why"] for r in plan["skipped"] if r["nature"] == "sprocket row not found"]
-    assert why == ["last fire 2026-11-20 is after 2026-07-01"]
-    # A row whose whole range sits before as-of is still judged.
+def test_a_fire_after_as_of_refuses_the_plan():
+    """A due/open row that fired after --as-of is not skipped: the plan refuses."""
+    with pytest.raises(ValueError, match=r"^4 due/open row\(s\) fired after --as-of "
+                                          r"2026-07-01, the latest on 2026-11-20; use an "
+                                          r"--as-of on or after 2026-11-20$"):
+        fl.stale_plan(parsed(), fl.date(2026, 7, 1))
+
+
+def test_a_fire_after_as_of_refuses_the_run(ledger):
+    before = sha(ledger)
+    for mode in (("--dry-run",), ("--apply", "--scope", "due", "--expect-plan", "x")):
+        code, out = run(ledger, "close-stale", *mode, "--as-of", "2026-07-01")
+        assert code == 1 and out["status"] == "error", out
+        assert out["message"].startswith("refusing: 4 due/open row(s) fired after --as-of")
+    assert sha(ledger) == before
+
+
+def test_dry_run_names_undated_rows_it_would_close(ledger):
+    code, out = run(ledger, "close-stale", "--dry-run", "--as-of", AS_OF)
+    assert [r["nature"] for r in out["undated"]] == ["lever row has no date"]
+    assert [r["_last"] for r in out["undated"]] == [None]
+
+
+def test_stale_fix_for_an_undated_row():
+    assert fl.stale_fix(fl.date(2026, 11, 25), None) == (
+        "RESOLVED 2026-11-25 (stale: half-life MACHINERY 60d, no dated fire)")
 
 
 def test_apply_refuses_a_later_as_of_than_the_approved_plan(ledger):

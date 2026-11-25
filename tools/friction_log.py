@@ -849,42 +849,47 @@ def is_stale_close(fix: str) -> bool:
     return bool(re.match(rf"\s*{RESOLVED_PREFIX} \S+ \(stale:", fix or ""))
 
 
-def stale_fix(as_of: date, last: date) -> str:
+def stale_fix(as_of: date, last: date | None) -> str:
     h = ls.HALF_LIFE_DAYS[STALE_KIND]
-    return (f"{RESOLVED_PREFIX} {as_of} {STALE_TAG} half-life {STALE_KIND} {h}d, "
-            f"last fire {last})")
+    when = f"last fire {last}" if last else "no dated fire"
+    return f"{RESOLVED_PREFIX} {as_of} {STALE_TAG} half-life {STALE_KIND} {h}d, {when})"
 
 
 def stale_plan(parsed: list[dict], as_of: date) -> dict:
-    """{"due": [...], "open": [...], "skipped": [...], "window": (start, end)}.
+    """{"due": [...], "open": [...], "window": (start, end)}.
 
-    due/open: rows in that learning_state.friction_state whose freshness_state is
-    "unverified", each with "_last" (its last fire). The window runs from the earliest date
-    in the ledger to as_of. skipped: due/open rows with no date, or a date past as_of.
+    Every due/open row (learning_state.friction_state) is judged; there is no unjudged
+    bucket. A row goes in its list when learning_state.freshness_state calls it
+    "unverified", with "_last" set to its last fire. A row with no date has no observed
+    fire, so freshness_state gets last_entry=None and the shared rule decides it. The
+    window runs from the earliest date in the ledger to as_of. A due/open row whose last
+    fire is after as_of raises ValueError: the run refuses rather than skip the row.
     """
     dated = [d for r in parsed for d in _dates_in(r["date"])]
     start = min((date.fromisoformat(d) for d in dated), default=as_of)
     start = min(start, as_of)
-    out = {"due": [], "open": [], "skipped": [], "window": (start, as_of)}
+    out = {"due": [], "open": [], "window": (start, as_of)}
+    late = []
     for r in parsed:
         state = ls.friction_state(r.get("kind", ""), r["fix"], r["occurrences"])
         if state not in ("due", "open"):
             continue
         ds = _dates_in(r["date"])
-        if not ds:
-            out["skipped"].append({**r, "_why": "no date"})
-            continue
-        last = max(date.fromisoformat(d) for d in ds)
-        if last > as_of:
-            out["skipped"].append({**r, "_why": f"last fire {last} is after {as_of}"})
+        last = max(date.fromisoformat(d) for d in ds) if ds else None
+        if last and last > as_of:
+            late.append(last)
             continue
         if ls.freshness_state(STALE_KIND, last, start, as_of) == "unverified":
             out[state].append({**r, "_last": last})
+    if late:
+        raise ValueError(f"{len(late)} due/open row(s) fired after --as-of {as_of}, the "
+                         f"latest on {max(late)}; use an --as-of on or after {max(late)}")
     return out
 
 
 def _public(r: dict) -> dict:
-    return {k: (str(v) if k == "_last" else v) for k, v in r.items() if k != "_raw"}
+    return {k: (str(v) if k == "_last" and v is not None else v)
+            for k, v in r.items() if k != "_raw"}
 
 
 def with_fix(raw: str, fix: str) -> str:
@@ -913,7 +918,10 @@ def cmd_close_stale(args: argparse.Namespace) -> None:
         fail(f"--as-of must be YYYY-MM-DD, got {args.as_of!r}")
     pre, header_block, data_rows, trailing = read_ledger()
     parsed = [p for p in (parse_row(r) for r in data_rows) if p]
-    plan = stale_plan(parsed, as_of)
+    try:
+        plan = stale_plan(parsed, as_of)
+    except ValueError as e:
+        fail(f"refusing: {e}")
     sha = ledger_sha256()
     start, end = plan["window"]
     chosen_by = {scope: [r for st in states for r in plan[st]]
@@ -931,7 +939,9 @@ def cmd_close_stale(args: argparse.Namespace) -> None:
         "window": {"start": str(start), "end": str(end)},
         "due": {"count": len(plan["due"]), "rows": [_public(r) for r in plan["due"]]},
         "open": {"count": len(plan["open"]), "rows": [_public(r) for r in plan["open"]]},
-        "skipped": [_public(r) for r in plan["skipped"]],
+        # Rows with no date that the shared rule judged stale: shown so Nick's close list
+        # names any row that was swept in without a dated fire.
+        "undated": [_public(r) for r in chosen_by["both"] if r["_last"] is None],
     }
     if args.dry_run:
         ok({"action": "dry-run", **report})
