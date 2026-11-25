@@ -34,5 +34,13 @@
    "question": "Rewrite the example hook instead of blocking?",
    "options": ["a: rewrite", "b: keep blocking"], "acts": "the hooks session edits it", "usd": null,
    "at": "2026-01-05T18:00:00+00:00", "by": "hk", "route": "UNROUTED: no session holds hooks"}
- ]
+ ],
+ "ladder": {
+  "design-shape": {"rung": "R1", "climb_at": 20, "blind_rulings": 4, "shown_rulings": 0, "corrections": 0, "amendments": 0,
+   "agreements_since_correction": 4, "last_sample_at": null, "days_since_sample": null, "lapsed": false,
+   "last_ruling_at": "2026-01-04T00:00:00+00:00", "days_since_ruling": 3},
+  "workstream-status": {"rung": "R2", "climb_at": 20, "blind_rulings": 20, "shown_rulings": 0, "corrections": 0, "amendments": 0,
+   "agreements_since_correction": 20, "last_sample_at": "2026-01-04T00:00:00+00:00", "days_since_sample": 3, "lapsed": false,
+   "last_ruling_at": "2026-01-04T00:00:00+00:00", "days_since_ruling": 3}
+ }
 }

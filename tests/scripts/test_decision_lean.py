@@ -131,10 +131,17 @@ def test_time_bound_carries_its_date(main, capsys):
 
 # --- refusals: required on new adds ---------------------------------------------------------
 
-@pytest.mark.parametrize("flag", ["--lean", "--rests-on", "--if-nothing", "--group"])
+@pytest.mark.parametrize("flag", ["--rests-on", "--if-nothing", "--group"])
 def test_each_field_is_required_on_add(main, capsys, flag):
     with pytest.raises(SystemExit):
         add(main, capsys, lean=_without(flag))
+    assert not (main / "data" / "run-manifest" / "questions.jsonl").exists()
+
+
+def test_the_lean_is_required_on_a_class_that_is_not_blind(main, capsys):
+    # Optional in argparse since BLIND_CLASSES (2026-11-24); refused in lean_fields instead.
+    code, data, _ = add(main, capsys, lean=_without("--lean"))
+    assert code == 1 and data["code"] == "lean_required"
     assert not (main / "data" / "run-manifest" / "questions.jsonl").exists()
 
 

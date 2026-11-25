@@ -58,7 +58,7 @@ def test_live_source_reads_decision_writes_own_listing(monkeypatch, tmp_path):
     monkeypatch.setattr(mp.decision_write, "resolve_main", lambda root: tmp_path)
     monkeypatch.setattr(mp.decision_write, "listing", fake_listing)
     out = mp.decisions_waiting(tmp_path)
-    assert out == {"error": None, "board": "ok", "open": [_q(1)]}
+    assert out == {"error": None, "board": "ok", "open": [_q(1)], "ladder": {}, "ladder_error": None}
     assert seen["p"]["questions"] == tmp_path / "data" / "run-manifest" / "questions.jsonl"
 
 
@@ -260,3 +260,179 @@ def test_a_string_rests_on_is_not_split_into_characters():
     q = _q(1, group="policy", rests_on="data/goals.md:1")
     sec = _section(_page({"error": None, "board": "ok", "open": [q]}), "decisions")
     assert "<code>d</code>" not in sec and "no data line recorded" in sec
+
+
+# --- the trust ladder line (overnight 2026-11-24, S2) ---------------------------------------
+# One line per class, read ONLY from decision_write.ladder(): the page never counts rungs itself.
+
+def _ladder_section(ladder):
+    return _section(_page({"error": None, "board": "ok", "open": [], "ladder": ladder}), "decisions")
+
+
+def _rung(**kw):
+    base = {"rung": "R1", "climb_at": 20, "blind_rulings": 10, "shown_rulings": 0, "corrections": 0,
+            "amendments": 0, "agreements_since_correction": 10,
+            "last_sample_at": None, "days_since_sample": None, "lapsed": False,
+            "last_ruling_at": "2026-01-01T00:00:00+00:00", "days_since_ruling": 6}
+    return {**base, **kw}
+
+
+def test_one_ladder_line_per_class_with_the_count_toward_twenty():
+    sec = _ladder_section({"scope": _rung(), "workstream-status": _rung(agreements_since_correction=12)})
+    assert "workstream-status: R1, 12 of 20 blind agreements since the last correction" in sec
+    assert "scope: R1, 10 of 20" in sec
+    assert sec.index("scope:") < sec.index("workstream-status:")
+
+
+def test_a_climbed_class_reads_r2():
+    sec = _ladder_section({"workstream-status": _rung(rung="R2", agreements_since_correction=20)})
+    assert "workstream-status: R2, 20 blind agreements since the last correction" in sec
+
+
+def test_a_demoted_class_shows_its_correction():
+    sec = _ladder_section({"workstream-status": _rung(agreements_since_correction=0, corrections=1)})
+    assert "workstream-status: R1, 0 of 20" in sec and "1 correction" in sec
+
+
+def test_a_lapsed_class_says_so():
+    sec = _ladder_section({"scope": _rung(rung="R2", agreements_since_correction=20,
+                                          days_since_sample=31, lapsed=True)})
+    assert "last sample of 20 completed 31 days ago, lapsed" in sec
+    assert "last blind ruling" not in sec
+
+
+def test_a_class_with_no_completed_sample_shows_its_last_ruling():
+    sec = _ladder_section({"scope": _rung()})
+    assert "last blind ruling 6 days ago" in sec and "last sample" not in sec
+
+
+def test_shown_lean_rulings_are_named_as_not_counted():
+    sec = _ladder_section({"scope": _rung(shown_rulings=4)})
+    assert "4 shown-lean rulings not counted" in sec
+
+
+def test_no_shown_lean_clause_when_none_were_shown():
+    """Mutation 2026-11-24 (_ladder_line IF_TRUE): a zero count is not printed."""
+    sec = _ladder_section({"scope": _rung(shown_rulings=0)})
+    assert "shown-lean" not in sec
+
+
+def test_no_last_ruling_clause_without_a_ruling_date():
+    """Mutation 2026-11-24 (_ladder_line IF_TRUE): no sample and no ruling date prints neither."""
+    sec = _ladder_section({"scope": _rung(days_since_ruling=None, last_ruling_at=None)})
+    assert "last blind ruling" not in sec and "None" not in sec and "last sample" not in sec
+
+
+def test_a_ladder_that_is_not_a_mapping_is_unavailable_not_a_crash():
+    """Mutation 2026-11-24 (checked_ladder IF_FALSE / RETURN_NONE)."""
+    page = _page({"error": None, "board": "ok", "open": [_q(1)], "ladder": ["scope"]})
+    sec = _section(page, "decisions")
+    assert "Trust ladder unavailable: ladder is list, not a mapping" in sec
+    assert "Question 1?" in sec
+
+
+def test_no_ladder_says_none_resolved_yet():
+    assert "No blind rulings resolved yet" in _ladder_section({})
+
+
+def test_a_missing_ladder_is_stated_not_hidden():
+    sec = _section(_page({"error": None, "board": "ok", "open": []}), "decisions")
+    assert "Trust ladder unavailable" in sec
+
+
+# Codex 1339 / Grok 1342 (org b7 ruling: fix all three before commit 2).
+
+def test_the_threshold_and_correction_count_come_from_the_ladder_record():
+    """F1: the page supplies no number of its own: "of N" is the record's climb_at."""
+    sec = _ladder_section({"scope": _rung(climb_at=7, agreements_since_correction=3, corrections=5)})
+    assert "scope: R1, 3 of 7 blind agreements" in sec and "5 corrections" in sec
+    assert "of 20" not in sec
+
+
+@pytest.mark.parametrize("bad", [None, [], "x", {"rung": "R1"},
+                                 {**{"rung": "R1", "climb_at": 20, "corrections": 0,
+                                     "agreements_since_correction": "ten"}}])
+def test_a_malformed_class_record_makes_the_ladder_unavailable_not_a_crash(bad):
+    """F2: a bad record never reaches the renderer; the reason is stated; questions still list."""
+    page = _page({"error": None, "board": "ok", "open": [_q(1)], "ladder": {"scope": bad}})
+    sec = _section(page, "decisions")
+    assert "Trust ladder unavailable: scope" in sec
+    assert "Question 1?" in sec
+
+
+@pytest.mark.parametrize("exc", [ValueError, RuntimeError])
+def test_a_ladder_failure_keeps_the_open_questions(monkeypatch, tmp_path, exc):
+    """F3, and Codex 1344.F2: ANY ladder exception is stated and the questions still show."""
+    monkeypatch.setattr(mp.decision_write, "resolve_main", lambda root: tmp_path)
+    monkeypatch.setattr(mp.decision_write, "listing", lambda p: ([_q(1)], "ok"))
+
+    def boom(events):
+        raise exc("bad timestamp")
+
+    monkeypatch.setattr(mp.decision_write, "ladder", boom)
+    out = mp.decisions_waiting(tmp_path)
+    assert out["open"] == [_q(1)] and out["ladder"] is None
+    assert f"{exc.__name__}: bad timestamp" in out["ladder_error"]
+    page = mp.render(mp.build_view({**mp.gather_demo(), "decisions": out}, NOW), NOW, demo=True)
+    sec = _section(page, "decisions")
+    assert f"Trust ladder unavailable: {exc.__name__}: bad timestamp" in sec and "Question 1?" in sec
+
+
+def test_the_demo_ladder_is_valid_and_renders():
+    """Grok 1347.F1: the packaged demo fixture must pass checked_ladder."""
+    v = mp.build_view(mp.gather_demo(), NOW)["decisions"]
+    assert v["ladder_error"] is None and set(v["ladder"]) == {"design-shape", "workstream-status"}
+    sec = _section(mp.render(mp.build_view(mp.gather_demo(), NOW), NOW, demo=True), "decisions")
+    assert "workstream-status: R2, 20 blind agreements" in sec
+
+
+def test_ladder_lines_are_not_clamped_to_two_lines():
+    """Grok 1347.F2: every li is clamped to two lines unless its list opts out."""
+    page = mp.render(mp.build_view(mp.gather_demo(), NOW), NOW, demo=True)
+    assert "ul.ladder li{display:block" in page
+
+
+def test_the_line_reads_decision_writes_ladder_function(monkeypatch, tmp_path):
+    """Mutation guard: swap ladder() for a sentinel; the page must show exactly the sentinel."""
+    monkeypatch.setattr(mp.decision_write, "resolve_main", lambda root: tmp_path)
+    monkeypatch.setattr(mp.decision_write, "listing", lambda p: ([], "ok"))
+    monkeypatch.setattr(mp.decision_write, "ladder",
+                        lambda events: {"sentinel-class": _rung(agreements_since_correction=17,
+                                                                climb_at=31, corrections=4)})
+    src = {**mp.gather_demo(), "decisions": mp.decisions_waiting(tmp_path)}
+    page = mp.render(mp.build_view(src, NOW), NOW, demo=True)
+    sec = _section(page, "decisions")
+    assert "sentinel-class: R1, 17 of 31" in sec and "4 corrections" in sec
+
+
+def test_a_blind_open_question_says_no_lean_shown():
+    sec = _section(_page({"error": None, "board": "ok", "open": [_q(1, lean=None, lean_shown=False)],
+                          "ladder": {}}), "decisions")
+    assert "blind: no lean shown" in sec and "no lean recorded" not in sec
+
+
+def _main(tmp_path, outcomes):
+    """A real queue on disk: blind workstream-status questions resolved with these outcomes."""
+    root = tmp_path / "main"
+    (root / ".git").mkdir(parents=True)
+    q = root / "data" / "run-manifest"
+    q.mkdir(parents=True)
+    rows = []
+    for n, out in enumerate(outcomes, 1):
+        rows.append({"type": "asked", "id": f"Q{n}", "class": "workstream-status", "lean_shown": False})
+        rows.append({"type": "resolved", "id": f"Q{n}", "outcome": out, "lean_shown": False,
+                     "at": f"2026-01-{n % 28 + 1:02d}T00:00:{n % 60:02d}+00:00"})
+    (q / "questions.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    return root
+
+
+@pytest.mark.parametrize("outcomes,line", [
+    (["agree"] * 20, "workstream-status: R2, 20 blind agreements"),
+    (["agree"] * 20 + ["correction"], "workstream-status: R1, 0 of 20"),
+])
+def test_climb_and_demotion_show_on_a_real_queue(tmp_path, monkeypatch, outcomes, line):
+    root = _main(tmp_path, outcomes)
+    monkeypatch.setattr(mp.decision_write, "listing", lambda p: ([], "ok"))
+    src = {**mp.gather_demo(), "decisions": mp.decisions_waiting(root)}
+    page = mp.render(mp.build_view(src, NOW), NOW, demo=True)
+    assert line in _section(page, "decisions")
