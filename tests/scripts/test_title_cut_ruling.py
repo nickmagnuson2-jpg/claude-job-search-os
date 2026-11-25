@@ -616,3 +616,120 @@ def test_a_correction_in_the_same_second_as_an_acceptance_resets_the_class(tmp_p
     _correction(tmp_path, 0)                  # ruled_at    10:00:00, the same second
     c = tcr.ladder(tmp_path, now=NOW)[1]["classes"][SALES]
     assert (c["agreements_since_correction"], c["corrections"]) == (0, 1)
+
+
+# --- accept re-validates inside one lock over both logs (11-24 P1s) ----------------------------
+# Codex r2 F1: accept validated the scan, then took the lock without re-checking, so a rollover
+# in between recorded an acceptance one scan late. Grok F2: the rulings log was read under the
+# accepts lock only, so a mark in the same moment could be missed. Grok F1: the predecessor's
+# keys were not checked as a list of strings, the way record_scan checks them.
+
+def test_a_scan_rollover_between_validation_and_the_lock_is_refused(tmp_path, monkeypatch):
+    import contextlib
+    root = _page_root(tmp_path, [_sales_cut(1)])
+    real = tcr.file_lock
+    rolled = []
+
+    @contextlib.contextmanager
+    def roll_then_lock(path, *a, **k):
+        if not rolled:      # the scan rolls over just before accept takes its first lock
+            rolled.append(1)
+            q = root / "tools" / ".role-queue.json"
+            body = json.loads(q.read_text())
+            body["scanned_at"] = "2026-01-07T16:30:00+00:00"
+            q.write_text(json.dumps(body))
+        with real(path, *a, **k) as held:
+            yield held
+    monkeypatch.setattr(tcr, "file_lock", roll_then_lock)
+    code, out = tcr.accept(root, SCAN, now=NOW)
+    assert code == 2 and "newer scan" in out["error"], out
+    assert not [x for x in tcr.load_accepts(root)["rulings"] if x["ruling"] == "accepted"]
+
+
+def test_a_list_that_changed_under_the_lock_is_refused(tmp_path, monkeypatch):
+    root = _page_root(tmp_path, [_sales_cut(1), _sales_cut(2)])
+    real, calls = tcr.shown_cuts, []
+
+    def second_call_sees_a_shorter_list(r, scan):
+        code, got = real(r, scan)
+        calls.append(1)
+        if len(calls) == 2:
+            got = {**got, "cuts": got["cuts"][:1]}
+        return code, got
+    monkeypatch.setattr(tcr, "shown_cuts", second_call_sees_a_shorter_list)
+    code, out = tcr.accept(root, SCAN, now=NOW)
+    assert len(calls) == 2
+    assert code == 2 and "changed" in out["error"], out
+    assert not tcr.accepts_path(root).exists() or not tcr.load_accepts(root)["rulings"]
+
+
+def test_accept_holds_the_rulings_lock_then_the_accepts_lock(tmp_path, monkeypatch):
+    import contextlib
+    root = _page_root(tmp_path, [_sales_cut(1)])
+    order, real = [], tcr.file_lock
+
+    @contextlib.contextmanager
+    def record(path, *a, **k):
+        order.append(("enter", Path(path)))
+        with real(path, *a, **k) as held:
+            yield held
+        order.append(("exit", Path(path)))
+    monkeypatch.setattr(tcr, "file_lock", record)
+    assert tcr.accept(root, SCAN, now=NOW)[0] == 0
+    r, a = tcr.rulings_path(root), tcr.accepts_path(root)
+    assert order == [("enter", r), ("enter", a), ("exit", a), ("exit", r)]
+
+
+def test_a_mark_during_accept_waits_for_it(tmp_path, monkeypatch):
+    """A real mark in another process blocks while accept is between its read of the rulings
+    log and its append, so it can never land unseen in that window."""
+    import threading
+    monkeypatch.setenv("JOBSEARCH_LOCK_DIR", str(tmp_path / "locks"))
+    cuts = [_sales_cut(1), _sales_cut(2)]
+    root = _page_root(tmp_path, cuts)
+    inside, release = threading.Event(), threading.Event()
+    real_load = tcr.load_rulings
+
+    def pause_after_reading(r):
+        out = real_load(r)
+        inside.set()
+        release.wait(20)
+        return out
+    monkeypatch.setattr(tcr, "load_rulings", pause_after_reading)
+    result = {}
+    t = threading.Thread(target=lambda: result.update(r=tcr.accept(root, SCAN, now=NOW)))
+    t.start()
+    try:
+        assert inside.wait(20)
+        mark = subprocess.Popen(
+            [sys.executable, str(TOOLS / "title_cut_ruling.py"), "--repo-root", str(root),
+             "mark", "--key", tcr.cut_key(cuts[1]), "--reason", "in lane"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            mark.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            pass
+        assert mark.poll() is None, ("mark wrote while accept held the rulings log unread", mark.communicate() if mark.poll() is not None else "")
+    finally:
+        release.set()
+        t.join(20)
+    assert mark.wait(timeout=30) == 0
+    assert result["r"][0] == 0
+
+
+@pytest.mark.parametrize("bad", ["abc", [1, 2], ["ok", None], {"k": 1}])
+def test_a_corrupt_predecessor_in_the_store_is_refused(tmp_path, bad):
+    root = _page_root(tmp_path, [_sales_cut(1)])
+    store_path = root / "data" / "calibration" / "title-cut-scans.json"
+    store = json.loads(store_path.read_text())
+    store[PREV] = bad
+    store_path.write_text(json.dumps(store))
+    code, out = tcr.accept(root, SCAN, now=NOW)
+    assert code == 2 and "not a list of key strings" in out["error"], out
+    assert not tcr.accepts_path(root).exists()
+
+
+def test_the_adapter_emits_decision_writes_own_word_agree():
+    ev = tcr.ladder_events([], [{"accepted_at": "2026-01-06T10:00:00+00:00", "by": "nick",
+                                  "ruling": "accepted", "cut_reason": SALES}])
+    assert [e["outcome"] for e in ev if e["type"] == "resolved"] == ["agree"]

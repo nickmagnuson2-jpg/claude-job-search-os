@@ -273,7 +273,13 @@ def shown_cuts(root: Path, scan: str) -> tuple[int, dict]:
         # none; "new" would read as every cut (L2b live smoke: 173 for the oldest stored scan).
         return 2, {"error": f"the scan of {scan} has no earlier scan in the cut-scan store, so "
                             "its list of new cuts cannot be rebuilt"}
-    previous = set(store[earlier[-1]])
+    prev_keys = store[earlier[-1]]
+    # The same check record_scan makes on every stored scan (Grok F1, 2026-11-24): set() of a
+    # string or a dict would silently become a set of characters or keys.
+    if not isinstance(prev_keys, list) or not all(isinstance(k, str) for k in prev_keys):
+        return 2, {"error": f"cut-scan store: the scan before {scan} ({earlier[-1]}) is not a "
+                            "list of key strings, so the list of new cuts cannot be rebuilt"}
+    previous = set(prev_keys)
     companies, err = fs.load_companies(root)
     if err:
         return 2, {"error": err}
@@ -296,7 +302,18 @@ def accept(root: Path, scan: str, by: str = "nick",
         return code, got
     scan = got["scanned_at"]
     path = accepts_path(root)  # beside the cut-scan store, which shown_cuts found: the dir exists
-    with file_lock(path):
+    # ONE lock over both logs, rulings first (mark takes the rulings lock), so a mark cannot
+    # land between reading the rulings and appending here (Grok F2, 2026-11-24). Inside it,
+    # the list is rebuilt and must equal the one validated above, so a scan rollover or a
+    # targets edit in between refuses instead of recording one scan late (Codex r2 F1).
+    with file_lock(rulings_path(root)), file_lock(path):
+        code, again = shown_cuts(root, scan)
+        if code:
+            return code, again
+        if again["scanned_at"] != scan or \
+                [c["role_key"] for c in again["cuts"]] != [c["role_key"] for c in got["cuts"]]:
+            return 2, {"error": "the scan's list changed while accepting; nothing recorded. "
+                                "Re-read the page and accept again"}
         rulings, accepts = load_rulings(root), load_accepts(root)
         for log in (rulings, accepts):
             if log["error"]:
@@ -333,15 +350,20 @@ def ladder_events(rulings: list, accepts: list) -> list:
     resolved pair per line; class = the gate's cut reason at cut time (20 distinct values over
     753 cuts in the 11-24 queue, none carrying a per-role detail). Only Nick's lines count.
 
+    The outcome is "agree", decision_write's own word; ladder() counts any outcome other than
+    "correction" toward the climb, so the word is for consistency, not the count.
+
     lean_shown is False here and ONLY here, never stored in either log: the title-cut rule
     (funnel-intake.md "Autonomy ladder", D2 of 2026-10-28: "20 consecutive cuts with 0
     corrections") counts every cut Nick explicitly reviewed, and the cut is the gate's action
-    under review, not a lean Claude showed him. Without it ladder() would count none."""
+    under review, not a lean Claude showed him. ladder() skips only lean_shown is True, so an
+    absent field would count the same; False is set to state the fact, not because the count
+    requires it (Grok full-branch F2, 2026-11-24)."""
     # Timestamps are to the second. On a tie the correction sorts LAST, so a correction made in
     # the same second as an acceptance always resets the class: the safe direction, never an
     # agreement too many (Codex r1 F3). ladder() re-sorts by time, stably, keeping this order.
     lines = [(r.get("ruled_at") or "", 1, "correction", r) for r in rulings] + \
-            [(a.get("accepted_at") or "", 0, "agreement", a) for a in accepts
+            [(a.get("accepted_at") or "", 0, "agree", a) for a in accepts
              if a.get("ruling") == ACCEPTED]
     events = []
     for n, (at, _, outcome, r) in enumerate(sorted(lines, key=lambda x: x[:2])):
