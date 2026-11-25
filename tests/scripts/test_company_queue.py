@@ -799,3 +799,48 @@ def test_load_follows_a_symlink_to_a_real_queue(tmp_path):
 
 def test_load_of_a_missing_queue_is_empty(tmp_path):
     assert cq.load(tmp_path) == {"pending": [], "decided": []}
+
+
+# --- old-code mutation survivors (S5 r1, 2026-11-25) ---------------------------------------
+_REPO = Path(__file__).resolve().parents[2]
+
+
+def _isolated(code: str):
+    import subprocess
+    import sys
+    return subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True,
+                          cwd=str(_REPO.parent), timeout=60)
+
+
+def test_importing_as_a_package_puts_tools_on_the_path():
+    """company_queue.py:41. With only the repo root on sys.path, `import inbox_lock` needs it."""
+    p = _isolated(f"import sys; sys.path[:0] = [{str(_REPO)!r}]; import tools.company_queue; print('OK')")
+    assert p.stdout.strip() == "OK", p.stderr
+
+
+def test_running_from_tools_puts_the_repo_root_on_the_path():
+    """company_queue.py:42. With only tools/ on sys.path (a bare-script run), the board
+    fetchers are imported as tools.career_scanner.*."""
+    p = _isolated(f"import sys; sys.path[:0] = [{str(_REPO / 'tools')!r}]; import company_queue; "
+                  "print(sorted(company_queue._default_fetchers()))")
+    assert p.stdout.strip() == "['ashby', 'greenhouse', 'lever']", p.stderr
+
+
+def test_a_fetcher_that_raises_makes_the_board_check_indeterminate():
+    """company_queue.py:492-493: the exception is recorded and the next probe runs."""
+    def boom(slug, errors=None):
+        raise RuntimeError("connection reset")
+    with pytest.raises(cq.BoardCheckIndeterminate, match="ashby/acme: connection reset"):
+        cq.detect_board("Acme", {"ashby": boom})
+    calls = []
+
+    def found_second(slug, errors=None):
+        calls.append(slug)
+        return [{"title": "x"}]
+    assert cq.detect_board("Acme", {"ashby": boom, "greenhouse": found_second}) == \
+        {"ats": "greenhouse", "slug": "acme", "n_roles": 1}
+
+
+def test_a_fetcher_with_no_readable_signature_has_no_error_channel():
+    """company_queue.py:519: a builtin inspect cannot read answers False, the declared bool."""
+    assert cq._takes_errors(iter) is False
