@@ -170,15 +170,37 @@ def test_apply_needs_an_explicit_scope(ledger):
     before = sha(ledger)
     code, out = run(ledger, "close-stale", "--apply", "--expect-plan",
                     plan_sha(ledger, "due"), "--as-of", AS_OF)
-    assert code != 0
+    assert code == 1 and out["status"] == "error"
+    assert "--scope" in out["message"] and "no default" in out["message"]
     assert sha(ledger) == before
 
 
-def test_apply_needs_the_hash(ledger):
+def test_apply_needs_the_plan_digest(ledger):
     before = sha(ledger)
     code, out = run(ledger, "close-stale", "--apply", "--scope", "due", "--as-of", AS_OF)
-    assert code != 0 and out["status"] == "error"
+    assert code == 1 and out["status"] == "error"
+    assert out["message"].startswith("--apply needs --expect-plan")
     assert sha(ledger) == before
+
+
+def test_bad_as_of_is_refused(ledger):
+    code, out = run(ledger, "close-stale", "--dry-run", "--as-of", "11/25/2026")
+    assert code == 1 and out["status"] == "error"
+    assert "--as-of must be YYYY-MM-DD" in out["message"]
+
+
+def test_a_fire_after_as_of_is_skipped_not_closed():
+    """A row whose last fire is after --as-of is reported, never closed, and does not
+    crash freshness_state (which refuses an entry outside its window)."""
+    rows = parsed()
+    early = fl.date(2026, 7, 1)
+    plan = fl.stale_plan(rows, early)
+    names = natures(plan["skipped"])
+    assert "sprocket row not found" in names                     # last fire 2026-11-20
+    assert "sprocket row not found" not in natures(cands(plan))
+    why = [r["_why"] for r in plan["skipped"] if r["nature"] == "sprocket row not found"]
+    assert why == ["last fire 2026-11-20 is after 2026-07-01"]
+    # A row whose whole range sits before as-of is still judged.
 
 
 def test_apply_refuses_a_later_as_of_than_the_approved_plan(ledger):
