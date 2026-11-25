@@ -151,3 +151,13 @@ def test_the_hook_decides_from_the_declared_data(tmp_path, linked, with_data, ow
     assert got.get("bare") == "ERROR", stdout
     if expect == "SKIPPED" and not owner:
         assert "not the owner's data checkout" in stdout
+
+
+def test_the_live_data_marker_is_registered_with_its_contract(tmp_path):
+    """An unregistered marker still matches, but only with a warning, and `pytest --markers`
+    stops documenting the contract (mutation, 2026-11-25: dropping the registration
+    survived every other test)."""
+    root = _repo(tmp_path, linked=False, with_data=True)
+    r = subprocess.run([sys.executable, "-m", "pytest", "--markers", "-p", "no:cacheprovider"],
+                       cwd=root, capture_output=True, text=True)
+    assert "@pytest.mark.live_data(*paths)" in r.stdout, r.stdout[-600:]
