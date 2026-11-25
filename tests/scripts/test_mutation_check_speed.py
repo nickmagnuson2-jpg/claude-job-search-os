@@ -1595,3 +1595,13 @@ def test_the_help_states_when_a_changed_lines_only_record_counts():
     h = "".join(r.stdout.split())          # argparse wraps, and may break at a hyphen
     assert "--changed-lines-only" in h
     assert "widen_skipped" in h and "one-linereasonperskippeditem" in h
+
+
+def test_changed_lines_only_says_so_when_the_skipped_inputs_cannot_be_listed(tmp_path, monkeypatch):
+    """git failing to list test inputs must not read as "nothing skipped"."""
+    src, t = _repo(tmp_path)
+    src.write_text(src.read_text().replace("if n > 100:", "if n >= 101:"))
+    monkeypatch.setattr(mc, "changed_test_inputs", lambda *a, **k: None)
+    s = mc.resolve_scope(_args(changed_lines_only=True), src, tmp_path, [t])
+    assert s["mode"] == "changed_lines_only" and sorted(s["changed"]) == [8]
+    assert s["widen_skipped"] == ["changed test inputs could not be listed (git failed)"]
