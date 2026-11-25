@@ -143,7 +143,9 @@ def test_three_readers_agree_on_the_live_tier(capsys):
 def test_ledger_friction_due_matches_friction_state_on_the_live_ledger(capsys):
     path = REPO_ROOT / "memory" / "friction-log.md"
     if not path.is_file():
-        pytest.fail(f"live friction ledger missing: {path}")
+        # The repo's memory/ is gitignored: a mutation worktree (whose conftest may not load)
+        # has no copy. The main checkout always has it, and there the preflight runs this.
+        pytest.skip(f"LIVE-DATA-ABSENT: {path} is gitignored and absent in this checkout")
     _, _, rows, _ = friction_log.read_ledger()
     want = 0
     for row in rows:
