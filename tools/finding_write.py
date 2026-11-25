@@ -48,10 +48,20 @@ worktree: never the run number,
 which differs per ledger, and never main's own review. No match, an ambiguous match or any
 error warns on stderr and leaves the worktree write standing; the result carries
 "mirrored": true, false, or null outside a linked worktree.
+
+A DISPOSITION OF A WORKTREE'S RUN IS WRITTEN FROM THAT WORKTREE (2026-11-24, S4b). Run from
+the main checkout on a mirrored row whose worktree still exists, `set` and `accept` refuse,
+write nothing, and print the command to run there: that path writes the worktree's copy,
+which the pre-push gate run from the worktree reads, and mirrors it to main. Before this, a
+set from main changed main's mirror only, and the worktree's gate kept refusing on an "open"
+P0 (L2, overnight 2026-11-24). It refuses instead of writing the worktree's copy from main,
+because that would be a second row matcher, run in reverse, that has to agree with
+mirror_to_main. A row whose worktree is gone is written in main as before.
 """
 import argparse
 import json
 import os
+import shlex
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -150,7 +160,33 @@ def collect(repo_root: Path, only_open: bool = False,
     return out
 
 
-def _edit_finding(repo_root: Path, addr: str, apply) -> dict:
+def live_worktree(row: dict) -> Path | None:
+    """The linked worktree a mirrored row came from, while it still exists, else None."""
+    wt = row.get("worktree")
+    if not wt or not isinstance(wt, str):
+        return None
+    path = Path(wt)
+    return path if (path / ".git").is_file() else None
+
+
+def worktree_command(row: dict, fid: str, verb_args: list[str]) -> str:
+    """The refusal text: where to run this write instead, as a command to paste."""
+    wt = live_worktree(row)
+    tool = "PYTHONIOENCODING=utf-8 python3 tools/finding_write.py"
+    rest = " ".join(shlex.quote(a) for a in verb_args[1:])
+    run = row.get("worktree_run")
+    if isinstance(run, int) and not isinstance(run, bool):
+        cmd = f"cd {shlex.quote(str(wt))} && {tool} {verb_args[0]} {run}.{fid} {rest}"
+        return (f"this run belongs to the worktree {wt}, whose own ledger copy the pre-push "
+                f"gate reads; nothing was written. Run it there (it mirrors to main): {cmd}")
+    return (f"this run belongs to the worktree {wt}, whose own ledger copy the pre-push gate "
+            f"reads; nothing was written. Main does not record the run's number there, so "
+            f"find it with: cd {shlex.quote(str(wt))} && {tool} list (report="
+            f"{row.get('report')!r}, recorded={row.get('recorded')!r}), then run: {tool} "
+            f"{verb_args[0]} <run>.{fid} {rest}")
+
+
+def _edit_finding(repo_root: Path, addr: str, apply, verb_args: list[str] | None = None) -> dict:
     """Resolve `addr` to exactly one finding and let `apply(finding)` change it in place,
     under the ledger lock. `apply` raises to abort; nothing is written on any error.
     Returns {"row": a copy of the edited row, "lines": the ledger's run count}, from which
@@ -201,6 +237,8 @@ def _edit_finding(repo_root: Path, addr: str, apply) -> dict:
             raise KeyError(f"run {run_no} is not valid JSON and cannot be edited") from exc
         if not isinstance(row, dict):
             raise KeyError(f"run {run_no} is not an object")
+        if verb_args is not None and from_main and live_worktree(row) is not None:
+            raise ValueError(worktree_command(row, fid, verb_args))
 
         # EXACTLY ONE match, never "the first". (F2, P1.) Nothing rejects duplicate ids at
         # ingest, so a model emitting two findings called F1 makes `collect()` advertise
@@ -223,6 +261,8 @@ def _edit_finding(repo_root: Path, addr: str, apply) -> dict:
         lines[run_no - 1] = json.dumps(row, ensure_ascii=False)
         return "\n".join(lines) + "\n"
 
+    import codex_verify as cv     # its worktree test; no second copy of it
+    from_main = not cv._is_linked_worktree(Path(repo_root).resolve())
     ident: dict = {}
     inbox_lock.atomic_update(path, _transform)
     return ident
@@ -267,8 +307,10 @@ def set_disposition(repo_root: Path, addr: str, disposition: str, why: str,
     # findings-durable r1 F1): otherwise a second session can write and mirror in between,
     # and this call's older fields then overwrite main. The lock is reentrant, and only
     # this path nests a main lock inside a worktree lock, so the order is always the same.
+    verb = ["set", "--disposition", disposition, "--why", why.strip()] + (["--force"] if force else [])
     with inbox_lock.file_lock(ledger_path(repo_root)):
-        return _with_mirror(repo_root, addr, _edit_finding(repo_root, addr, _apply), captured)
+        return _with_mirror(repo_root, addr, _edit_finding(repo_root, addr, _apply, verb),
+                            captured)
 
 
 def accept(repo_root: Path, addr: str, why: str, by: str = "owner") -> dict:
@@ -305,8 +347,10 @@ def accept(repo_root: Path, addr: str, why: str, by: str = "owner") -> dict:
     # findings-durable r1 F1): otherwise a second session can write and mirror in between,
     # and this call's older fields then overwrite main. The lock is reentrant, and only
     # this path nests a main lock inside a worktree lock, so the order is always the same.
+    verb = ["accept", "--why", why.strip()]
     with inbox_lock.file_lock(ledger_path(repo_root)):
-        return _with_mirror(repo_root, addr, _edit_finding(repo_root, addr, _apply), captured)
+        return _with_mirror(repo_root, addr, _edit_finding(repo_root, addr, _apply, verb),
+                            captured)
 
 
 class _NotMirrored(Exception):
@@ -458,7 +502,10 @@ def main(argv=None) -> int:
             result = set_disposition(root, args.addr, args.disposition, args.why,
                                      force=args.force)
     except (KeyError, ValueError) as exc:
-        print(json.dumps({"error": str(exc).strip("'")}), file=sys.stderr)
+        # args[0], not str(exc): str() of a KeyError wraps it in quotes, and stripping them
+        # also cut the closing quote off a refusal's command (S4b).
+        print(json.dumps({"error": str(exc.args[0]) if exc.args else str(exc)}),
+              file=sys.stderr)
         return 2
     print(json.dumps(result, indent=2))
     return 0

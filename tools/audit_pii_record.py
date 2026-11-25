@@ -26,6 +26,13 @@ recorded_only_in_worktree. A linked worktree whose main cannot be found exits 2
 (main_checkout_unresolved) and writes nothing. The library functions (read_rows, has_clean_record,
 append_waiver) still use the root they are given: land_branch's merge-push preview runs the
 guard inside a throwaway worktree whose copy holds rows main does not have yet.
+
+FROM THE MAIN CHECKOUT (2026-11-24, S4b): `record` also appends the row to the copy of every
+linked worktree that has a BRANCH checked out at a commit with the recorded tree, because a
+push from that worktree reads its own copy. Before this, a record made from main reached only
+main, and land_branch's dry run from the worktree refused a branch that had a clean record
+(L1, overnight 2026-11-24). Detached worktrees (mutation and suite_record temp trees) are
+skipped: rows there outlive the tree that used them. The result names the copies reached.
 """
 from __future__ import annotations
 
@@ -77,6 +84,34 @@ def resolve_main(root: Path) -> Path:
     except RuntimeError as e:
         raise MainUnresolved(str(e)) from None
     return Path(main) if main else Path(root)
+
+
+def branch_worktrees_at(main: Path, tree: str) -> list[Path]:
+    """Linked worktrees with a branch checked out at a commit whose tree is TREE.
+
+    From `git worktree list --porcelain`: the main checkout (listed first) is skipped, a
+    detached HEAD is skipped, and a worktree whose directory is gone is skipped. Raises
+    RuntimeError when git cannot list them, so the caller reports it instead of acting as
+    if there were none."""
+    r = subprocess.run(["git", "-C", str(main), "worktree", "list", "--porcelain"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"git worktree list failed: {r.stderr.strip()}")
+    out: list[Path] = []
+    for block in r.stdout.split("\n\n"):
+        fields = {}
+        for line in block.splitlines():
+            key, _, val = line.partition(" ")
+            fields[key] = val
+        path = fields.get("worktree")
+        if not path or "branch" not in fields or "HEAD" not in fields:
+            continue
+        wt = Path(path)
+        if wt.resolve() == Path(main).resolve() or not wt.is_dir():
+            continue
+        if tree_of(main, fields["HEAD"]) == tree:
+            out.append(wt)
+    return out
 
 
 def read_rows(root: Path) -> list[dict]:
@@ -157,8 +192,20 @@ def main(argv: list[str] | None = None) -> int:
             # The worktree's copy too: a push run from the worktree, and land_branch
             # step 5's dry run, read it (the hook's root is --show-toplevel) (Grok r1 F1).
             append_row(root, row)
+            return _out({"status": "ok", "action": "record", "tree": tree, "tip": args.tip,
+                         "ledger": ledger}, 0)
+        # From main: every branch worktree at this tree pushes from its own copy (S4b).
+        try:
+            reached = branch_worktrees_at(main, tree)
+        except RuntimeError as e:
+            return _out({"status": "error", "code": "worktrees_unlisted", "tree": tree,
+                         "ledger": ledger,
+                         "message": f"{e}; main's record is written, but no worktree copy "
+                                    "was; re-record from the branch's worktree"}, 2)
+        for wt in reached:
+            append_row(wt, row)
         return _out({"status": "ok", "action": "record", "tree": tree, "tip": args.tip,
-                     "ledger": ledger}, 0)
+                     "ledger": ledger, "worktrees": [str(w) for w in reached]}, 0)
     try:
         ok = has_clean_record(main, tree)
         stranded = not ok and in_worktree and has_clean_record(root, tree)
