@@ -239,8 +239,8 @@ Every tracked `tools/*.py` not described above or in `docs/hooks.md`, one line e
 | `check_deck_craft.py` | Run the mechanizable subset of Sections A-C of framework/deck-rubric.md against a rendered deck. |
 | `check_deck_geometry.py` | the deck rules that can only be checked against the RENDER. |
 | `check_frame_integrity.py` | Run the deterministic subset of Section F against a frame.yaml. |
-| `check_hook_warn_tier.py` | a hook that writes to stderr and exits 0 reaches NOBODY. |
-| `check_status_query_verification.py` | UserPromptSubmit hook, absence-assertion reminder. |
+| `check_hook_warn_tier.py` | Not a hook: a guard test over `tools/check_*.py` that flags any hook which writes to stderr and exits 0, a shape whose output reaches nobody. |
+| `check_status_query_verification.py` | UserPromptSubmit hook (absence-assertion reminder), built and **deliberately unwired** on precision (CLAUDE.md, Self-Improvement Loop Step 3). |
 | `chrome_runner.py` | Find headless Chrome, and run it against a deck. The mechanism, once. |
 | `coaching_metrics.py` | Longitudinal projection of interview performance, for the console. |
 | `codex_verify.py` | run a second model against work that matters, and land the result. |
@@ -263,7 +263,7 @@ Every tracked `tools/*.py` not described above or in `docs/hooks.md`, one line e
 | `dossier_freshness.py` | Pre-process dossier staleness for /act. |
 | `duet_snapshot.py` | Daily Markdown snapshot of job-search state for a proactive agent. |
 | `engagement_runs.py` | How many times has the analysis method actually been run, and how far did each run get? |
-| `exa_search.py` | Exa neural-search wrapper for /research-company Agent 6. |
+| `exa_search.py` | Exa neural-search wrapper. Its docstring names /research-company Agent 6, but that skill now makes Agent 6 web-only (no Exa); Agents 1-5 use the Exa MCP tools. |
 | `extract_decisions.py` | Extract an operator's verbatim decisions from a frame, a process log and session transcripts, with the query that surfaced each one. |
 | `fetch_source_email.py` | pull ONE labeled email full-body for the source-email curation workflow. |
 | `fetch_x_source.py` | pull an X (Twitter) post or X Article into the job-search OS. |
