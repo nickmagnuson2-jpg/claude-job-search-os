@@ -156,8 +156,10 @@ The weekly discovery job writes here, not to the inbox (funnel-intake decision 3
 
 ```
 🏢 **New companies:** [pending_companies] waiting ([pending_people] people) · oldest [oldest_first_seen]
-- [Name] ([score]) — [description, ~10 words] [· possible match: X] [· possible duplicate of Y] [· location unverified]
+- [Name] ([score]) — [description, ~10 words] [· lane X] [· rec: Y] [· bench: Z] [· ⚠️ pipeline: <pipeline_note>] [· possible match: X] [· possible duplicate of Y] [· location unverified]
 ```
+
+Each company stays one line. Omit a bracket when its key is null: rows from the weekly job carry no `lane`, `recommendation`, `bench` or `pipeline_note`; rows from `/discover-companies` do. `fit`, `bench_note`, `stage_text`, `url` and `slug_guess` stay in the queue (`company_queue.py read --top 25` shows them) and are shown only when Nick asks about a company.
 
 - `exists: false` is NOT zero: say `⚠️ discovery queue unreadable: <reason>`.
 - Nick decides each one in plain words; run the decision for him, one company at a time:

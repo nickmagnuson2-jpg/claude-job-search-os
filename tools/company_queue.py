@@ -21,6 +21,7 @@ act_apply reported success, so a failed write leaves the company in the queue.
 
 CLI (top-level options before the subcommand):
   company_queue.py [--repo-root R] read [--top 4]
+  company_queue.py [--repo-root R] add --preset lane-a [--entity company] [--today D] < cands.json
   company_queue.py [--repo-root R] decide --name "Acme" --accept [--lane a|b] [--dry-run]
   company_queue.py [--repo-root R] decide --name "Acme" --reject [--reason "..."]
   company_queue.py [--repo-root R] import-inbox [--inbox data/inbox.md] [--remove]
@@ -44,6 +45,20 @@ import inbox_lock  # noqa: E402
 from company_key import KeyIndex, exact as exact_company  # noqa: E402
 
 QUEUE_NAME = "tools/.company-queue.json"
+
+# The keys add() stores from a candidate. The weekly collector sends the first ten plus
+# stage_text and slug_guess (agent_discover.py struct_to_candidates); /discover-companies
+# also sends its Step 3 judgment (lane, fit, bench, recommendation, pipeline verdict).
+# Before l2-discover-queue-1124 everything past the first ten was silently dropped.
+KEPT_KEYS = ("description", "score", "geo_band", "geo_flag", "possible_match",
+             "possible_duplicate", "url", "role", "company", "location",
+             "stage_text", "slug_guess", "lane", "fit", "bench", "bench_note",
+             "recommendation", "pipeline_note")
+# What read() shows per company, so /standup can render the skill's whole proposal row.
+READ_KEYS = ("name", "description", "score", "geo_band", "geo_flag", "possible_match",
+             "possible_duplicate", "preset", "first_seen", "url", "stage_text",
+             "slug_guess", "lane", "fit", "bench", "bench_note", "recommendation",
+             "pipeline_note")
 
 
 def queue_path(repo_root: Path) -> Path:
@@ -117,10 +132,7 @@ def add(repo_root: Path, preset: str, entity: str, candidates: list[dict],
             if not isinstance(c, dict) or not c.get("name"):
                 continue
             row = {"entity": entity, "preset": preset, "first_seen": today,
-                   "name": c.get("name"),
-                   **{k: c[k] for k in ("description", "score", "geo_band", "geo_flag",
-                                        "possible_match", "possible_duplicate", "url",
-                                        "role", "company", "location") if k in c}}
+                   "name": c.get("name"), **{k: c[k] for k in KEPT_KEYS if k in c}}
             row["key"] = entry_key(row)
             # People: the stored key decides, as before. Companies: exact normalize_name
             # decides, whatever the stored keys say (Codex r1 F1 and r2 F1).
@@ -170,10 +182,7 @@ def read(repo_root: Path, top: int = 4) -> dict:
     return {"exists": True, "updated_at": data.get("updated_at"),
             "pending_companies": len(comps), "pending_people": len(people),
             "oldest_first_seen": oldest, "decided_count": len(data["decided"]),
-            "companies": [{k: e.get(k) for k in ("name", "description", "score",
-                                                  "geo_band", "possible_match",
-                                                  "possible_duplicate", "preset",
-                                                  "first_seen")} for e in comps[:top]],
+            "companies": [{k: e.get(k) for k in READ_KEYS} for e in comps[:top]],
             "empty_boards": _empty_boards(data)}
 
 
@@ -700,6 +709,11 @@ def main(argv=None) -> int:
     m.add_argument("--inbox", default=None)
     m.add_argument("--remove", action="store_true",
                    help="also delete the imported Agent-drip blocks from the inbox")
+    n = sub.add_parser("add", help="queue a JSON list of candidates read from stdin "
+                       "(the /discover-companies proposal)")
+    n.add_argument("--preset", required=True)
+    n.add_argument("--entity", choices=("company", "person"), default="company")
+    n.add_argument("--today", default=None, help="YYYY-MM-DD; default the local date")
     k = sub.add_parser("ack-empty", help="clear one empty-board flag after Nick has seen it")
     k.add_argument("--name", required=True)
     k.add_argument("--board", default=None, metavar="ATS/SLUG",
@@ -712,6 +726,16 @@ def main(argv=None) -> int:
         out = decide(root, a.name, "accept" if a.accept else "reject", a.reason, a.lane, a.dry_run)
     elif a.cmd == "ack-empty":
         out = ack_empty(root, a.name, a.board)
+    elif a.cmd == "add":
+        try:
+            cands = json.loads(sys.stdin.read())
+        except ValueError as exc:
+            cands, out = None, {"status": "error", "error": f"stdin is not JSON: {exc}"}
+        if cands is not None and not isinstance(cands, list):
+            cands, out = None, {"status": "error", "error": "stdin must be a JSON list"}
+        if cands is not None:
+            today = a.today or datetime.now().date().isoformat()
+            out = {"status": "ok", **add(root, a.preset, a.entity, cands, today)}
     else:
         out = import_inbox(root, Path(a.inbox) if a.inbox else root / "data" / "inbox.md", a.remove)
     print(json.dumps(out, indent=1, ensure_ascii=False, default=str))
