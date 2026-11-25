@@ -112,6 +112,21 @@ def test_section_2_carries_occurrences_and_promotion(tmp_path):
     assert [r["disposition"] for r in recs] == [ll.DISPOSITION_DONE, ll.DISPOSITION_OPEN]
 
 
+def test_section_2_due_is_lessons_state(tmp_path):
+    """Due by learning_state.lessons_state: the ladder (2) on an open Promoted cell. A row
+    that is not exactly the five Section 2 cells is never due (mutation r3, 2026-11-25)."""
+    p = tmp_path / "lessons.md"
+    p.write_text("## Section 2\n"
+                 "| Pattern | Rule | Occurrences | Promoted | Date |\n"
+                 "|---|---|---|---|---|\n"
+                 "| at two | r | 2 | No | 2026-08-13 |\n"
+                 "| once | r | 1 | No | 2026-08-13 |\n"
+                 "| closed | r | 5 | Yes | 2026-08-13 |\n"
+                 "| six cells | r | 4 | No | 2026-08-13 | extra |\n", encoding="utf-8")
+    assert [(r["what"], r["due"]) for r in ll.read_lessons(p)] == [
+        ("at two", True), ("once", False), ("closed", False), ("six cells", False)]
+
+
 def test_section_1_has_no_occurrence_column_and_says_so(tmp_path):
     p = tmp_path / "lessons.md"
     p.write_text("## Section 1 — General\n"
@@ -171,6 +186,27 @@ def test_an_unparseable_rule_stays_open_and_is_never_due(tmp_path):
     [rec] = ll.read_memory(tmp_path)
     assert rec["disposition"] == ll.DISPOSITION_OPEN and rec["due"] is False
     assert rec["evidence"].startswith("frontmatter defect")
+
+
+def test_notes_outside_the_loop_are_not_records(tmp_path):
+    """Mutation r3 (2026-11-25): a parseable note with no record key, and an unparseable
+    file with no occurrences line, are not learning records."""
+    (tmp_path / "reference_note.md").write_text(
+        '---\nname: reference_note\ndescription: "a pointer"\nmetadata:\n  type: reference\n'
+        '---\nbody\n', encoding="utf-8")
+    (tmp_path / "project_broken.md").write_text(
+        "---\nname: x\ndescription: [unclosed\n---\nbody\n", encoding="utf-8")
+    write_rule(tmp_path, "feedback_real.md", occ=3)
+    assert [r["ref"] for r in ll.read_memory(tmp_path)] == ["feedback_real.md"]
+
+
+def test_a_memory_record_carries_its_count(tmp_path):
+    write_rule(tmp_path, "feedback_seven.md", occ=7)
+    (tmp_path / "feedback_nocount.md").write_text(
+        '---\nname: feedback_nocount\ndescription: "d"\nmetadata:\n  promoted: "no"\n---\nB\n',
+        encoding="utf-8")
+    recs = {r["ref"]: r["occurrences"] for r in ll.read_memory(tmp_path)}
+    assert recs == {"feedback_seven.md": 7, "feedback_nocount.md": 0}
 
 
 def test_memory_dispositions(tmp_path):
