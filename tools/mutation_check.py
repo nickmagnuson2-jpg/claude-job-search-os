@@ -2173,6 +2173,37 @@ def uncommitted_inputs(root: Path, only: set[str] | None = None) -> list[str]:
     return [q for q in paths if only is None or q in only]
 
 
+_FORWARDED_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def _run_forwarding_signals(cmd: list[str], cwd: str, env: dict) -> int:
+    """Run the --in-worktree child, passing SIGTERM, SIGINT and SIGHUP on to it.
+
+    S5, 2026-11-25: with subprocess.run a SIGTERM ended only this parent. The child kept
+    mutating in the temp worktree, and the cleanup in run_in_worktree's finally (worktree
+    remove + prune) never ran, so the worktree was removed by hand. Now the signal reaches
+    the child (which restores its target on all three), this parent waits for it to exit,
+    and then returns normally so the finally runs. The previous handlers are put back.
+
+    Own session: a terminal Ctrl-C signals the whole foreground process group, so a child
+    in this parent's group would get SIGINT twice (once direct, once forwarded), and the
+    second could interrupt its own restore. Only the forwarded copy reaches it now."""
+    proc = subprocess.Popen(cmd, cwd=cwd, env=env, start_new_session=True)
+
+    def forward(signum, _frame):
+        try:
+            proc.send_signal(signum)
+        except ProcessLookupError:
+            pass
+
+    previous = {s: signal.signal(s, forward) for s in _FORWARDED_SIGNALS}
+    try:
+        return proc.wait()
+    finally:
+        for s, handler in previous.items():
+            signal.signal(s, handler)
+
+
 def run_in_worktree(argv: list[str], args) -> int:
     """Run this tool in a throwaway linked worktree from HEAD, then remove it (2026-10-27:
     the refusal used to print these steps for the caller to do by hand)."""
@@ -2212,8 +2243,9 @@ def run_in_worktree(argv: list[str], args) -> int:
             env[CACHE_DIR_ENV] = str(cache_dir())
         else:   # a caller-set one too: git_env copied os.environ (Codex 11-25 d220eeef F1)
             env.pop(CACHE_DIR_ENV, None)
-        return subprocess.run([sys.executable, str(wt / "tools" / "mutation_check.py")]
-                              + child_argv, cwd=str(wt), env=env).returncode
+        return _run_forwarding_signals(
+            [sys.executable, str(wt / "tools" / "mutation_check.py")] + child_argv,
+            cwd=str(wt), env=env)
     finally:
         rm = subprocess.run(["git", "worktree", "remove", "--force", str(wt)],
                             capture_output=True, text=True, cwd=str(REPO_ROOT), env=git_env)

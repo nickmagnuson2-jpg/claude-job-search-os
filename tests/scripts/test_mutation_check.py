@@ -2612,3 +2612,86 @@ def test_without_the_cache_the_child_gets_no_cache_dir(tmp_path, flags, inherite
     r = _run(["tools/plain.py", "--in-worktree", *flags], cwd=wt, env_extra=extra)
     assert r.returncode == 0, r.stdout + r.stderr
     assert json.loads(record.read_text())["cache"] is None
+
+
+# --- SIGTERM to an --in-worktree parent reaches the child, and the worktree is removed -------
+# S5, 2026-11-25: stopping a parent with SIGTERM ended only the parent. The child kept
+# mutating in the temp worktree and the parent's cleanup (worktree remove + prune) never
+# ran; the worktree was removed by hand.
+
+_SIGNAL_STUB = (
+    "import json, os, signal, sys, time\nfrom pathlib import Path\n"
+    "rec = Path(os.environ['STUB_RECORD'])\n"
+    "def got(sig, frame):\n"
+    "    rec.write_text(json.dumps({'signal': signal.Signals(sig).name, 'cwd': os.getcwd()}))\n"
+    "    sys.exit(0)\n"
+    "signal.signal(signal.SIGTERM, got)\n"
+    "Path(os.environ['STUB_READY']).write_text(os.getcwd())\n"
+    "time.sleep(60)\n")
+
+
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT])
+def test_a_signal_to_the_in_worktree_parent_reaches_the_child_and_the_worktree_goes(tmp_path, sig):
+    wt = _linked_wt_with_stub(tmp_path)
+    (wt / "tools" / "mutation_check.py").write_text(
+        _SIGNAL_STUB.replace("signal.signal(signal.SIGTERM, got)",
+                             "signal.signal(signal.SIGTERM, got)\nsignal.signal(signal.SIGINT, got)"),
+        encoding="utf-8")
+    _git(wt, "commit", "-qam", "signal stub")
+    record, ready = tmp_path / "record.json", tmp_path / "ready.txt"
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("MUTATION_CHECK_ACTIVE", "MUTATION_SWEEP_ACTIVE", "CLAUDECODE",
+                        "MUTATION_CACHE_DIR")}
+    env.update(PYTHONIOENCODING="utf-8", MUTATION_REPO_ROOT=str(wt),
+               STUB_RECORD=str(record), STUB_READY=str(ready))
+    parent = subprocess.Popen([sys.executable, str(TOOL), "tools/plain.py", "--in-worktree"],
+                              cwd=str(wt), env=env, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, text=True)
+    try:
+        deadline = time.time() + 30
+        while not ready.exists() and time.time() < deadline:
+            time.sleep(0.1)
+        assert ready.exists(), "the child never started"
+        child_wt = Path(ready.read_text())
+        parent.send_signal(sig)
+        parent.wait(timeout=30)
+    finally:
+        if parent.poll() is None:
+            parent.kill()
+            parent.wait(timeout=10)
+    assert record.exists(), "the child never received the signal: it was left running"
+    assert json.loads(record.read_text())["signal"] == sig.name
+    assert not child_wt.exists(), "the temp worktree was left behind"
+    listed = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=str(wt),
+                            capture_output=True, text=True).stdout
+    assert str(child_wt.resolve()) not in listed and str(child_wt) not in listed
+
+
+def test_the_in_worktree_child_runs_in_its_own_session(monkeypatch, tmp_path):
+    """A terminal Ctrl-C reaches the parent's process group; the child must get the
+    signal once, by forwarding, not twice."""
+    seen = {}
+
+    class _P:
+        def __init__(self, cmd, **kw):
+            seen.update(kw)
+
+        def wait(self):
+            return 0
+    monkeypatch.setattr(mc.subprocess, "Popen", _P)
+    assert mc._run_forwarding_signals(["x"], cwd=str(tmp_path), env={}) == 0
+    assert seen.get("start_new_session") is True
+
+
+def test_the_forwarding_handlers_are_put_back(monkeypatch, tmp_path):
+    before = {s: signal.getsignal(s) for s in mc._FORWARDED_SIGNALS}
+
+    class _P:
+        def __init__(self, cmd, **kw):
+            pass
+
+        def wait(self):
+            return 3
+    monkeypatch.setattr(mc.subprocess, "Popen", _P)
+    assert mc._run_forwarding_signals(["x"], cwd=str(tmp_path), env={}) == 3
+    assert {s: signal.getsignal(s) for s in mc._FORWARDED_SIGNALS} == before
