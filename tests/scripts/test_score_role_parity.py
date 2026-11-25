@@ -6,9 +6,11 @@ rubric in its SKILL.md ("80-100% shortlisted, 60-79% maybe, ...") evaluated by t
 at runtime. Two implementations of "how well does this role fit," which is the
 duplicated-domain-logic case: every consumer wants the SAME answer for the same role, so
 it is mechanism, not policy. This file is the parity guard for the consolidation.
+
+2026-11-24: the --score-roles CLI wrapper and its parity tests were deleted. /scan-jobs
+calls score_role through tools/scan_jobs.py, so the CLI had no caller left.
 """
 import pytest
-import json
 import subprocess
 import sys
 from pathlib import Path
@@ -29,24 +31,6 @@ ROLES = [
      "location": "San Francisco",
      "description": "Carry a quota, land and expand a book of business."},
 ]
-
-
-def test_cli_and_library_agree_on_every_role():
-    """The CLI must be a thin wrapper, not a second implementation."""
-    ctx = load_scoring_context(REPO)
-    direct = [score_role(r, ctx) for r in ROLES]
-
-    proc = subprocess.run(
-        [sys.executable, "-B", "-m", "tools.career_scanner.cli", "--score-roles",
-         "--repo-root", str(REPO)],
-        input=json.dumps(ROLES), capture_output=True, text=True, cwd=str(REPO))
-    assert proc.returncode == 0, f"CLI failed: {proc.stderr[-800:]}"
-    via_cli = [r["score"] for r in json.loads(proc.stdout)["roles"]]
-
-    assert via_cli == direct, (
-        "the --score-roles CLI and scorer.score_role disagree on identical input. "
-        "The CLI exists so /scan-jobs can reach the SAME scorer scanner.py uses; if it "
-        f"computes its own answer the consolidation is fiction. cli={via_cli} direct={direct}")
 
 
 @pytest.mark.live_data
@@ -89,35 +73,23 @@ def test_the_scorer_actually_discriminates_these_three():
             "each Open to Work title as in-lane")
 
 
-def test_cli_rejects_junk_instead_of_scoring_it():
-    """A guard that cannot read its input must refuse, not emit a confident number."""
+def test_score_roles_flag_is_gone():
+    """--score-roles was deleted 2026-11-24 (l1b-funnel-fixes-1124): it had no caller,
+    since /scan-jobs scores through tools/scan_jobs.py (ce7211c), and it bypassed the
+    goals.md staleness gate. One entry point to the scorer for scans: scanner.py."""
     proc = subprocess.run(
         [sys.executable, "-B", "-m", "tools.career_scanner.cli", "--score-roles",
          "--repo-root", str(REPO)],
-        input="not json at all", capture_output=True, text=True, cwd=str(REPO))
-    assert proc.returncode != 0, (
-        "malformed stdin must exit nonzero rather than fall through to a score -- "
-        "failing open on unreadable input is the defect class this repo keeps hitting")
-
-
-def test_cli_refuses_non_object_elements_with_structured_output():
-    """Found by cross-model review 2026-09-14 (F3): [1, null] raised AttributeError."""
-    proc = subprocess.run(
-        [sys.executable, "-B", "-m", "tools.career_scanner.cli", "--score-roles",
-         "--repo-root", str(REPO)],
-        input="[1, null]", capture_output=True, text=True, cwd=str(REPO))
-    assert proc.returncode == 2, f"expected structured refusal, got rc={proc.returncode}"
-    assert json.loads(proc.stdout)["code"] == "non_object_element", (
-        "a malformed element must produce a structured refusal, not a traceback -- "
-        f"stdout={proc.stdout!r} stderr={proc.stderr[-300:]!r}")
+        input="[]", capture_output=True, text=True, cwd=str(REPO), timeout=60)
+    assert proc.returncode == 2, f"rc={proc.returncode} stdout={proc.stdout[-300:]!r}"
+    assert "unrecognized arguments: --score-roles" in proc.stderr, proc.stderr[-300:]
 
 
 def test_the_description_field_is_aliased_to_the_schema_field():
     """Found by cross-model review 2026-09-14 (F4): score_role reads `description_plain`.
 
     A caller assembling a role by hand reaches for `description`. The alias lives in
-    score_role, NOT in the CLI -- putting it in the CLI made the CLI a second
-    implementation and the parity test above caught it immediately.
+    score_role, not in any caller, so every caller gets it.
 
     NOTE: this pins the ALIAS only. Whether the description then moves the score is a
     separate, currently-FAILING property tracked by tools/scoring_probe.py (I1): a real
