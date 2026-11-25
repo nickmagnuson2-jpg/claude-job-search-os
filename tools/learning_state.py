@@ -266,6 +266,40 @@ def is_terminal(fields: dict) -> bool:
     return str(fields.get("terminal", "")).strip().lower() in ("yes", "true")
 
 
+class Record(NamedTuple):
+    path: Path
+    fields: dict | None     # None when the frontmatter does not parse
+    defect: object | None   # memory_frontmatter.Defect, or None
+
+
+_OPENING_BLOCK = re.compile(r"\A---\n(.*?)\n---(?:\n|\Z)", re.S)
+_RECORD_KEY_LINE = re.compile(r"^\s*(?:" + "|".join(RECORD_KEYS) + r")\s*:", re.M)
+
+
+def iter_records(memory_dir: Path):
+    """The one learning-record population of a memory folder (S1, 2026-11-25). Every reader
+    of due iterates this, so none can choose its own files (Codex s1 r1-r2 F1, Grok s1 F1).
+
+    Every *.md, sorted, read as UTF-8 with replacement (one bad byte does not hide a rule)
+    and parsed by memory_frontmatter.read. Yields Record(path, fields, None) when the fields
+    carry a RECORD_KEYS key, and Record(path, None, defect) when the file opens a
+    frontmatter block that does not parse and names a RECORD_KEYS key inside that block (a
+    broken rule: listed, never due). No filename rule: an index, archive or router is
+    excluded by its content, and a rule is kept whatever it is called. Additive: no
+    existing function here changes."""
+    import memory_frontmatter as mf  # same folder; imported here so neither module loads the other at import
+    for path in sorted(Path(memory_dir).glob("*.md")):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        fields, defect = mf.read(text)
+        if defect is None:
+            if is_record(fields):
+                yield Record(path, fields, None)
+            continue
+        block = _OPENING_BLOCK.match(text.replace("\r\n", "\n"))
+        if block and _RECORD_KEY_LINE.search(block.group(1)):
+            yield Record(path, None, defect)
+
+
 def validate_fields(fields: dict, *, keys=None, memory_dir: Path | None = None,
                     repo_root: Path | None = None,
                     skills_home: Path | None = None) -> list[str]:
