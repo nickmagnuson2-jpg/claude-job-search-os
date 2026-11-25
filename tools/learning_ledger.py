@@ -91,28 +91,30 @@ def read_memory(memory_dir: Path) -> list[dict]:
         text = path.read_text(encoding="utf-8", errors="replace")
         fields, defect = mf.read(text)
         if defect:
-            if not re.search(r"^\s*occurrences:", text[:6000], re.M):
-                continue
-            out.append({"lane": "memory", "ref": path.name, "what": path.stem, "when": "",
-                        "occurrences": 0, "disposition": DISPOSITION_OPEN, "due": False,
-                        "evidence": f"frontmatter defect: {defect.code}"})
-            continue
-        if not ls.is_record(fields):
-            continue
-        st = ls.memory_state(fields, memory_dir=memory_dir)
-        disp = (DISPOSITION_TERMINAL if st.terminal
-                else DISPOSITION_OPEN if ls.in_backlog(st.disposition)
-                else DISPOSITION_DONE)
-        occ = ls._count(fields.get("occurrences"))
-        out.append({
-            "lane": "memory", "ref": path.name,
-            "what": str(fields.get("description") or path.stem),
-            "when": str(fields.get("last_cited") or ""),
-            "occurrences": occ if occ is not None else 0,
-            "disposition": disp, "due": st.due == "due",
-            "evidence": str(fields.get("reopen_gate") or ""),
-        })
+            # Only a file that looks like a counted rule is a record with a defect.
+            if re.search(r"^\s*occurrences:", text[:6000], re.M):
+                out.append({"lane": "memory", "ref": path.name, "what": path.stem,
+                            "when": "", "occurrences": 0, "disposition": DISPOSITION_OPEN,
+                            "due": False, "evidence": f"frontmatter defect: {defect.code}"})
+        elif ls.is_record(fields):
+            out.append(_memory_record(path, fields, memory_dir))
     return out
+
+
+def _memory_record(path: Path, fields: dict, memory_dir: Path) -> dict:
+    st = ls.memory_state(fields, memory_dir=memory_dir)
+    disp = (DISPOSITION_TERMINAL if st.terminal
+            else DISPOSITION_OPEN if ls.in_backlog(st.disposition)
+            else DISPOSITION_DONE)
+    occ = ls._count(fields.get("occurrences"))
+    return {
+        "lane": "memory", "ref": path.name,
+        "what": str(fields.get("description") or path.stem),
+        "when": str(fields.get("last_cited") or ""),
+        "occurrences": occ if occ is not None else 0,
+        "disposition": disp, "due": st.due == "due",
+        "evidence": str(fields.get("reopen_gate") or ""),
+    }
 
 
 def read_lessons(path: Path) -> list[dict]:
