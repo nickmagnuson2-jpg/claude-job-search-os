@@ -303,7 +303,7 @@ class TestMainExitPaths:
         assert out.returncode == 2
         assert json.loads(out.stdout)["status"] == "error"
 
-    @pytest.mark.live_data
+    @pytest.mark.live_data("data/networking.md", "data/outreach-log.md", "coaching/progress")
     def test_good_run_exits_zero_and_combines(self, tmp_path):
         out = subprocess.run(
             [sys.executable, str(ROOT / "tools" / "conversations_metric.py"),

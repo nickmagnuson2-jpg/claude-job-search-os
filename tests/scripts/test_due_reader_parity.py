@@ -173,10 +173,8 @@ def test_the_scanner_read_path_writes_nothing(tmp_path):
     assert not (d / "promotion-backlog.md").exists()
 
 
-@pytest.mark.live_data
+@pytest.mark.live_data(LIVE_MEMORY)
 def test_three_readers_agree_on_the_live_tier(capsys):
-    if not LIVE_MEMORY.is_dir():
-        pytest.fail(f"live memory tier missing: {LIVE_MEMORY}")
     before = tier_snapshot(LIVE_MEMORY)
     want = learning_state_due(LIVE_MEMORY)
     got_ledger = ledger_due(LIVE_MEMORY)
@@ -189,13 +187,9 @@ def test_three_readers_agree_on_the_live_tier(capsys):
               f"{len(got_ledger)}, scanner {len(got_scanner)}")
 
 
-@pytest.mark.live_data
+@pytest.mark.live_data("memory/friction-log.md")
 def test_ledger_friction_due_matches_friction_state_on_the_live_ledger(capsys):
     path = REPO_ROOT / "memory" / "friction-log.md"
-    if not path.is_file():
-        # The repo's memory/ is gitignored: a mutation worktree (whose conftest may not load)
-        # has no copy. The main checkout always has it, and there the preflight runs this.
-        pytest.skip(f"LIVE-DATA-ABSENT: {path} is gitignored and absent in this checkout")
     _, _, rows, _ = friction_log.read_ledger()
     want = 0
     for row in rows:

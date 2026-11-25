@@ -99,7 +99,7 @@ def test_untracked_files_reports_a_git_failure(tmp_path):
         ci.untracked_files(tmp_path)
 
 
-@pytest.mark.live_data
+@pytest.mark.live_data("data/profile.md")
 @pytest.mark.xfail(strict=False, reason="2026-10-29: 551 files in neither copy on the live tree "
                    "(.claude/.venv, .claude/settings.local.json, scratchpad/, tools state files, "
                    ".privacy-backup/). Each needs Nick's call: back it up or declare it ephemeral. "

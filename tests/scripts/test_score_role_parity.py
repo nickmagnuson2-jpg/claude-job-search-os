@@ -33,7 +33,7 @@ ROLES = [
 ]
 
 
-@pytest.mark.live_data
+@pytest.mark.live_data("data/calibration/fit-spec.yaml")
 def test_the_scorer_actually_discriminates_these_three():
     """A parity test passes trivially if the scorer returns a constant. Pin the ordering.
 

@@ -85,7 +85,7 @@ def check(root: Path, known: dict) -> list[str]:
 
 # --- the live guard ----------------------------------------------------------------
 
-@pytest.mark.live_data
+@pytest.mark.live_data("coaching/progress")
 def test_every_coaching_table_row_matches_its_header_or_is_known_bad():
     problems = check(REPO, KNOWN_BAD)
     assert problems == [], "\n".join(problems)
