@@ -765,3 +765,37 @@ def test_cli_add_refuses_input_that_is_not_a_json_list(tmp_path, monkeypatch, ca
     rc, out = _cli_stdin(monkeypatch, capsys, tmp_path, ["add", "--preset", "lane-a"], stdin=stdin)
     assert rc == 1 and out["status"] == "error"
     assert not cq.queue_path(tmp_path).exists()
+
+
+# --- load() fails closed on a queue path that is not a regular file -----------------------
+# Codex row 1359 P1 (l1b-funnel-fixes-1124, parked): load() used is_file(), so a directory or
+# a broken symlink at the queue path read as an empty queue, and agent_discover's exclusions
+# (which go through load) failed open. Only a path that does not exist at all is empty.
+
+def _queue_at(root):
+    q = cq.queue_path(root)
+    q.parent.mkdir(parents=True, exist_ok=True)
+    return q
+
+
+def test_load_refuses_a_directory_at_the_queue_path(tmp_path):
+    _queue_at(tmp_path).mkdir()
+    with pytest.raises(ValueError, match="not a regular file"):
+        cq.load(tmp_path)
+
+
+def test_load_refuses_a_broken_symlink_at_the_queue_path(tmp_path):
+    _queue_at(tmp_path).symlink_to(tmp_path / "gone.json")
+    with pytest.raises(ValueError, match="not a regular file"):
+        cq.load(tmp_path)
+
+
+def test_load_follows_a_symlink_to_a_real_queue(tmp_path):
+    real = tmp_path / "real.json"
+    real.write_text(json.dumps({"pending": [{"name": "Acme"}], "decided": []}), encoding="utf-8")
+    _queue_at(tmp_path).symlink_to(real)
+    assert cq.load(tmp_path)["pending"] == [{"name": "Acme"}]
+
+
+def test_load_of_a_missing_queue_is_empty(tmp_path):
+    assert cq.load(tmp_path) == {"pending": [], "decided": []}
