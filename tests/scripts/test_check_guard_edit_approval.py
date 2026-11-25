@@ -1010,3 +1010,33 @@ def test_s2c_chdir_records_the_directory():
     w = g._PyWrites(ast.parse("import os\nos.chdir('/private/tmp')\nopen('o', 'w')\n"), ["-"])
     assert w.targets(".") == ["o"]
     assert w.chdirs == ["/private/tmp"] and w.strict is True
+
+
+
+# Codex S2c r1 F1 (2026-11-25): chdir order. In straight-line code a chdir applies only to
+# writes after it; in a loop or function the union is kept on purpose (over-block only).
+_CLAUDE_DIR = str(SCRIPT.parents[1] / ".claude")
+_PY_ORDER_PASSES = {
+    "write_before_chdir_into_guard_dir":
+        f"python3 - <<'PY'\nimport os\nprint('{_G}')\nt = 'settings.json'\nopen(t, 'w')\nos.chdir('{_CLAUDE_DIR}')\nPY",
+}
+_PY_ORDER_BLOCKS = {
+    "write_after_chdir_into_guard_dir":
+        f"python3 - <<'PY'\nimport os\nprint('{_G}')\nos.chdir('{_CLAUDE_DIR}')\nt = 'settings.json'\nopen(t, 'w')\nPY",
+    "loop_with_chdir_keeps_the_union":
+        f"python3 - <<'PY'\nimport os\nprint('{_G}')\nfor _ in range(2):\n    t = 'settings.json'\n    open(t, 'w')\n    os.chdir('{_CLAUDE_DIR}')\nPY",
+    "function_write_keeps_the_union":
+        f"python3 - <<'PY'\nimport os\nprint('{_G}')\ndef w():\n    t = 'settings.json'\n    open(t, 'w')\nos.chdir('{_CLAUDE_DIR}')\nw()\nPY",
+}
+
+
+@pytest.mark.parametrize("name", sorted(_PY_ORDER_PASSES))
+def test_s2c_write_before_a_chdir_is_not_moved_by_it(name):
+    code, err = _bash(_PY_ORDER_PASSES[name])
+    assert code == 0, (name, err)
+
+
+@pytest.mark.parametrize("name", sorted(_PY_ORDER_BLOCKS))
+def test_s2c_chdir_order_blocks(name):
+    code, _ = _bash(_PY_ORDER_BLOCKS[name])
+    assert code == 2, name

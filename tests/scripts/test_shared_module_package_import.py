@@ -9,6 +9,7 @@ puts tools/ on sys.path looked redundant, a mutation run confirmed no test notic
 removal, and a cross-model review caught it. Each tool is imported in a fresh process,
 so one tool's sys.path change cannot rescue another.
 """
+import os
 import re
 import subprocess
 import sys
@@ -217,15 +218,36 @@ def test_fixed_1125_tool_imports_as_part_of_the_tools_package(name):
 
 
 
+def _importable_top_level(entries) -> set:
+    """Every top-level name importable from these sys.path entries: modules, packages and
+    PEP 420 namespace packages (a directory with no __init__.py), which
+    pkgutil.iter_modules() leaves out (Codex S2c r1 F2, reproduced with find_spec)."""
+    import pkgutil
+    names = {m.name for m in pkgutil.iter_modules([e for e in entries if e])}
+    for e in entries:
+        if e and os.path.isdir(e):
+            for child in os.listdir(e):
+                if child.isidentifier() and os.path.isdir(os.path.join(e, child)):
+                    names.add(child)
+    return names
+
+
+def test_importable_names_include_namespace_packages(tmp_path):
+    (tmp_path / "collision_name").mkdir()
+    (tmp_path / "plain_mod.py").write_text("x = 1\n")
+    found = _importable_top_level([str(tmp_path)])
+    assert {"collision_name", "plain_mod"} <= found
+
+
 def test_no_tool_name_shadows_a_stdlib_or_installed_module():
     """Each tool puts tools/ at sys.path[0], so a tools/X.py named like a stdlib or
     installed module would replace it for the whole process (S2c, 2026-11-25; 0 of 246
-    at the time)."""
-    import pkgutil
-    tools_dir = str(REPO / "tools")
+    at the time). Installed names come from every sys.path entry except tools/ and the
+    repo root (whose top-level directories are this repo's own trees, not modules)."""
+    tools_dir = os.path.realpath(REPO / "tools")
+    repo_dir = os.path.realpath(REPO)
+    entries = [e for e in sys.path if e and os.path.realpath(e) not in (tools_dir, repo_dir)]
     ours = set(ALL_TOOLS) | {p.name for p in (REPO / "tools").iterdir()
                               if p.is_dir() and (p / "__init__.py").exists()}
-    others = {m.name for m in pkgutil.iter_modules()
-              if str(getattr(m.module_finder, "path", "")).rstrip("/") != tools_dir}
-    clash = sorted(ours & (set(sys.stdlib_module_names) | others))
+    clash = sorted(ours & (set(sys.stdlib_module_names) | _importable_top_level(entries)))
     assert clash == [], f"tools/ names that shadow another module: {clash}"
