@@ -465,12 +465,6 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
     entry_lines.append(f"**Follow-up:** {followup}")
     entry_lines.append("")
 
-    if dry_run:
-        out_ok("log", f"Would log interaction for {args.name}",
-               dry_run=True,
-               would_mutate=[{"file": str(networking_path), "entry": header}])
-        return
-
     content, lines = load_lines(networking_path)
     # A log older than the contact's newest entry records history. It must not act on the
     # present: the live follow-up to-do and the newest outreach row belong to the newer
@@ -485,6 +479,14 @@ def cmd_log(args, networking_path: Path, repo_root: Path, dry_run: bool) -> None
     if args.check:
         out_ok("log", f"Would log interaction for {args.name}: nothing refuses it",
                checked=True, name=args.name, date=log_date)
+        return
+    # The dry run returns only after the refusals above, so it refuses what the log would
+    # (friction row: a dry run said "Would log" for a contact the log refuses). apply_log
+    # changed only the in-memory lines; nothing is saved.
+    if dry_run:
+        out_ok("log", f"Would log interaction for {args.name}",
+               dry_run=True,
+               would_mutate=[{"file": str(networking_path), "entry": header}])
         return
 
     # A draft is linked to its capture BEFORE the entry is saved, and the link is removed if

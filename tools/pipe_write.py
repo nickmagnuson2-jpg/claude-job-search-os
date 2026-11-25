@@ -36,6 +36,7 @@ this, the documented `update <co> Applied` wrote none, and the row was never cou
 update of a row that is already Applied stamps nothing, so a follow-up is not counted as a
 second application. The rule is shared through stage_vocab.py.
 """
+import argparse
 import re
 import sys
 from datetime import date
@@ -568,6 +569,13 @@ def parse_args():
         help="The correct terminal stage: Rejected when the company passed, Withdrawn when "
              "Nick passed, Accepted when an offer was taken.",
     )
+
+    # --dry-run is also accepted after the subcommand. SUPPRESS leaves the top-level
+    # value in place when the flag is absent here (friction row: "unrecognized
+    # arguments: --dry-run").
+    for sp in (add_p, upd_p, note_p, rem_p, rs_p):
+        sp.add_argument("--dry-run", action="store_true", default=argparse.SUPPRESS,
+                        help="Same as the top-level --dry-run.")
 
     return p.parse_args()
 
