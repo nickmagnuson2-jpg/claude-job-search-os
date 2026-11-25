@@ -33,6 +33,18 @@ Subcommands (Section 2 only, the "| Pattern | Rule | Occurrences | Promoted | Da
       space. So it may move text across cell boundaries, and never reword or join words
       (Codex confirmation F3: removing ALL whitespace let "a b" become "ab").
 
+  bump <row-match> --evidence "<what happened, YYYY-MM-DD>" [--expect-sha <sha>] [--dry-run]
+      Record ONE recurrence of the ONE Section 2 row containing <row-match> (same match
+      rule as set-promoted): Occurrences N becomes N+1, the Pattern cell gains
+      " **<ordinal> occurrence (<date>):** <evidence>", and the Date cell keeps its first
+      date and gains " (<ordinal>: <date>)", the shapes rows already use. <date> is the
+      first YYYY-MM-DD in the evidence. Refused when the evidence has no date or holds a
+      "|" or a newline, the Occurrences cell is not a non-negative integer, or the new row
+      fails the validator. Like memory_write.py bump (a count records a witnessed event,
+      Nick's 2026-09-15 decision), the write refuses unless CLAUDECODE=1. --dry-run prints
+      the row before and after and writes nothing. Added 2026-11-24 (S4): before it, the
+      11-22 cutover left no sanctioned way to record a recurring lesson (row 167).
+
 Cells may not contain "|" or a newline: either would break the table, and the reader
 would then see the wrong cell count.
 
@@ -46,6 +58,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import stat
 import sys
 import tempfile
@@ -222,6 +235,62 @@ def repair_row(path: Path, line: int, expect_sha: str, old: str, new: str) -> di
     return {"action": "repair-row", "line": line, "sha256_before": sha}
 
 
+DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+OCCURRENCES_CELL = ls.LESSONS_COLUMNS.index("Occurrences")
+PATTERN_CELL = ls.LESSONS_COLUMNS.index("Pattern")
+DATE_CELL = ls.LESSONS_COLUMNS.index("Date")
+
+
+def ordinal(n: int) -> str:
+    if 10 <= n % 100 <= 20:
+        return f"{n}th"
+    return f"{n}" + {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+
+
+def bump(path: Path, match: str, evidence: str, expect_sha: str | None = None,
+         dry_run: bool = False) -> dict:
+    # A "|" or newline in the evidence lands verbatim in the Pattern cell, where
+    # validate_cells refuses it, so it needs no check of its own (mutation r1 survivor).
+    evidence = evidence.strip()
+    found = DATE_RE.search(evidence)
+    if not found:
+        raise Refused(["evidence must say what happened and carry its YYYY-MM-DD date"])
+    if len(match.strip()) < MIN_MATCH:
+        raise Refused([f"row-match must be at least {MIN_MATCH} characters"])
+    if not dry_run and os.environ.get("CLAUDECODE") != "1":
+        raise Refused(["CLAUDECODE=1 is not set: bump records a recurrence a session "
+                       "witnessed, never one a detector or scheduled job inferred"])
+    sha = file_sha(path, expect_sha)
+    lines, _ = read_lines(path)
+    first, end = section2_bounds(lines)
+    hits = [i for i in range(first, end) if match in lines[i]]
+    if len(hits) != 1:
+        raise Refused([f"row-match {match!r} matches {len(hits)} Section 2 rows, expected 1"])
+    i = hits[0]
+    cells, defect = ls.parse_lessons_row(lines[i])
+    if cells is None:
+        raise Refused([f"the matched row cannot be read: {defect}"])
+    occ = cells[OCCURRENCES_CELL]
+    if not occ.isdigit():
+        raise Refused([f"Occurrences: {occ!r} is not a non-negative integer to add one to"])
+    n = int(occ) + 1
+    date, nth = found.group(1), ordinal(n)
+    new_cells = list(cells)
+    new_cells[OCCURRENCES_CELL] = str(n)
+    new_cells[PATTERN_CELL] = f"{cells[PATTERN_CELL]} **{nth} occurrence ({date}):** {evidence}"
+    new_cells[DATE_CELL] = f"{cells[DATE_CELL]} ({nth}: {date})"
+    reasons = validate_cells(new_cells)
+    if reasons:
+        raise Refused(reasons)
+    before, after = lines[i], format_row(new_cells)
+    if not dry_run:
+        lines[i] = after
+        atomic_write(path, "\n".join(lines))
+    return {"action": "dry-run" if dry_run else "bumped", "line": i + 1,
+            "occurrences_before": n - 1, "occurrences_after": n,
+            "before": before, "after": after, "sha256_before": sha}
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="lessons_write.py", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -237,6 +306,11 @@ def main(argv: list[str] | None = None) -> int:
     pr.add_argument("--expect-sha", required=True)
     pr.add_argument("--old", required=True)
     pr.add_argument("--new", required=True)
+    pb = sub.add_parser("bump")
+    pb.add_argument("match")
+    pb.add_argument("--evidence", required=True)
+    pb.add_argument("--expect-sha", default=None)
+    pb.add_argument("--dry-run", action="store_true")
     args = p.parse_args(argv)
     path = lessons_path()
     try:
@@ -244,6 +318,8 @@ def main(argv: list[str] | None = None) -> int:
             raise Refused([f"no such file: {path}"])
         if args.cmd == "set-promoted":
             out = set_promoted(path, args.match, args.value, args.expect_sha)
+        elif args.cmd == "bump":
+            out = bump(path, args.match, args.evidence, args.expect_sha, args.dry_run)
         elif args.cmd == "repair-row":
             out = repair_row(path, args.line, args.expect_sha, args.old, args.new)
         else:

@@ -27,7 +27,7 @@ lessons_state):
                                             or an interpreter script that names the file
                                             and contains a write call.
                                             Route: tools/lessons_write.py (set-promoted,
-                                            append-row) or a full-file Write.
+                                            append-row, bump) or a full-file Write.
   A script FILE under this repo's tools/ (lessons_write.py among them) is not judged here.
 
 ADVERSARY. The agent; see check_memory_frontmatter_write.py. A tripwire, not a boundary.
@@ -48,8 +48,10 @@ import learning_state as ls  # noqa: E402
 import check_memory_frontmatter_write as cm  # noqa: E402  (shared Bash write walk)
 
 NAME = "check_lessons_write"
-ROUTE = ("route: `lessons_write.py set-promoted <row-match> <value>` or "
-         "`lessons_write.py append-row --pattern ... --date YYYY-MM-DD`, or a full-file Write")
+ROUTE = ("route: `lessons_write.py set-promoted <row-match> <value>`, "
+         "`lessons_write.py append-row --pattern ... --date YYYY-MM-DD`, "
+         "`lessons_write.py bump <row-match> --evidence \"<what, YYYY-MM-DD>\"` "
+         "for a recurrence, or a full-file Write")
 SECTION_2 = "## Section 2"
 
 
