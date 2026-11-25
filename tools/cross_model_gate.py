@@ -405,10 +405,9 @@ def main_checkout_of(repo_root: Path) -> Path | None:
     common = Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
     if common is None or common.name != ".git" or not common.is_dir():
         raise RuntimeError(f"git did not name a .git common dir for {root}")
-    main = common.parent.resolve()
-    if main == root:
-        raise RuntimeError(f"the common dir of {root} is its own")
-    return main
+    # No `main == root` check: root's .git is a file (tested above), so a common dir that
+    # is root/.git fails the is_dir() test first (S2d mutation survivor, deleted).
+    return common.parent.resolve()
 
 
 def _row_key(row: dict) -> tuple:

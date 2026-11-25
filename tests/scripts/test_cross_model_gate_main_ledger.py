@@ -116,3 +116,29 @@ def test_outside_a_linked_worktree_nothing_changes(tmp_path):
     _row(tmp_path)
     rows, corrupt, note = g.read_gate_ledger(tmp_path)
     assert len(rows) == 1 and corrupt == 0 and note == ""
+
+
+
+def test_git_naming_no_common_dir_raises(repos, monkeypatch):
+    """Kills the IF_FALSE survivor on the common-dir check (S2d mutation)."""
+    main, wt = repos
+
+    class R:
+        returncode, stdout, stderr = 1, "", "fatal: not a git repository"
+    monkeypatch.setattr(g.subprocess, "run", lambda *a, **k: R())
+    with pytest.raises(RuntimeError):
+        g.main_checkout_of(wt)
+
+
+def test_main_that_cannot_be_located_blocks_with_a_reason(repos, monkeypatch):
+    """Kills the RETURN_NONE survivor on read_gate_ledger's locate-failure return."""
+    main, wt = repos
+    _row(wt)
+
+    def boom(root):
+        raise RuntimeError("git did not name a .git common dir")
+    monkeypatch.setattr(g, "main_checkout_of", boom)
+    rows, corrupt, note = g.read_gate_ledger(wt)
+    assert len(rows) == 1 and corrupt == 1 and "could not be located" in note
+    v = g.check(wt, CHANGE, since=0)
+    assert v.blocked is True and "could not be located" in v.message
