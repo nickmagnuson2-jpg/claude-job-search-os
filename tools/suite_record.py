@@ -31,8 +31,11 @@ change on either side needs a new run. The ledger is <main checkout>/tools/.suit
 shares one ledger:
 
     {"kind": "suite", "verdict": "pass", "tree", "branch", "base", "base_sha", "branch_tip",
-     "merged_commit", "collected", "passed", "failed", "errors", "skipped", "duration_s",
-     "recorded_at", "tool_version"}
+     "merged_commit", "collected", "passed", "failed", "errors", "skipped",
+     "skips_by_reason": [{"reason", "count"}], "duration_s", "recorded_at", "tool_version"}
+
+skips_by_reason (2026-11-24) is also in every failure payload that has a report. Its counts
+sum to "skipped" (xfails are filed under <skipped> by JUnit, so they appear here too).
 
 Exit codes: run 0 recorded / 1 not recorded. check 0 pass on record / 1 none (incl. a merge
 conflict) / 2 usage error, bad ref, or unreadable ledger.
@@ -198,6 +201,31 @@ def parse_junit(path: Path) -> dict | None:
             "failed": c["failures"], "errors": c["errors"], "skipped": c["skipped"]}
 
 
+def junit_cases(path: Path) -> dict:
+    """Per-test detail from the same JUnit report parse_junit counts.
+
+    skips_by_reason: [{"reason", "count"}], most common first, one entry per distinct skip
+    message, so "not passed" in a summary names WHY (2026-11-24: 49 skips read as failures).
+    The counts sum to the report's skipped total, xfails included (JUnit files both under
+    <skipped>). failing: "classname::name" of every case with a <failure> or <error>.
+    Empty lists when the report is missing or unreadable."""
+    try:
+        root = ET.parse(path).getroot()
+    except (OSError, ET.ParseError):
+        return {"skips_by_reason": [], "failing": []}
+    reasons: dict[str, int] = {}
+    failing = []
+    for case in root.iter("testcase"):
+        for sk in case.findall("skipped"):
+            msg = (sk.get("message") or "").strip() or "(no reason given)"
+            reasons[msg] = reasons.get(msg, 0) + 1
+        if case.find("failure") is not None or case.find("error") is not None:
+            failing.append(f"{case.get('classname', '?')}::{case.get('name', '?')}")
+    ranked = sorted(reasons.items(), key=lambda kv: (-kv[1], kv[0]))
+    return {"skips_by_reason": [{"reason": r, "count": c} for r, c in ranked],
+            "failing": failing}
+
+
 def _tail(log: Path, n: int = 15) -> str:
     try:
         return "\n".join(log.read_text(encoding="utf-8", errors="replace").splitlines()[-n:])
@@ -360,8 +388,9 @@ def _run_locked(root: Path, common_git: Path, ledger: Path, branch: str, base: s
         if rc is None:
             return _fail("timeout", f"timeout after {timeout} s", duration_s=duration, **ids)
         counts = parse_junit(junit)
+        skips = junit_cases(junit)["skips_by_reason"]
         common = {"returncode": rc, "duration_s": duration, "output_tail": _tail(log),
-                  **ids, **(counts or {})}
+                  **ids, **(counts or {}), "skips_by_reason": skips}
         if rc == 5:
             return _fail("pytest_exit_5", "pytest exit 5: collected 0 tests", **common)
         if counts is None:
@@ -379,7 +408,8 @@ def _run_locked(root: Path, common_git: Path, ledger: Path, branch: str, base: s
         if counts["skipped"] >= counts["collected"]:
             return _fail("all_skipped", f"all {counts['collected']} collected tests skipped",
                          **common)
-        row = {"kind": "suite", "verdict": "pass", **ids, **counts, "duration_s": duration,
+        row = {"kind": "suite", "verdict": "pass", **ids, **counts, "skips_by_reason": skips,
+               "duration_s": duration,
                "recorded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                "tool_version": TOOL_VERSION}
         ledger.parent.mkdir(parents=True, exist_ok=True)

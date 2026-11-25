@@ -1074,8 +1074,13 @@ def ready_branch(repo, name, files):
     return wt, tip
 
 
+PF_OK = {"ok": True, "runs": [], "failing": [], "data_changed": [], "problem": None,
+         "duration_s": 0.1}
+
+
 def run_mp(repo, names, dry_run=True, **kw):
     kw.setdefault("busy", lambda: [])
+    kw.setdefault("run_preflight", lambda main: PF_OK)   # the real one: tests below
     if dry_run:     # a dry run judges with the tools next to land_branch.py; use the stubs
         kw.setdefault("checkers", repo["root"] / "tools")
     kw.setdefault("gh", gh_local_main(repo))
@@ -1350,7 +1355,7 @@ def test_cli_merge_push_and_verify_landed_flags(mp, monkeypatch, capsys):
     monkeypatch.setattr(lb, "busy_processes", lambda: [])
     real = lb.merge_push
     monkeypatch.setattr(lb, "merge_push", lambda *a, **k: real(
-        *a, **{**k, "checkers": mp["root"] / "tools"}))
+        *a, **{**k, "checkers": mp["root"] / "tools", "run_preflight": lambda m: PF_OK}))
     rc = lb.main(["--repo-root", str(mp["root"]), "--merge-push", "--dry-run", "one"])
     assert rc == 0
     assert "push origin" in capsys.readouterr().out
@@ -1836,3 +1841,191 @@ def test_mp_does_not_pass_wait_to_a_checker_that_lacks_it(mp, monkeypatch):
 def test_the_landing_wait_outlasts_a_full_builder_suite():
     import suite_record
     assert lb.SUITE_WAIT_S > suite_record.DEFAULT_TIMEOUT
+
+
+# ================================================================ live-data preflight (S3, 2026-11-24)
+# Two merge-push suites ran 846 s and 917 s on 11-24 before failing on a stale live workstream
+# header. The preflight runs the live-data tests in the main checkout first, in seconds.
+PF_CONFTEST = ("def pytest_configure(config):\n"
+               "    config.addinivalue_line('markers', 'live_data: reads live data')\n")
+PF_LIVE = ("import pathlib, pytest\n\n\n@pytest.mark.live_data\ndef test_live_reads_data():\n"
+           "    assert pathlib.Path('data/notes.md').read_text() == 'ok\\n'\n\n\n"
+           "def test_unmarked_not_selected():\n    raise AssertionError('-m live_data ran me')\n")
+PF_BACKLOG = ("import pathlib\n\n\ndef test_every_live_workstream_has_a_valid_header():\n"
+              "    for p in sorted(pathlib.Path('data/workstreams').glob('*.md')):\n"
+              "        assert p.read_text().startswith('STATUS: active'), p.name\n")
+
+
+@pytest.fixture
+def pf_main(tmp_path):
+    """A stand-in main checkout: the two preflight selections, and live data that passes."""
+    m = tmp_path / "main"
+    files = {"tests/conftest.py": PF_CONFTEST, "tests/test_live.py": PF_LIVE,
+             "tests/scripts/test_workstream_backlog.py": PF_BACKLOG,
+             "data/notes.md": "ok\n", "data/workstreams/a.md": "STATUS: active\n",
+             "memory/lessons.md": "x\n"}
+    for rel, text in files.items():
+        (m / rel).parent.mkdir(parents=True, exist_ok=True)
+        (m / rel).write_text(text)
+    return m
+
+
+def test_preflight_selects_live_data_tests_and_the_backlog_file(pf_main):
+    assert lb.PREFLIGHT_RUNS == (("-m", "live_data", "tests"),
+                                 ("tests/scripts/test_workstream_backlog.py",))
+    pf = lb.preflight(pf_main)
+    assert pf["ok"], pf
+    assert [(r["select"], r["rc"], r["collected"], r["passed"]) for r in pf["runs"]] == [
+        ("-m live_data tests", 0, 1, 1),
+        ("tests/scripts/test_workstream_backlog.py", 0, 1, 1)]
+    assert pf["failing"] == [] and pf["data_changed"] == [] and pf["problem"] is None
+
+
+def test_preflight_stops_on_a_stale_header_in_under_60_s(pf_main):
+    (pf_main / "data" / "workstreams" / "b.md").write_text("STATUS: stale header\n")
+    pf = lb.preflight(pf_main)
+    assert not pf["ok"]
+    assert pf["duration_s"] < 60
+    assert pf["problem"] == "tests/scripts/test_workstream_backlog.py: pytest exit 1"
+    assert pf["failing"] == [
+        "tests.scripts.test_workstream_backlog::test_every_live_workstream_has_a_valid_header"]
+    assert "b.md" in pf["tail"]
+    msg = lb.preflight_refusal(pf)
+    assert "the failure is on main, not this branch" in msg
+    assert "test_every_live_workstream_has_a_valid_header" in msg
+
+
+def test_preflight_stops_at_the_first_failing_run(pf_main):
+    (pf_main / "data" / "notes.md").write_text("broken\n")
+    (pf_main / "data" / "workstreams" / "b.md").write_text("stale\n")
+    pf = lb.preflight(pf_main)
+    assert [r["select"] for r in pf["runs"]] == ["-m live_data tests"]
+    assert pf["failing"] == ["tests.test_live::test_live_reads_data"]
+
+
+def test_preflight_runs_the_live_data_tests_a_linked_worktree_skips(pf_main):
+    """In the main checkout (.git a directory, or none) a live_data test RUNS: collected 1,
+    passed 1, skipped 0 (conftest only skips when .git is a file)."""
+    pf = lb.preflight(pf_main)
+    assert pf["runs"][0]["skipped"] == 0 and pf["runs"][0]["passed"] == 1
+
+
+def test_preflight_zero_collected_and_no_report_are_failures(pf_main):
+    pf = lb.preflight(pf_main, runs=(("-m", "no_such_marker", "tests"),))
+    assert not pf["ok"] and pf["problem"] == "-m no_such_marker tests: pytest exit 5"
+    pf = lb.preflight(pf_main, runs=(("tests/absent.py",),))
+    assert not pf["ok"] and pf["problem"].startswith("tests/absent.py: pytest exit 4")
+
+
+def test_preflight_timeout_is_a_failure(pf_main):
+    (pf_main / "tests" / "scripts" / "test_workstream_backlog.py").write_text(
+        "import time\n\ndef test_slow():\n    time.sleep(30)\n")
+    pf = lb.preflight(pf_main, runs=(("tests/scripts/test_workstream_backlog.py",),),
+                      timeout=2)
+    assert not pf["ok"] and pf["problem"].endswith("timeout after 2 s")
+
+
+def test_preflight_ignores_caller_pytest_addopts(pf_main, monkeypatch):
+    """The child gets suite_record's kept env, so PYTEST_ADDOPTS cannot deselect tests."""
+    monkeypatch.setenv("PYTEST_ADDOPTS", "-k nothing_matches")
+    pf = lb.preflight(pf_main)
+    assert pf["ok"], pf
+
+
+@pytest.mark.parametrize("target", ["data/written.md", "memory/lessons.md"])
+def test_preflight_refuses_when_a_test_writes_live_data(pf_main, target):
+    (pf_main / "tests" / "test_writer.py").write_text(
+        "import pathlib, pytest\n\n\n@pytest.mark.live_data\ndef test_writes():\n"
+        f"    pathlib.Path({target!r}).write_text('written by a test, longer\\n')\n")
+    pf = lb.preflight(pf_main)
+    assert not pf["ok"] and pf["problem"] is None
+    assert pf["data_changed"] == [target]
+    msg = lb.preflight_refusal(pf)
+    assert target in msg and "a preflight test writes live data" in msg
+
+
+def test_snapshot_changes_sees_add_remove_and_edit():
+    a = {"x": (1, 1), "y": (1, 1)}
+    assert lb.snapshot_changes(a, dict(a)) == []
+    assert lb.snapshot_changes(a, {"x": (2, 1), "z": (1, 1)}) == ["x", "y", "z"]
+
+
+def test_data_snapshot_covers_only_data_and_memory(pf_main):
+    (pf_main / "output").mkdir()
+    (pf_main / "output" / "o.md").write_text("o")
+    assert sorted(lb.data_snapshot(pf_main)) == [
+        "data/notes.md", "data/workstreams/a.md", "memory/lessons.md"]
+
+
+def test_mp_failing_preflight_refuses_before_check_and_suite(mp, monkeypatch):
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    seen = []
+    bad = {**PF_OK, "ok": False, "problem": "sel: pytest exit 1", "failing": ["t::x"],
+           "tail": "E boom"}
+    monkeypatch.setattr(lb, "check", lambda *a, **k: pytest.fail("check ran after a failed preflight"))
+    rep = run_mp(mp, ["one"], dry_run=False, want_suite=True,
+                 run_preflight=lambda main: seen.append(main) or bad)
+    assert seen == [mp["root"]]                        # the main checkout, not a worktree
+    assert not rep["ok"] and rep["built"] == [] and rep["suite"] is None
+    assert rep["refusals"] == [lb.preflight_refusal(bad)]
+    assert "the failure is on main, not this branch" in rep["refusals"][0]
+    text = lb.render_merge_push(rep)
+    assert "live-data preflight: FAIL (0 test(s) in 0.1 s, main checkout)" in text
+    assert "  E boom" in text
+
+
+def test_mp_passing_preflight_continues_and_is_reported(mp):
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    pf = {**PF_OK, "runs": [{"collected": 3}, {"collected": 4}]}
+    rep = run_mp(mp, ["one"], run_preflight=lambda main: pf)
+    assert rep["ok"], rep
+    assert rep["preflight"] is pf
+    assert lb.render_merge_push(rep).splitlines()[1] == (
+        "live-data preflight: ok (7 test(s) in 0.1 s, main checkout)")
+
+
+def test_mp_default_preflight_is_the_real_one(mp, monkeypatch):
+    calls = []
+    monkeypatch.setattr(lb, "preflight", lambda main: calls.append(main) or PF_OK)
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    rep = run_mp(mp, ["one"], run_preflight=None)
+    assert rep["ok"], rep
+    assert calls == [mp["root"]]
+
+
+# Survivors of mutation r2 on 2026-11-24 (output/analysis/112426-s3-mutation-r2-land_branch.json),
+# one test each.
+
+def test_data_snapshot_skips_a_file_it_cannot_stat(pf_main):
+    """data_snapshot `continue` (line 907): a dangling symlink lists as a file and stat fails."""
+    (pf_main / "data" / "gone.md").symlink_to(pf_main / "data" / "nowhere.md")
+    snap = lb.data_snapshot(pf_main)
+    assert "data/gone.md" not in snap
+    assert sorted(snap) == ["data/notes.md", "data/workstreams/a.md", "memory/lessons.md"]
+
+
+def test_preflight_exit_0_without_a_report_is_a_failure(pf_main):
+    """`elif counts is None` (line 946): pytest --version exits 0 and writes no JUnit report."""
+    pf = lb.preflight(pf_main, runs=(("--version",),))
+    assert not pf["ok"]
+    assert pf["problem"] == "--version: pytest exit 0 wrote no readable report"
+
+
+def test_preflight_zero_collected_under_a_forced_exit_0_is_a_failure(pf_main):
+    """`elif counts["collected"] <= 0` (line 950): a hook can force exit 0 on an empty run, so
+    the report's count decides, not the exit code (the same rule as suite_record)."""
+    (pf_main / "tests" / "conftest.py").write_text(
+        PF_CONFTEST + "\n\ndef pytest_sessionfinish(session, exitstatus):\n"
+                      "    session.exitstatus = 0\n")
+    pf = lb.preflight(pf_main, runs=(("-m", "no_such_marker", "tests"),))
+    assert pf["runs"][0]["rc"] == 0 and pf["runs"][0]["collected"] == 0
+    assert not pf["ok"] and pf["problem"] == "-m no_such_marker tests: collected 0 tests"
+
+
+def test_preflight_removes_its_temp_dir(pf_main, tmp_path, monkeypatch):
+    """shutil.rmtree in the finally (line 956): the JUnit reports must not pile up in TMPDIR."""
+    parent = tmp_path / "tmpparent"
+    parent.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(parent))
+    assert lb.preflight(pf_main)["ok"]
+    assert list(parent.iterdir()) == []

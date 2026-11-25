@@ -56,6 +56,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.parse
 from datetime import datetime
 from pathlib import Path
@@ -866,8 +867,112 @@ def held_inside(root: Path, held: list[dict], base: str, tip: str) -> list[str]:
     return out
 
 
+# ---------------------------------------------------------------- live-data preflight
+# S3, 2026-11-24: two merge-push suites ran 846 s and 917 s, then failed on
+# test_workstream_backlog.py::test_every_live_workstream_has_a_valid_header_or_is_exempt,
+# because live workstream headers went stale between the dry run and the real run. That test
+# is unmarked and reads the MAIN checkout's data/workstreams even from suite_record's temp
+# worktree. So before anything slow, merge-push runs the tests that read live data, in the
+# main checkout (the only tree that has data/), and stops on the first failure.
+#
+# What runs: every @pytest.mark.live_data test (they SKIP in the suite's linked worktree,
+# tests/conftest.py, so this is the one place they meet the real files), plus the whole
+# test_workstream_backlog.py. Main checkout = main's code: on a real run the checkers-current
+# rule makes it GitHub main. LIMIT: a branch that edits a live-data test meets real data only
+# after it lands. Exclusions: none. Every file selected was read for writes on 2026-11-24
+# (open w/a, write_text/bytes, *_write.py, shutil, unlink, mkdir); each write targets
+# tmp_path. Ruling (job-search-b7, 2026-11-24): a failure here BLOCKS, because every branch
+# lands onto main and main disagrees with real data.
+#
+# Writer guard (b7's condition): a test run from the main checkout can write Nick's live data
+# (three tests in test_check_workstream_heading_time.py did, 11-24). data/ and memory/ are
+# gitignored, so `git status` cannot see a write there; the guard compares (mtime, size) of
+# every file under them before and after, and refuses when anything changed. Another session
+# appending a log in the same seconds trips it too, so the refusal says to re-run and treat a
+# repeat on the same file as a writer.
+PREFLIGHT_RUNS = (("-m", "live_data", "tests"), ("tests/scripts/test_workstream_backlog.py",))
+PREFLIGHT_GUARDED = ("data", "memory")
+PREFLIGHT_TIMEOUT = 600
+
+
+def data_snapshot(main: Path) -> dict[str, tuple[int, int]]:
+    snap = {}
+    for top in PREFLIGHT_GUARDED:
+        for dirpath, _dirs, files in os.walk(main / top):
+            for name in files:
+                p = Path(dirpath) / name
+                try:
+                    st = p.stat()
+                except OSError:
+                    continue
+                snap[str(p.relative_to(main))] = (st.st_mtime_ns, st.st_size)
+    return snap
+
+
+def snapshot_changes(before: dict, after: dict) -> list[str]:
+    return sorted(k for k in before.keys() | after.keys() if before.get(k) != after.get(k))
+
+
+def preflight(main: Path, runs=PREFLIGHT_RUNS, timeout: int = PREFLIGHT_TIMEOUT) -> dict:
+    """Run the live-data tests in the main checkout. ok only when every run exits 0 with a
+    readable report, no failures or errors, more than 0 collected, and no file under
+    data/ or memory/ changed."""
+    import suite_record as sr   # one JUnit reader and one child env, shared with the suite
+    res = {"ok": False, "runs": [], "failing": [], "data_changed": [], "problem": None}
+    env = {**sr.child_env(), "PYTHONDONTWRITEBYTECODE": "1"}
+    before = data_snapshot(main)
+    start = time.monotonic()
+    tmp = Path(tempfile.mkdtemp(prefix="merge-push-preflight."))
+    try:
+        for i, sel in enumerate(runs):
+            junit = tmp / f"run{i}.xml"
+            argv = [sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider",
+                    f"--junitxml={junit}", *sel]
+            try:
+                p = subprocess.run(argv, cwd=main, env=env, capture_output=True, text=True,
+                                   stdin=subprocess.DEVNULL, timeout=timeout)
+                rc, out = p.returncode, p.stdout + p.stderr
+            except subprocess.TimeoutExpired:
+                rc, out = None, f"timeout after {timeout} s"
+            except OSError as e:
+                rc, out = 127, f"{type(e).__name__}: {e}"
+            counts = sr.parse_junit(junit)
+            detail = sr.junit_cases(junit)
+            res["runs"].append({"select": " ".join(sel), "rc": rc, **(counts or {}),
+                                "skips_by_reason": detail["skips_by_reason"]})
+            res["failing"] += detail["failing"]
+            if rc is None:
+                res["problem"] = f"{' '.join(sel)}: {out}"
+            elif counts is None:
+                res["problem"] = f"{' '.join(sel)}: pytest exit {rc} wrote no readable report"
+            elif counts["failed"] or counts["errors"] or rc != 0:
+                res["problem"] = f"{' '.join(sel)}: pytest exit {rc}"
+            elif counts["collected"] <= 0:
+                res["problem"] = f"{' '.join(sel)}: collected 0 tests"
+            if res["problem"]:
+                res["tail"] = tail(out, 15)
+                break
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    res["duration_s"] = round(time.monotonic() - start, 1)
+    res["data_changed"] = snapshot_changes(before, data_snapshot(main))
+    res["ok"] = res["problem"] is None and not res["data_changed"]
+    return res
+
+
+def preflight_refusal(pf: dict) -> str:
+    if pf["problem"]:
+        names = ", ".join(pf["failing"]) or "no test named (see preflight.tail)"
+        return (f"live-data preflight failed in the main checkout after {pf['duration_s']} s; "
+                f"the failure is on main, not this branch: {pf['problem']}. Failing: {names}")
+    return ("live-data preflight changed files under data/ or memory/: "
+            + ", ".join(pf["data_changed"][:10])
+            + ". Re-run; if the same file changes again, a preflight test writes live data")
+
+
 def merge_push(root: Path, branches: list[str], *, dry_run: bool, gh=None,
-               checkers: Path | None = None, busy=None, want_suite: bool | None = None) -> dict:
+               checkers: Path | None = None, busy=None, want_suite: bool | None = None,
+               run_preflight=None) -> dict:
     """Build the merge chain and decide whether ONE push may land it. See the block above.
 
     A real run writes: the copied ledger rows into the main checkout, and the suite record.
@@ -898,6 +1003,11 @@ def merge_push(root: Path, branches: list[str], *, dry_run: bool, gh=None,
     if running:
         rep["refusals"].append("another push or fetch is running (one at a time, F3): "
                                + "; ".join(running) + ". " + WEDGE_HELP)
+    # Seconds, before check(), the chain, the gate and the suite (S3, 2026-11-24).
+    pf = rep["preflight"] = (run_preflight or preflight)(main)
+    if not pf["ok"]:
+        rep["refusals"].append(preflight_refusal(pf))
+        return rep
     base_rep = check(root, branches, want_suite=False, gh=gh, allowlist_ok=True)
     rep["check"] = base_rep
     m = base_rep["main"]
@@ -996,6 +1106,13 @@ def merge_push(root: Path, branches: list[str], *, dry_run: bool, gh=None,
 def render_merge_push(rep: dict) -> str:
     out = [("DRY RUN (judged with " + rep.get("gate_tools", "?") + "; nothing written)")
            if rep["dry_run"] else "MERGE-PUSH"]
+    if rep.get("preflight"):
+        pf = rep["preflight"]
+        n = sum(r.get("collected", 0) for r in pf["runs"])
+        out.append(f"live-data preflight: {'ok' if pf['ok'] else 'FAIL'} "
+                   f"({n} test(s) in {pf['duration_s']} s, main checkout)")
+        if not pf["ok"] and pf.get("tail"):
+            out += ["  " + ln for ln in pf["tail"].splitlines()]
     if rep.get("base"):
         out.append(f"base: GitHub main {rep['base']}")
     for b in rep["built"]:
