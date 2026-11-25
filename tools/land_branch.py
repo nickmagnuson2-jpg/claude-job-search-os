@@ -4,6 +4,12 @@
 Usage:
     PYTHONIOENCODING=utf-8 python3 tools/land_branch.py <branch> [<branch> ...] [--json] [--suite]
 
+Where to run it: the check mode works from any checkout of the repo, a branch's own worktree
+included; it finds each branch's worktree itself, and steps 6 to 8 always use the main
+checkout's tools/ (below). --merge-push is run from the main checkout. --suite only CHECKS for a
+suite record; it never runs the suite, so `tools/suite_record.py run --branch <branch>` comes
+first (S4 Grok F4 and S4's lesson, 2026-11-25).
+
 For each branch:
   1. Its worktree, from `git worktree list --porcelain`. Refused when there is none, or when the
      worktree has uncommitted changes to tracked files.
