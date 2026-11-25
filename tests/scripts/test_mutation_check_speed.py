@@ -105,7 +105,8 @@ def _repo(tmp_path, source=SUBJECT, tests=None):
 
 
 def _args(**kw):
-    return SimpleNamespace(whole_file=kw.get("whole_file", False), base=kw.get("base"))
+    return SimpleNamespace(whole_file=kw.get("whole_file", False), base=kw.get("base"),
+                           changed_lines_only=kw.get("changed_lines_only", False))
 
 
 # --- 1. diff scope: units ---------------------------------------------------------------
@@ -1504,3 +1505,93 @@ def test_e2e_a_default_run_creates_no_cache_directory(tmp_path):
     r = _run([str(src), "--whole-file", "--tests", str(t), "--json"], tmp_path, default=True)
     assert r.returncode in (0, 2), r.stderr
     assert not (tmp_path / ".mutation-cache").exists()
+
+
+# --- --changed-lines-only (S5, 2026-11-25; Nick: "always fix at the source") ---------------
+# A changed sibling or mapped test widened every run to the whole file, and four sections
+# built the same workaround tonight (scratch bases, re-scoped bases, narrowed --tests,
+# composed records). The flag measures only the target's changed lines and RECORDS what the
+# default would have widened for, so the record never reads as more than it measured.
+
+def _sibling_changed(tmp_path):
+    """S2's shape: target line changed AND an imported tools/ helper changed since the base."""
+    src, t = _repo(tmp_path)
+    helper = tmp_path / "tools" / "policy_helper.py"
+    helper.write_text("STRICT = True\n")
+    first, rest = t.read_text().split("\n", 1)     # after the sys.path line, so it imports
+    t.write_text(first + "\nimport policy_helper\n" + rest)
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "helper")
+    _git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
+    helper.write_text("STRICT = False\n")
+    src.write_text(src.read_text().replace("if n > 100:", "if n >= 101:"))
+    return src, t
+
+
+def test_the_default_still_widens_for_a_changed_sibling(tmp_path):
+    src, t = _sibling_changed(tmp_path)
+    s = mc.resolve_scope(_args(), src, tmp_path, [t])
+    assert s["mode"] == "whole_file" and "imported helper changed" in s["reason"], s
+
+
+def test_changed_lines_only_keeps_the_target_diff_and_records_what_it_skipped(tmp_path):
+    src, t = _sibling_changed(tmp_path)
+    s = mc.resolve_scope(_args(changed_lines_only=True), src, tmp_path, [t])
+    assert s["mode"] == "changed_lines_only", s
+    assert sorted(s["changed"]) == [8], s                       # the `if n >= 101:` line only
+    assert any("policy_helper.py" in w and "imported helper changed" in w
+               for w in s["widen_skipped"]), s["widen_skipped"]
+
+
+def test_changed_lines_only_does_not_add_the_lines_a_changed_test_executes(tmp_path):
+    src, t = _repo(tmp_path)
+    t.write_text(t.read_text() + "def test_extra(): assert classify(2) == 'pos'\n")
+    src.write_text(src.read_text().replace("if n > 100:", "if n >= 101:"))
+    s = mc.resolve_scope(_args(changed_lines_only=True), src, tmp_path, [t])
+    assert s["mode"] == "changed_lines_only" and sorted(s["changed"]) == [8], s
+    assert "pending_tests" not in s
+    assert any("test_subject.py" in w for w in s["widen_skipped"]), s["widen_skipped"]
+
+
+def test_changed_lines_only_with_nothing_skipped_says_so(tmp_path):
+    src, t = _repo(tmp_path)
+    src.write_text(src.read_text().replace("if n > 100:", "if n >= 101:"))
+    s = mc.resolve_scope(_args(changed_lines_only=True), src, tmp_path, [t])
+    assert s["mode"] == "changed_lines_only" and sorted(s["changed"]) == [8]
+    assert s["widen_skipped"] == []
+
+
+def test_changed_lines_only_and_whole_file_are_refused_together(tmp_path):
+    src, t = _repo(tmp_path)
+    r = _run([str(src), "--tests", str(t), "--json", "--whole-file", "--changed-lines-only"],
+             tmp_path, default=True)
+    assert r.returncode != 0
+    assert "--changed-lines-only" in (r.stdout + r.stderr)
+
+
+def test_changed_lines_only_is_refused_under_the_sweep_without_a_base(tmp_path):
+    src, t = _repo(tmp_path)
+    r = _run([str(src), "--tests", str(t), "--json", "--changed-lines-only"], tmp_path,
+             env_extra={mc.SWEEP_ENV: "1"}, default=True)
+    assert r.returncode == 1
+    assert json.loads(r.stdout)["code"] == "changed_lines_only_under_sweep"
+
+
+def test_e2e_changed_lines_only_measures_only_the_changed_line(tmp_path):
+    src, t = _sibling_changed(tmp_path)
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "work")
+    r = _run([str(src), "--tests", str(t), "--json", "--changed-lines-only",
+              "--base", "origin/main"], tmp_path, default=True)
+    d = json.loads(r.stdout)
+    assert "scope" in d, (d, r.stderr[-800:])
+    assert d["scope"]["mode"] == "changed_lines_only", d["scope"]
+    assert d["scope"]["mutants_in_scope"] < d["scope"]["mutants_in_file"]
+    assert d["scope"]["widen_skipped"], d["scope"]
+    assert d["killed"] + d["survived"] + d["allowlisted"] + d["unfinished"] == \
+        d["scope"]["mutants_in_scope"]
+
+
+def test_the_help_states_when_a_changed_lines_only_record_counts():
+    r = subprocess.run([sys.executable, str(TOOL), "--help"], capture_output=True, text=True)
+    h = "".join(r.stdout.split())          # argparse wraps, and may break at a hyphen
+    assert "--changed-lines-only" in h
+    assert "widen_skipped" in h and "one-linereasonperskippeditem" in h

@@ -1259,6 +1259,19 @@ def resolve_scope(args, target: Path, root: Path, test_files: list | None = None
         return {"mode": "whole_file", "base": base,
                 "reason": "the target does not exist at the base (new, untracked or renamed)"}
     t = changed_test_inputs(base, root, test_files or [], target.stem)
+    if getattr(args, "changed_lines_only", False):
+        # Never widened. Everything the default would have widened or added for is
+        # recorded, so the record cannot read as more than it measured (S5, 2026-11-25).
+        if t is None:
+            skipped = ["changed test inputs could not be listed (git failed)"]
+        else:
+            skipped = [f"{p} ({why})" for p, why in t["whole"]] + \
+                      [f"{p} (changed mapped test: the target lines it executes were not "
+                       "added)" for p in t["tests"]]
+        return {"mode": "changed_lines_only", "base": base,
+                "reason": "--changed-lines-only: the target's changed lines only",
+                "changed": d["changed"], "deleted_at": d["deleted_at"],
+                "widen_skipped": skipped}
     if t is None:
         return {"mode": "whole_file", "base": base,
                 "reason": "git could not list changed test files; measuring the whole file"}
@@ -2279,6 +2292,17 @@ def main() -> int:
                     help="measure every mutant in the file. The default measures only "
                          "mutants on lines changed against --base; the overnight sweep "
                          "(MUTATION_SWEEP_ACTIVE) defaults to the whole file.")
+    ap.add_argument("--changed-lines-only", action="store_true",
+                    help="measure ONLY the mutants on the target's changed lines against "
+                         "--base, never widening to the whole file when a mapped test, an "
+                         "imported sibling or fixture data changed. What the default would "
+                         "have widened for is recorded in scope.widen_skipped. As rule 10 "
+                         "mutation evidence (org ruling, 2026-11-25): the record counts on "
+                         "its own when widen_skipped is empty; when it is not, it counts "
+                         "only if the READY evidence gives a one-line reason per skipped "
+                         "item why that change cannot alter a changed-line verdict. Not "
+                         "with --whole-file; refused under the overnight sweep without "
+                         "--base.")
     ap.add_argument("--base", default=None,
                     help="git ref to diff against (default: merge-base of HEAD and "
                          "origin/main). Implies diff scope, even under the sweep.")
@@ -2299,6 +2323,13 @@ def main() -> int:
     ap.add_argument("--no-cache", action="store_true",
                     help="neither read nor write the verdict cache; wins over --cache")
     args = ap.parse_args()
+    if args.changed_lines_only and args.whole_file:
+        ap.error("--changed-lines-only and --whole-file are opposite scopes; pass one")
+    if args.changed_lines_only and not args.base and os.environ.get(SWEEP_ENV):
+        print(json.dumps({"status": "error", "code": "changed_lines_only_under_sweep",
+                          "message": "the overnight sweep measures the corpus; "
+                                     "--changed-lines-only needs an explicit --base there"}))
+        return 1
     # Honored from anywhere, a linked worktree included (FT:26, 2026-11-16). It used to be
     # skipped there, so the run mutated the caller's worktree in place and froze it (one
     # froze ~8 h). The child never sees the flag (worktree_argv drops it in any
@@ -2411,7 +2442,7 @@ def main() -> int:
                            f"({why}); measuring the whole file"}
     pending_tests = scope.get("pending_tests")
     full_catalog = catalog
-    if scope["mode"] == "diff" and not pending_tests:
+    if scope["mode"] in ("diff", "changed_lines_only") and not pending_tests:
         functions = _function_spans(tree)
         catalog = [e for e in catalog
                    if in_scope(spans.get((e["line"], e["col"], e["op"]),
@@ -2422,9 +2453,11 @@ def main() -> int:
     changed_ids: set[int] = set()   # mutants on changed lines (changed_first)
     if scope.get("tests_changed"):
         scope_out["tests_changed"] = scope["tests_changed"]
-    if scope["mode"] == "diff":
+    if scope["mode"] in ("diff", "changed_lines_only"):
         scope_out["changed_lines"] = sorted(scope["changed"])
         scope_out["deleted_after_lines"] = sorted(scope["deleted_at"])
+    if scope["mode"] == "changed_lines_only":
+        scope_out["widen_skipped"] = scope["widen_skipped"]
     if scope["mode"] == "whole_file" and scope["reason"] != "--whole-file" \
             and not os.environ.get(SWEEP_ENV):
         print(f"mutation_check: scope: whole file ({scope['reason']})",
