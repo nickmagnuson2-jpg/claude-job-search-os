@@ -227,7 +227,7 @@ explicitly in one line: `Top 3 is conversation-shaped: 7d conversations = N.` If
 normally. Origin: 2026-09-01, Nick's metric change, wired here rather than `/weekly-review` because
 he did not run that skill (deleted 2026-10-29).
 
-**Learning lanes (from `results.learning_ledger.data`, S7):** one line, `Learning lanes: <due_total> due across <N> lanes`, inside the queue-depth block below. `due_total` counts records at 2+ fires still open across all five capture lanes, which no other surface shows. If the source failed, say "learning ledger unavailable" and continue.
+**Learning lanes (from `results.learning_ledger.data`, S7):** one line, `Learning lanes: <due_total> due across <N> lanes`, inside the queue-depth block below. `due_total` counts the records `learning_state` calls due across all five capture lanes (memory: occurrences reached the rule's own `reopen_at`; friction and lessons: the ladder, 2, on an open row), which no other surface shows. If the source failed, say "learning ledger unavailable" and continue.
 
 **Memory freshness (from `results.memory_freshness.text`, B4 2026-11-22):** print the one line verbatim, inside the queue-depth block below, after the learning-lanes line. It counts memory rules as current / unverified / unknown by kind, from the nightly `memory_usage.py` transcript scan, and says what changed since the last run. **Never call a rule "unused" or suggest deleting one from this line:** unverified means no re-confirmation was observed, and the scan has known gaps. If the line says "no run yet" or the source failed, say "memory freshness unavailable" and continue.
 
