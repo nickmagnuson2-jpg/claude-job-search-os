@@ -902,22 +902,24 @@ def _row(tmp_path, company, role=None):
     return rows[0]
 
 
-def _counted_today(cols):
-    """The reader's own rule, so writer and reader are tested against each other."""
+def _counted_today(cols, day=None):
+    """The reader's own rule, so writer and reader are tested against each other. `day`
+    is the date the writer stamped; it defaults to today."""
     sys.path.insert(0, str(TOOLS_DIR))
     import day_check
     from datetime import date as _d
-    return day_check.applied_on(cols, _d.today())
+    return day_check.applied_on(cols, _d.fromisoformat(day) if day else _d.today())
 
 
 def test_update_into_applied_stamps_the_date_and_day_check_counts_it(tmp_path):
-    from datetime import date as _d
     write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    days = _s6c_today_window()          # the child stamps its own date: either day at midnight
     result, code = run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Applied")
+    days |= _s6c_today_window()
     assert code == 0 and result["applied_stamped"] is True
     cols = _row(tmp_path, "Acme Corp")
-    assert cols[6] == f"Applied {_d.today().isoformat()}"
-    assert _counted_today(cols)
+    assert cols[6] in {f"Applied {d}" for d in days}
+    assert _counted_today(cols, cols[6].split()[-1])
 
 
 def test_update_of_a_row_already_applied_stamps_nothing(tmp_path):
@@ -939,12 +941,13 @@ def test_update_into_applied_keeps_an_existing_applied_date(tmp_path):
 
 
 def test_update_into_applied_with_replaced_notes_still_stamps(tmp_path):
-    from datetime import date as _d
     write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    days = _s6c_today_window()
     result, code = run_pipe_write("--repo-root", str(tmp_path), "update", "Acme Corp", "Applied",
                                   "--notes", "via Ashby")
+    days |= _s6c_today_window()
     assert code == 0
-    assert _row(tmp_path, "Acme Corp")[6] == f"via Ashby Applied {_d.today().isoformat()}"
+    assert _row(tmp_path, "Acme Corp")[6] in {f"via Ashby Applied {d}" for d in days}
 
 
 def test_update_to_another_stage_stamps_nothing(tmp_path):
@@ -955,13 +958,14 @@ def test_update_to_another_stage_stamps_nothing(tmp_path):
 
 
 def test_add_with_stage_applied_stamps_and_default_add_does_not(tmp_path):
-    from datetime import date as _d
     write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_MD)
+    days = _s6c_today_window()
     r1, _ = run_pipe_write("--repo-root", str(tmp_path), "add", "Zed Co", "Ops", "--stage", "Applied")
+    days |= _s6c_today_window()
     r2, _ = run_pipe_write("--repo-root", str(tmp_path), "add", "Yel Co", "Ops")
     assert r1["applied_stamped"] is True and r2["applied_stamped"] is False
     zed = _row(tmp_path, "Zed Co")
-    assert zed[6] == f"Applied {_d.today().isoformat()}" and _counted_today(zed)
+    assert zed[6] in {f"Applied {d}" for d in days} and _counted_today(zed, zed[6].split()[-1])
     assert _row(tmp_path, "Yel Co")[6] == "—"
 
 
