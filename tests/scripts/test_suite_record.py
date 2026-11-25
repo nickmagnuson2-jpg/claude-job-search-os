@@ -602,3 +602,52 @@ def test_script_imports_stack_check_without_its_dir_on_sys_path(tmp_path):
     r = subprocess.run([sys.executable, "-I", str(TOOL), "--help"], capture_output=True,
                        text=True, cwd=tmp_path, timeout=60)
     assert r.returncode == 0, r.stderr
+
+
+# ---------------------------------------------------------------- skips by reason (S3, 2026-11-24)
+# Nick read 49 "not passed" tests as failures; the ledger said only "skipped": 49. Every row
+# and failure payload now names why each skip happened, and the counts add up.
+SKIPS = ("import pytest\n\n\n"
+         "@pytest.mark.skip(reason='LIVE-DATA-ABSENT: no data')\ndef test_a():\n    pass\n\n\n"
+         "@pytest.mark.skip(reason='LIVE-DATA-ABSENT: no data')\ndef test_b():\n    pass\n\n\n"
+         "@pytest.mark.skip(reason='no main checkout')\ndef test_c():\n    pass\n\n\n"
+         "@pytest.mark.xfail(reason='known bug')\ndef test_d():\n    assert False\n")
+
+
+def test_pass_row_groups_skips_by_reason_and_they_sum(sr, repo, tmp_parent, capsys):
+    _branch(repo, "skips", {"tests/test_skips.py": SKIPS})
+    code, out = _run(sr, repo, capsys, "skips", "--base", "main")
+    assert code == 0, out
+    row = _ledger_rows(repo)[0]
+    assert row["skipped"] == 4
+    by = {s["reason"]: s["count"] for s in row["skips_by_reason"]}
+    assert by == {"LIVE-DATA-ABSENT: no data": 2, "no main checkout": 1, "known bug": 1}
+    assert row["skips_by_reason"][0]["count"] == 2          # most common first
+    assert sum(by.values()) == row["skipped"]
+    assert out["skips_by_reason"] == row["skips_by_reason"]
+
+
+def test_failure_payload_also_carries_skips_by_reason(sr, repo, tmp_parent, capsys):
+    _branch(repo, "bad", {"tests/test_skips.py": SKIPS, "tests/test_bad.py": FAILING})
+    code, out = _run(sr, repo, capsys, "bad", "--base", "main")
+    assert code == 1 and out["code"] == "tests_failed"
+    assert sum(s["count"] for s in out["skips_by_reason"]) == out["skipped"] == 4
+
+
+def test_junit_cases_reasons_failing_and_unreadable(sr, tmp_path):
+    p = tmp_path / "j.xml"
+    p.write_text('<?xml version="1.0"?><testsuites><testsuite tests="4">'
+                 '<testcase classname="a" name="t1"><skipped message="r1"/></testcase>'
+                 '<testcase classname="a" name="t2"><skipped message=" "/></testcase>'
+                 '<testcase classname="b" name="t3"><failure message="x"/></testcase>'
+                 '<testcase classname="b" name="t4"><error message="y"/></testcase>'
+                 '<testcase classname="c" name="t5"/>'
+                 '</testsuite></testsuites>', encoding="utf-8")
+    assert sr.junit_cases(p) == {
+        "skips_by_reason": [{"reason": "(no reason given)", "count": 1},
+                            {"reason": "r1", "count": 1}],
+        "failing": ["b::t3", "b::t4"]}
+    empty = {"skips_by_reason": [], "failing": []}
+    assert sr.junit_cases(tmp_path / "missing.xml") == empty
+    (tmp_path / "bad.xml").write_text("<nope", encoding="utf-8")
+    assert sr.junit_cases(tmp_path / "bad.xml") == empty
