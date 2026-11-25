@@ -32,7 +32,7 @@ PREFIX="com.nickmagnuson.jobsearch."
 # __CLAUDE_PROJECT_SLUG__ that folder's name (detector-scan writes "$HOME/.claude/projects/<slug>"), all from the
 # existing resolvers (vault_paths.main_checkout, hook_runtime.claude_project_dir). launchd
 # expands neither ~ nor $HOME, so the installed copy carries the literal paths.
-read -r RENDER_REPO RENDER_PROJECT RENDER_SLUG < <(python3 - "$HERE/../.." <<'PY'
+{ IFS= read -r RENDER_REPO; IFS= read -r RENDER_PROJECT; IFS= read -r RENDER_SLUG; } < <(python3 - "$HERE/../.." <<'PY'
 import sys
 from pathlib import Path
 here = Path(sys.argv[1]).resolve()
@@ -40,7 +40,7 @@ sys.path.insert(0, str(here / "tools"))
 from hook_runtime import claude_project_dir
 from vault_paths import main_checkout
 main = main_checkout(here)
-print(main, claude_project_dir(main), claude_project_dir(main).name)
+print(main, claude_project_dir(main), claude_project_dir(main).name, sep="\n")   # one per line: a path may hold spaces
 PY
 )
 RENDER_REPO="${LAUNCHD_REPO_ROOT:-$RENDER_REPO}"

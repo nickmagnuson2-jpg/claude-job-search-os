@@ -29,10 +29,12 @@ def offenders(root: Path, needles=NEEDLES) -> list[str]:
     for rel in filter(None, files):
         path = root / rel
         try:
-            text = path.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError, IsADirectoryError):
+            # Bytes, so a non-UTF-8 file is still read; a tracked symlink is its target path,
+            # which git stores and publishes (Codex s1c r1 F3).
+            data = (os.readlink(path).encode() if path.is_symlink() else path.read_bytes())
+        except (OSError, IsADirectoryError):
             continue
-        text = LABEL_PREFIX.sub("", text)
+        text = LABEL_PREFIX.sub("", data.decode("utf-8", errors="replace"))
         if any(n in text for n in needles):
             out.append(rel)
     return out
@@ -48,5 +50,8 @@ def test_the_check_sees_a_planted_home_path(tmp_path):
     (tmp_path / "b.plist").write_text("<string>com.someone.jobsearch.x</string>\n",
                                       encoding="utf-8")
     subprocess.run(["git", "-C", str(tmp_path), "add", "a.py", "b.plist"], check=True)
+    (tmp_path / "c.bin").write_bytes(b"\xff\xfe/home/someone/x\xff")
+    os.symlink("/home/someone/target", tmp_path / "d-link")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "c.bin", "d-link"], check=True)
     needles = ("/home/someone/", "-home-someone-")
-    assert offenders(tmp_path, needles) == ["a.py"]
+    assert offenders(tmp_path, needles) == ["a.py", "c.bin", "d-link"]
