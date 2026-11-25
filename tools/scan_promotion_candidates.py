@@ -95,17 +95,28 @@ def iter_candidate_files(memory_dir: Path):
     the filter pre-selects its own numerator. Coverage must be measured here.
     """
     for p in sorted(memory_dir.glob("*.md")):
-        if not _is_scannable(p.name):
-            continue
+        scannable = _is_scannable(p.name)
         try:
             text = p.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             # Still a rule file, and one the scan cannot see. Dropping it here took it
             # out of the denominator, so an unreadable corpus could pass the coverage
             # floor. Empty frontmatter counts it and leaves it invisible.
-            yield p, {}
+            if scannable:
+                yield p, {}
+            continue
+        # The name filter drops indexes, archives and the router, never a learning record:
+        # learning_state.is_record decides the population, as in learning_ledger (Codex s1
+        # r2 F1: an archive-prefixed record was due in learning_state and the ledger and
+        # absent here). On 2026-11-25 none of the 27 name-excluded live files is a record.
+        if not scannable and not _is_learning_record(text):
             continue
         yield p, parse_frontmatter(text)
+
+
+def _is_learning_record(text: str) -> bool:
+    fields, defect = mf.read(text)
+    return defect is None and ls.is_record(fields)
 
 
 def schema_coverage(memory_dir: Path) -> dict:

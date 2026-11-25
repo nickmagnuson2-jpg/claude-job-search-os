@@ -83,6 +83,9 @@ FIXTURE = {
     # dropped both of these before judging due.
     "feedback_due_at_one.md": (rule(1, 1), True),
     "feedback_unknown_promoted.md": (rule(2, 2, promoted="n/a"), True),
+    # Codex s1 r2 F1: the scanner's filename filter dropped a record before judging it.
+    "archive-live-rule.md": (rule(2, 2), True),
+    "index-not-a-record.md": ("---\nname: idx\ndescription: an index\n---\n- a list\n", False),
 }
 
 
