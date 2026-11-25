@@ -264,6 +264,11 @@ def test_the_live_ledger_reads_every_lane():
     mem = Path.home() / ".claude/projects/-Users-mag-Documents-Obsidian-30-projects-job-search/memory"
     if not mem.is_dir():
         pytest.skip("live memory tier not present")
+    if not (REPO_ROOT / "memory" / "friction-log.md").is_file():
+        # mutation_check runs pytest from outside its temporary worktree, where
+        # tests/conftest.py's live_data skip does not load and the gitignored repo memory/
+        # is absent (2026-11-25, S1 mutation r2 baseline_red). The main checkout has it.
+        pytest.skip("LIVE-DATA-ABSENT: repo memory/ is gitignored and absent in this checkout")
     report = ll.collect(REPO_ROOT, mem)
     assert set(report["lanes"]) >= {"memory", "friction", "lessons-2"}
     assert report["total"] > 500
