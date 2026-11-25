@@ -83,19 +83,20 @@ def test_rule_files_are_scanned(name):
     assert spc._is_scannable(name) is True
 
 
-def test_the_name_filter_never_drops_a_learning_record(tmp_path):
-    """Codex s1 r2 F1 (2026-11-25): learning_state.is_record decides the population, so a
-    record survives an excluded name; a non-record with that name, or one that cannot be
-    read, is still dropped. An unreadable rule-named file still counts (empty frontmatter)."""
+def test_candidates_come_from_learning_state_records_not_the_name_filter(tmp_path):
+    """Codex s1 r2 F1 / Grok s1 F1 (2026-11-25): the candidate population is
+    learning_state.iter_records, so a record named like an archive is a candidate, a rollup
+    is not, and a broken record is listed as a defect. iter_candidate_files keeps its name
+    filter for the coverage and staleness signals only."""
     record = ('---\nname: a\ndescription: d\nmetadata:\n  occurrences: 2\n  promoted: "no"\n'
               '  reopen_at: 2\n---\nb\n')
     (tmp_path / "archive-live-rule.md").write_text(record, encoding="utf-8")
-    (tmp_path / "archive-2026-05.md").write_text("# rollup\n- old entry\n", encoding="utf-8")
-    (tmp_path / "index-x.md").write_bytes(b"\xff\xfe not utf-8")
-    (tmp_path / "feedback_bad.md").write_bytes(b"\xff\xfe not utf-8")
-    got = {p.name: fm for p, fm in spc.iter_candidate_files(tmp_path)}
-    assert set(got) == {"archive-live-rule.md", "feedback_bad.md"}
-    assert got["archive-live-rule.md"]["occurrences"] == "2" and got["feedback_bad.md"] == {}
+    (tmp_path / "archive-2026-05.md").write_text("# rollup\n  occurrences: 4\n", encoding="utf-8")
+    (tmp_path / "feedback_broken.md").write_text(
+        "---\nname: b\nmetadata:\n  occurrences: 3\n  promoted: [no\n---\n", encoding="utf-8")
+    got = {c["file"]: c["gate_state"] for c in spc.candidates_of(tmp_path)}
+    assert got == {"archive-live-rule.md": "due", "feedback_broken.md": "defect"}
+    assert "archive-live-rule.md" not in {p.name for p, _ in spc.iter_candidate_files(tmp_path)}
 
 
 # --- is_promoted: the two documented incidents ------------------------------

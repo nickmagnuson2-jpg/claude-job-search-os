@@ -95,28 +95,17 @@ def iter_candidate_files(memory_dir: Path):
     the filter pre-selects its own numerator. Coverage must be measured here.
     """
     for p in sorted(memory_dir.glob("*.md")):
-        scannable = _is_scannable(p.name)
+        if not _is_scannable(p.name):
+            continue
         try:
             text = p.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             # Still a rule file, and one the scan cannot see. Dropping it here took it
             # out of the denominator, so an unreadable corpus could pass the coverage
             # floor. Empty frontmatter counts it and leaves it invisible.
-            if scannable:
-                yield p, {}
-            continue
-        # The name filter drops indexes, archives and the router, never a learning record:
-        # learning_state.is_record decides the population, as in learning_ledger (Codex s1
-        # r2 F1: an archive-prefixed record was due in learning_state and the ledger and
-        # absent here). On 2026-11-25 none of the 27 name-excluded live files is a record.
-        if not scannable and not _is_learning_record(text):
+            yield p, {}
             continue
         yield p, parse_frontmatter(text)
-
-
-def _is_learning_record(text: str) -> bool:
-    fields, defect = mf.read(text)
-    return defect is None and ls.is_record(fields)
 
 
 def schema_coverage(memory_dir: Path) -> dict:
@@ -484,30 +473,43 @@ def gate_state(reopen_gate: str, occurrences: int) -> str:
     return "due" if occurrences >= int(m.group(1)) else "not_due"
 
 
-def ruled_state(path: Path, memory_dir: Path) -> tuple[str, bool | None]:
-    """(gate state, is a candidate), both from learning_state.memory_state on
-    memory_frontmatter.read. The prose gate is not read, and neither are this scanner's own
-    promoted / terminal / occurrence predicates: since 2026-11-25 the scanner, learning_ledger
-    and learning_state give one due set (tests/scripts/test_due_reader_parity.py).
+def candidates_of(memory_dir: Path) -> list[dict]:
+    """The promotion candidates, from learning_state alone: the population is
+    learning_state.iter_records (the one the ledger reads) and the state is
+    learning_state.memory_state. None of this scanner's own parsing, name filter, or
+    promoted / terminal / occurrence predicates decides it (Codex s1 r1-r2 F1, Grok s1 F1;
+    parity: tests/scripts/test_due_reader_parity.py).
 
-    gate state: due | not_due | no_number | defect. A bad reopen_at or a bad occurrences is
-    a defect, never due.
-    candidate: in learning_state's backlog, not terminal, and either at CANDIDATE_MIN or more
-    fires or due (a rule whose own reopen_at is 1 is due at 1 fire; Codex s1 r1 F1). None when
-    the frontmatter does not parse: learning_state cannot judge it, and the caller falls back
-    to the legacy population for that file, which is never due either way."""
-    try:
-        fields, defect = mf.read(path.read_text(encoding="utf-8"))
-    except (UnicodeDecodeError, OSError):
-        return "defect", None
-    if defect:
-        return "defect", None
-    st = ls.memory_state(fields, memory_dir=memory_dir)
-    due = st.due if st.due in ("due", "not_due", "no_number") else "defect"
-    occ = ls._count(fields.get("occurrences"))
-    candidate = (ls.in_backlog(st.disposition) and not st.terminal
-                 and (due == "due" or (occ is not None and occ >= ls.CANDIDATE_MIN)))
-    return due, candidate
+    A candidate is a record in learning_state's backlog, not terminal, at CANDIDATE_MIN or
+    more fires or due (a rule whose own reopen_at is 1 is due at 1 fire). gate_state is
+    due | not_due | no_number | defect: a bad reopen_at or occurrences is a defect, and so
+    is a record whose frontmatter does not parse (listed, never due)."""
+    out = []
+    for rec in ls.iter_records(memory_dir):
+        if rec.fields is None:
+            out.append({"file": rec.path.name, "occurrences": 0, "partial": False,
+                        "gate_state": "defect", "promoted_value": "", "reopen_gate": "",
+                        "description": f"frontmatter defect: {rec.defect.code}"})
+            continue
+        f = rec.fields
+        st = ls.memory_state(f, memory_dir=memory_dir)
+        due = st.due if st.due in ("due", "not_due", "no_number") else "defect"
+        occ = ls._count(f.get("occurrences"))
+        if not (ls.in_backlog(st.disposition) and not st.terminal
+                and (due == "due" or (occ is not None and occ >= ls.CANDIDATE_MIN))):
+            continue
+        out.append({
+            "file": rec.path.name,
+            "occurrences": occ if occ is not None else 0,
+            # `partial` rules are half-landed, not unstarted: flagged so the backlog can be
+            # triaged (finish the half-built one vs start a new one).
+            "partial": st.disposition.state == "partial",
+            "gate_state": due,
+            "promoted_value": str(f.get("promoted", "no")),
+            "reopen_gate": str(f.get("reopen_gate") or ""),
+            "description": str(f.get("description") or ""),
+        })
+    return out
 
 
 REFRESH_PREFIX = "Memory refresh:"
@@ -553,7 +555,6 @@ def main(argv: list[str]) -> None:
     repo_root = Path(args.repo_root).resolve()
     today = date.today()
 
-    promotion_candidates = []
     demotion_candidates = []
     # Post-backfill (2026-08-13) the corpus deliberately carries NO seeded `last_cited`:
     # seeding today would fake freshness, seeding mtime would fake staleness. The
@@ -564,6 +565,8 @@ def main(argv: list[str]) -> None:
     never_cited = []
     terminal_rules = []
     needs_review = 0
+
+    promotion_candidates = candidates_of(memory_dir)
 
     for path, fm in load_memory_files(memory_dir):
         try:
@@ -577,23 +580,6 @@ def main(argv: list[str]) -> None:
                 "file": path.name,
                 "occurrences": occurrences,
                 "terminal_reason": fm.get("terminal_reason", ""),
-                "description": fm.get("description", ""),
-            })
-
-        state, candidate = ruled_state(path, memory_dir)
-        if candidate is None:   # unparseable frontmatter: legacy population, never due
-            candidate = occurrences >= 2 and not is_promoted(fm) and not terminal
-        if candidate:
-            promotion_candidates.append({
-                "file": path.name,
-                "occurrences": occurrences,
-                # `partial` rules are half-landed, not unstarted. Surfaced in the same
-                # list because the remaining gap is real work, but flagged so the
-                # backlog can be triaged (finish the half-built one vs start a new one).
-                "partial": is_partially_promoted(fm),
-                "gate_state": state,
-                "promoted_value": str(fm.get("promoted", "no")),
-                "reopen_gate": fm.get("reopen_gate", ""),
                 "description": fm.get("description", ""),
             })
 

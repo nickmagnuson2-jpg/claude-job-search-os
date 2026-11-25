@@ -248,7 +248,8 @@ def test_detector_finds_todays_known_sites():
         "tools/memory_prepass.py": {"frontmatter_split", "gate_grammar"},
         "tools/merge_mining_verdicts.py": {"frontmatter_split"},
         "tools/workstream_probe.py": {"frontmatter_split", "key_scrape"},
-        "tools/learning_ledger.py": {"key_scrape", "promoted_predicate"},
+        # key_scrape removed 2026-11-25 (S1): read_memory iterates learning_state.iter_records.
+        "tools/learning_ledger.py": {"promoted_predicate"},
         "tools/friction_log.py": {"resolved_prefix"},
     }
     for path, sigs in expected.items():

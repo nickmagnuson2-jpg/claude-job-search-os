@@ -566,10 +566,12 @@ def test_write_refuses_to_replace_lines_that_carry_a_comment(tmp_path, block):
 
 def test_record_fire_refuses_a_commented_count(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAUDECODE", "1")
-    text = RULE.replace("  occurrences: 3", "  occurrences: 3  # two in drafts, one in a brief")
+    # GATED (Grok s1 F3): on RULE the threshold refusal raised first and hid this one.
+    text = GATED.replace("  occurrences: 3", "  occurrences: 3  # two in drafts, one in a brief")
     p = _file(tmp_path, text)
-    with pytest.raises(mf.WriteRefused):
+    with pytest.raises(mf.WriteRefused) as e:
         mf.record_fire(p, "2026-11-22 a fire")
+    assert "comment" in str(e.value) and "reopen_at is missing" not in str(e.value)
     assert p.read_text(encoding="utf-8") == text
 
 
@@ -583,15 +585,16 @@ def test_a_comment_on_another_key_does_not_block(tmp_path):
 def test_writers_refuse_a_symlink(tmp_path, monkeypatch):
     # F2: os.replace on the link swapped it for a regular file and left the target unchanged.
     monkeypatch.setenv("CLAUDECODE", "1")
-    target = _file(tmp_path)
+    target = _file(tmp_path, GATED)   # GATED (Grok s1 F3): so record_fire reaches the write
     alias = tmp_path / "alias.md"
     alias.symlink_to(target)
     with pytest.raises(mf.WriteRefused) as e:
         mf.write(alias, {"reopen_at": 3})
     assert "symlink" in str(e.value)
-    with pytest.raises(mf.WriteRefused):
+    with pytest.raises(mf.WriteRefused) as e:
         mf.record_fire(alias, "2026-11-22 a fire")
-    assert alias.is_symlink() and target.read_text(encoding="utf-8") == RULE
+    assert "symlink" in str(e.value)
+    assert alias.is_symlink() and target.read_text(encoding="utf-8") == GATED
 
 
 # ------------------------------------------------------------------ comment detection by yaml's own tokens

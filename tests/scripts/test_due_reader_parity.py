@@ -86,6 +86,13 @@ FIXTURE = {
     # Codex s1 r2 F1: the scanner's filename filter dropped a record before judging it.
     "archive-live-rule.md": (rule(2, 2), True),
     "index-not-a-record.md": ("---\nname: idx\ndescription: an index\n---\n- a list\n", False),
+    # Grok s1 F1: the scanner's strict UTF-8 read and its own parser hid these two.
+    "feedback_bad_byte.md": (rule(2, 2).encode("utf-8") + b"Body \xff\n", True),
+    "feedback_flow_style.md": ("---\nname: x\ndescription: a rule\nmetadata: {type: feedback, "
+                               "occurrences: 2, promoted: 'no', reopen_at: 2}\n---\nBody\n", True),
+    # 2026-11-25 live: archive-2026-10.md has no frontmatter and "occurrences:" lines in its
+    # body; the ledger's old 6,000-character scrape counted it as a record.
+    "archive-rollup.md": ("# Archive\n- old rule\n  occurrences: 4\n  promoted: no\n", False),
 }
 
 
@@ -93,7 +100,10 @@ def _fixture(tmp_path) -> Path:
     d = tmp_path / "memory"
     d.mkdir()
     for name, (text, _) in FIXTURE.items():
-        (d / name).write_text(text, encoding="utf-8")
+        if isinstance(text, bytes):
+            (d / name).write_bytes(text)
+        else:
+            (d / name).write_text(text, encoding="utf-8")
     return d
 
 
@@ -103,6 +113,37 @@ def test_three_readers_agree_on_a_fixture(tmp_path):
     assert learning_state_due(d) == expected
     assert ledger_due(d) == expected
     assert scanner_due(d, tmp_path) == expected
+
+
+def test_the_ledger_and_the_scanner_read_learning_states_population(tmp_path):
+    """One population (learning_state.iter_records): the ledger's memory records are exactly
+    its records, and every scanner candidate is one of them."""
+    d = _fixture(tmp_path)
+    population = {r.path.name for r in ls.iter_records(d)}
+    assert "archive-rollup.md" not in population and "index-not-a-record.md" not in population
+    assert {"feedback_bad_byte.md", "feedback_flow_style.md", "archive-live-rule.md"} <= population
+    assert {r["ref"] for r in ll.read_memory(d)} == population
+    r = subprocess.run([sys.executable, str(SCANNER), "--memory-dir", str(d), "--repo-root",
+                        str(tmp_path), "--mode", "interactive", "--dry-run", "--min-coverage", "0"],
+                       capture_output=True, text=True)
+    assert {c["file"] for c in json.loads(r.stdout)["promotion_candidates"]} <= population
+
+
+def test_lessons_due_is_parse_lessons_row_and_lessons_state(tmp_path):
+    """Grok s1 F4: the ledger's Section 2 due equals learning_state's row reader."""
+    lines = ["| Pattern | Rule | Occurrences | Promoted | Date |", "|---|---|---|---|---|",
+             "| a | r | 2 | No | 2026-08-13 |", "| b | r | 1 | No | 2026-08-13 |",
+             "| c | r | 4 | No | 2026-08-13 ||", "| d | r | 3 | Yes | 2026-08-13 |",
+             "| e | r | 5 | partial -- half | 2026-08-13 |"]
+    p = tmp_path / "lessons.md"
+    p.write_text("## Section 2\n" + "\n".join(lines) + "\n", encoding="utf-8")
+    want = set()
+    for line in lines:
+        row, _ = ls.parse_lessons_row(line)
+        if row is not None and ls.lessons_state(row)[1] == "due":
+            want.add(row[0])
+    got = {r["what"] for r in ll.read_lessons(p) if r["due"]}
+    assert got == want == {"a", "e"}
 
 
 def test_friction_due_is_friction_state_on_a_fixture(tmp_path):

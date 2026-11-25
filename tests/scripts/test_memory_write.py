@@ -169,6 +169,9 @@ def test_bump_without_a_date_is_refused(mem):
     code, out, _ = run(["bump", "feedback_example_rule.md", "--fire", "it happened again"], mem)
     assert code == 1
     assert out["action"] == "refused"
+    # The date check, not the threshold refusal, is what refused (Grok s1 F3).
+    assert any("YYYY-MM-DD" in r for r in out["reasons"])
+    assert not any("reopen_at is missing" in r for r in out["reasons"])
     assert text(mem) == RULE
 
 

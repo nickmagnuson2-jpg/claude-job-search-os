@@ -122,9 +122,13 @@ def test_section_2_due_is_lessons_state(tmp_path):
                  "| at two | r | 2 | No | 2026-08-13 |\n"
                  "| once | r | 1 | No | 2026-08-13 |\n"
                  "| closed | r | 5 | Yes | 2026-08-13 |\n"
-                 "| six cells | r | 4 | No | 2026-08-13 | extra |\n", encoding="utf-8")
-    assert [(r["what"], r["due"]) for r in ll.read_lessons(p)] == [
-        ("at two", True), ("once", False), ("closed", False), ("six cells", False)]
+                 "| six cells | r | 4 | No | 2026-08-13 | extra |\n"
+                 "| double pipe | r | 4 | No | 2026-08-13 ||\n", encoding="utf-8")
+    recs = ll.read_lessons(p)
+    assert [r["due"] for r in recs] == [True, False, False, False, False]
+    # Rows learning_state.parse_lessons_row cannot read are records with that defect, never
+    # due (Grok s1 F4: "||" used to collapse to five cells and read as due).
+    assert [r["evidence"].startswith("row defect: 6 cells") for r in recs[3:]] == [True, True]
 
 
 def test_section_1_has_no_occurrence_column_and_says_so(tmp_path):
@@ -327,10 +331,12 @@ def test_a_section_1_row_with_too_few_cells_is_skipped(tmp_path):
     assert ll.read_lessons(p) == []
 
 
-def test_a_section_2_row_with_too_few_cells_is_skipped(tmp_path):
+def test_a_section_2_row_with_too_few_cells_is_a_defect_record_never_due(tmp_path):
+    """learning_state.parse_lessons_row: never a silent drop."""
     p = tmp_path / "lessons.md"
-    p.write_text("## Section 2\n| a | b | c |\n", encoding="utf-8")
-    assert ll.read_lessons(p) == []
+    p.write_text("## Section 2\n| a | b | c |\nprose, not a row\n", encoding="utf-8")
+    [rec] = ll.read_lessons(p)
+    assert rec["due"] is False and rec["evidence"].startswith("row defect: 3 cells")
 
 
 def test_a_section_1_header_row_is_not_a_record(tmp_path):

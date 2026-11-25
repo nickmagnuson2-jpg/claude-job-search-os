@@ -43,7 +43,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import learning_state as ls  # noqa: E402  the one definition of due (Nick, 2026-11-22)
-import memory_frontmatter as mf  # noqa: E402  the one frontmatter reader
 
 DISPOSITION_OPEN = "open"
 DISPOSITION_DONE = "promoted"
@@ -82,22 +81,17 @@ def _disposition(value: str) -> str:
 
 
 def read_memory(memory_dir: Path) -> list[dict]:
-    """Every memory record (a file carrying a learning_state.RECORD_KEYS key), read by
-    memory_frontmatter.read and judged by learning_state.memory_state: the same population
-    and the same due as scan_promotion_candidates and learning_state. A file whose
-    frontmatter does not parse stays open and is never due; its defect is the evidence."""
+    """Every memory record, from learning_state.iter_records (the population the scanner
+    reads too), judged by learning_state.memory_state. A record whose frontmatter does not
+    parse stays open and is never due; its defect is the evidence."""
     out = []
-    for path in sorted(memory_dir.glob("*.md")):
-        text = path.read_text(encoding="utf-8", errors="replace")
-        fields, defect = mf.read(text)
-        if defect:
-            # Only a file that looks like a counted rule is a record with a defect.
-            if re.search(r"^\s*occurrences:", text[:6000], re.M):
-                out.append({"lane": "memory", "ref": path.name, "what": path.stem,
-                            "when": "", "occurrences": 0, "disposition": DISPOSITION_OPEN,
-                            "due": False, "evidence": f"frontmatter defect: {defect.code}"})
-        elif ls.is_record(fields):
-            out.append(_memory_record(path, fields, memory_dir))
+    for rec in ls.iter_records(memory_dir):
+        if rec.fields is None:
+            out.append({"lane": "memory", "ref": rec.path.name, "what": rec.path.stem,
+                        "when": "", "occurrences": 0, "disposition": DISPOSITION_OPEN,
+                        "due": False, "evidence": f"frontmatter defect: {rec.defect.code}"})
+        else:
+            out.append(_memory_record(rec.path, rec.fields, memory_dir))
     return out
 
 
@@ -133,6 +127,24 @@ def read_lessons(path: Path) -> list[dict]:
             continue
         if section is None:
             continue
+        if section == 2:
+            # learning_state.parse_lessons_row is the one Section 2 row reader (Grok s1 F4:
+            # _row_cells' strip("|") turned "...|| " into five cells and a due row). A row it
+            # cannot read is a record with that defect, never due, never dropped.
+            row, defect = ls.parse_lessons_row(line)
+            if row is not None:
+                out.append({"lane": "lessons-2", "ref": f"lessons.md:{row[4]}",
+                            "what": row[0][:200], "when": row[4],
+                            "occurrences": _int(row[2]),
+                            "disposition": _disposition(row[3]),
+                            "due": ls.lessons_state(row)[1] == "due",
+                            "evidence": row[1][:200]})
+            elif defect is not None:
+                out.append({"lane": "lessons-2", "ref": f"lessons.md:{line.strip()[:40]}",
+                            "what": line.strip()[:200], "when": "", "occurrences": 0,
+                            "disposition": DISPOSITION_OPEN, "due": False,
+                            "evidence": f"row defect: {defect}"})
+            continue
         cells = _row_cells(line)
         if not cells:
             continue
@@ -143,18 +155,6 @@ def read_lessons(path: Path) -> list[dict]:
                         "what": cells[1], "when": cells[3], "occurrences": 1,
                         "disposition": DISPOSITION_OPEN, "due": False,
                         "evidence": "Section 1 has no occurrence column"})
-        elif section == 2 and len(cells) >= 5:
-            if cells[0].lower() == "pattern":
-                continue
-            # Due by learning_state.lessons_state (the ladder, 2, on an open Promoted cell);
-            # a row that is not exactly the five Section 2 cells is never due.
-            due = (len(cells) == ls.LESSONS_WIDTH
-                   and ls.lessons_state(cells)[1] == "due")
-            out.append({"lane": "lessons-2", "ref": f"lessons.md:{cells[4]}",
-                        "what": cells[0][:200], "when": cells[4],
-                        "occurrences": _int(cells[2]),
-                        "disposition": _disposition(cells[3]), "due": due,
-                        "evidence": cells[1][:200]})
     return out
 
 
