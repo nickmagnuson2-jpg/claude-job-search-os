@@ -216,3 +216,121 @@ Email body here
 - Edit-safety hook (`.claude/settings.json`) runs `tools/check_edit_safety.py` on every `.md` Edit.
 
 The (now-historical) n8n setup (`tools/run_n8n.bat`, dashboard at localhost:5678) was replaced by launchd ~2026-04-28; n8n binaries may still exist but no jobs run there.
+
+## Other tools (one line each)
+
+Every tracked `tools/*.py` not described above or in `docs/hooks.md`, one line each, from the first paragraph of its docstring (backfilled 2026-11-25). Read the file's own docstring and `--help` before invoking it. `tests/scripts/test_tools_documented.py` fails when a tracked tool is named in neither doc and not in `tests/scripts/tools_doc_allowlist.json`, so a new tool lands with its line.
+
+| Script | Purpose |
+|---|---|
+| `act_classify.py` | Pre-process /act classification for bucket A/B routing and inbox triage. |
+| `alirohde_nudge.py` | Write an inbox triage nudge when a new edition of a tracked jobs newsletter has landed (deterministic detect + extract; no scoring). |
+| `allowlist_merge.py` | key-wise three-way merge for tools/mutation-allow.json. |
+| `allowlist_write.py` | add or remove a mutation-allowlist entry, under a lock. |
+| `apply_memory_verdicts.py` | apply VERIFIED mining verdicts to memory frontmatter. |
+| `approval_signing.py` | an approval is a signature made with Nick's Touch ID key. |
+| `audit_pii_record.py` | the record /audit-pii writes on a CLEAN verdict, and the check the pre-push guard runs against it. |
+| `backfill_transcript_failures.py` | one-shot recovery of friction events missed by the broken-PostToolUse-on-error hook design (2026-05-21 → 2026-05-27). |
+| `blind_view.py` | extract a REDACTED view of a frame for a blind agent. |
+| `booking_tracker.py` | snapshot public booking-page data for venues on a public booking site; watch for changes. |
+| `build_check.py` | run the SCRIPT checks over every BUILD-LOG.md and report the drain flags. |
+| `call_analyzer.py` | Transcript analysis engine for interview call debriefs. |
+| `check_dark_inputs.py` | find extraction that is POPULATED BUT NOT USABLE. |
+| `check_deck_craft.py` | Run the mechanizable subset of Sections A-C of framework/deck-rubric.md against a rendered deck. |
+| `check_deck_geometry.py` | the deck rules that can only be checked against the RENDER. |
+| `check_frame_integrity.py` | Run the deterministic subset of Section F against a frame.yaml. |
+| `check_hook_warn_tier.py` | Not a hook: a guard test over `tools/check_*.py` that flags any hook which writes to stderr and exits 0, a shape whose output reaches nobody. |
+| `check_status_query_verification.py` | UserPromptSubmit hook (absence-assertion reminder), built and **deliberately unwired** on precision (CLAUDE.md, Self-Improvement Loop Step 3). |
+| `chrome_runner.py` | Find headless Chrome, and run it against a deck. The mechanism, once. |
+| `coaching_metrics.py` | Longitudinal projection of interview performance, for the console. |
+| `codex_verify.py` | run a second model against work that matters, and land the result. |
+| `commit_msg_pii_guard.py` | refuse a commit whose MESSAGE names a known real entity. |
+| `company_dim.py` | the company dimension: canonical names, aliases, and type. |
+| `company_key.py` | the one answer to "is this the same company?". |
+| `company_queue.py` | the discovery queue: where discovered companies wait for Nick's call. |
+| `conflict_diff.py` | Mechanically diff v1 (workbook Contact Register) against v3 (records TSV). |
+| `conftest_guard.py` | Shared definitions for the mutation guard in tests/conftest.py. |
+| `contact_finder.py` | deterministic contact discovery via Exa search. |
+| `conversations_metric.py` | Count the OUTCOME metric Nick actually cares about: conversations and interviews HAD. |
+| `coverage_invariant.py` | every file in the working tree is recoverable, or declared not to be. |
+| `cross_model_gate.py` | require a cross-model verification before a big push. |
+| `cv_fixed_sections.py` | BLOCK a CV render whose fixed sections were copied from an older CV. |
+| `day_check.py` | "where am I today": the day's activity, counted from the logs. Read-only. |
+| `db_sync.py` | Push the markdown pipeline into Postgres (Neon) as a DERIVED read model. |
+| `decision_write.py` | the question queue: route each open question for Nick to the window of the session that will act on it. |
+| `deck_to_pdf.py` | Print a screen-authored deck to a single 16:9 PDF, one slide per page. |
+| `detector_probe.py` | a detector that cannot fire on its own control is not a detector. |
+| `dossier_freshness.py` | Pre-process dossier staleness for /act. |
+| `duet_snapshot.py` | Daily Markdown snapshot of job-search state for a proactive agent. |
+| `engagement_runs.py` | How many times has the analysis method actually been run, and how far did each run get? |
+| `exa_search.py` | Exa neural-search wrapper. Its docstring names /research-company Agent 6, but that skill now makes Agent 6 web-only (no Exa); Agents 1-5 use the Exa MCP tools. |
+| `extract_decisions.py` | Extract an operator's verbatim decisions from a frame, a process log and session transcripts, with the query that surfaced each one. |
+| `fetch_source_email.py` | pull ONE labeled email full-body for the source-email curation workflow. |
+| `fetch_x_source.py` | pull an X (Twitter) post or X Article into the job-search OS. |
+| `filler_baseline.py` | Compute the FULL ranked filler-density baseline over the Granola voice corpus. |
+| `finding_write.py` | disposition a cross-model finding, atomically. |
+| `fit_chart_viewbox.py` | Tighten a chart's viewBox to its own ink, vertically, by MEASURING it. |
+| `frame_write.py` | the ONLY sanctioned mutation path for output/<slug>/frame.yaml. |
+| `friction_surface.py` | shared surface/nature derivation for the friction-log auto-capture hooks (log_tool_failure.py PostToolUseFailure + scan_transcript_failures.py Stop). |
+| `funnel_state.py` | the numbers the morning page's funnel section shows. |
+| `gmail_attachments.py` | Durably save Gmail attachments for a label or query. |
+| `granola_fetch.py` | REST API client for fetching Granola meetings and transcripts. |
+| `hook_command_lint.py` | shared literal-context stripping for command-detection PreToolUse hooks (check_bare_python.py, check_todo_write_kwargs.py). |
+| `hook_telemetry.py` | the hooks workstream's speed and block-rate PROBE. |
+| `inbox_decision_log.py` | schema-checked append + coverage report for the inbox drain. |
+| `inbox_drain_apply.py` | execute the approved half of the inbox drain. |
+| `inbox_extract.py` | per-block extractor for data/inbox.md, oracle-checked. |
+| `json_leaves.py` | Walk a nested JSON structure and yield every leaf with its dotted path. |
+| `launch_swarm.py` | open one Terminal window per overnight-swarm section, but only from a brief that passes brief_check. |
+| `learning_cutover.py` | the hash-bound cutover report, and the check that binds to it. |
+| `learning_ledger.py` | one record shape across every lane the learning loop captures into. |
+| `learning_state.py` | the one definition of every learning-loop state. |
+| `memory_frontmatter.py` | the one reader and the one validating writer of memory-rule frontmatter. |
+| `memory_prepass.py` | the deterministic stage of the memory-mining pipeline. |
+| `memory_usage.py` | When did each memory rule file's text last enter a session? (nightly, from transcripts) |
+| `merge_mining_verdicts.py` | turn per-agent mining records into one verdict file. |
+| `morning_page.py` | the plain morning page (D5): one static local HTML file for the laptop. |
+| `mutation_linemap.py` | which tests execute which lines of ONE file, via sys.monitoring. |
+| `mutation_state.py` | the ONE definition of where mutation work lives. |
+| `my_world_synthesis.py` | deterministic gating + atomic append for the /my-world longitudinal three-axis synthesis (data/reflections/_longitudinal.md). |
+| `name_dedup.py` | Fuzzy name-duplicate detection for contact/entity adds. |
+| `note_divergence.py` | find pipeline rows whose artifacts are NEWER than the row. |
+| `outreach_metrics.py` | Analytics projection of the outreach log, for the console dashboard. |
+| `outreach_pending.py` | Pre-process outreach follow-up status for /standup. |
+| `outreach_read.py` | the one reader for data/outreach-log.md table rows. |
+| `person_history.py` | the whole record on a person or company, ORIGIN FIRST. |
+| `pipeline_history.py` | one pipeline-history check for both role scanners. |
+| `population_probe.py` | The FOUNDATION PROBE: is a comparison's denominator commensurable on both sides? |
+| `prepush_pii_guard.py` | public-repo pre-push PII gate. |
+| `promotion_schema.py` | make a promotion an OBSERVABLE EVENT, and make exit 2 cost something. |
+| `provenance_probe.py` | THE PROVENANCE PROBE: which printed numbers have no formula behind them? |
+| `reader_review.py` | three-question cross-model review of a finished document for a named reader. |
+| `recruiter_views.py` | ledger of LinkedIn "Recruiter Views" and what was done about each. |
+| `rederivation_log.py` | the ledger of things we rebuilt that already existed. |
+| `render_slides.py` | Render each .slide in a deck HTML to its own PNG, one page per file. |
+| `replay_coverage.py` | say which command shapes a hook replay actually measured. |
+| `role_queue_read.py` | read the career-scan role queue for /standup. |
+| `run_metrics.py` | rebuild one run's metrics from Claude Code session transcripts. |
+| `schema_guard.py` | Shared column-schema guard for positional markdown-table parsers. |
+| `scorer_eval.py` | read-only evaluation harness for the job-search scoring systems. |
+| `scoring_probe.py` | measure whether the fit scorers still discriminate, on REAL data. |
+| `sent_artifact_check.py` | flag any artifact that left by Gmail with no record of it. |
+| `sf_property_records.py` | pull San Francisco public records for one street address. |
+| `shell_writes.py` | where a Bash command writes, with the shell's working directory tracked. |
+| `slide_check.py` | THE SLIDE HARNESS: assert a value PRINTED ON A PAGE against a recomputation. |
+| `source_check.py` | Log a recurring job-lead source check in ONE action. |
+| `stack_check.py` | refuse a branch stacked on another unlanded branch whose current tip it lacks. |
+| `stage_vocab.py` | Single source of truth for classifying freeform pipeline stages. |
+| `stream_pipeline.py` | acquire, transcribe, validate, and chunk a long recorded stream. |
+| `stream_validate.py` | deterministic evidence checks for /analyze-stream. |
+| `target_drift.py` | Check that the scanners accept every title Nick advertises, and that goals.md is fresh. |
+| `title_cut_ruling.py` | Nick's rulings on roles the career scan cut at fetch (the R1 log). |
+| `todo_read.py` | the one reader for data/job-todos.md, and the one definition of overdue. |
+| `todos_summary.py` | Pre-process job-todos.md for /standup. |
+| `validate_run.py` | Gate a v4 run: reject one whose evidence was not preserved, then emit the scoring input. |
+| `voice_corpus_audit.py` | Falsifiable test for the two-tier capture principle. |
+| `voice_extract.py` | Pull labeled Gmail emails, clean to prose-only, save corpus. |
+| `voice_features.py` | Compute quantitative voice features across data/voice-corpus/. |
+| `wispr_pull.py` | Pull Wispr Flow Notes (the synced phone+desktop thoughts feature) into the Obsidian vault inbox as voice-pure markdown. |
+| `workstream_probe.py` | small, generic probes for data/workstreams/*.md. |
+| `workstream_state.py` | Generic probe runner for the workstreams registry (`data/workstreams/*.md`). |

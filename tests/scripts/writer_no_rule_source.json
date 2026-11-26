@@ -1,0 +1,10 @@
+{
+  "allowlist_write.py": "no guard route and no CLAUDE.md Write-Only line names an operation of it (2026-11-25); gap listed for Nick",
+  "calendar_write.py": "no guard route and no CLAUDE.md Write-Only line names an operation of it (2026-11-25); its Touch ID gate covers the tool, not a data file",
+  "decision_write.py": "no guard route and no CLAUDE.md Write-Only line names an operation of it (2026-11-25); gap listed for Nick",
+  "finding_write.py": "no guard route and no CLAUDE.md Write-Only line names an operation of it (2026-11-25); gap listed for Nick",
+  "frame_write.py": "check_frame_integrity.py names the writer in prose but routes to no operation (2026-11-25); gap listed for Nick",
+  "networking_write.py": "no guard route and no CLAUDE.md Write-Only line names an operation of it (2026-11-25); gap listed for Nick",
+  "person_write.py": "no guard route and no CLAUDE.md Write-Only line names an operation of it (2026-11-25); gap listed for Nick",
+  "personal_todo_write.py": "no guard route and no CLAUDE.md Write-Only line names an operation of it (2026-11-25); gap listed for Nick"
+}
