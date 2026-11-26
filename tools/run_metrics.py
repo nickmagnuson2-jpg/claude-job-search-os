@@ -59,6 +59,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import bisect
 import functools
 import hashlib
 import json
@@ -351,6 +352,51 @@ def _guard_tool_reads(d: dict) -> bool:
     return False
 
 
+def _touch_hits(d, raw: str, markers) -> list:
+    """The classes a record touches the sealed set with ([] = not a touch)."""
+    if isinstance(d, dict) and not is_touch(d):
+        return []
+    hit = marker_hits(raw.lower(), markers)
+    if not hit and _guard_names(d, raw):
+        hit = ["guard"]
+    return hit
+
+
+def _record_ts(d, default):
+    try:
+        return parse_ts(d["timestamp"]) if isinstance(d, dict) and d.get("timestamp") else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _subagent_touches(path: Path, typed_ts: list, markers, touched: list, by_class: dict) -> None:
+    """A subagent's transcript sits under `<session-id>/` beside the parent's `<session-id>.jsonl`,
+    so its sealed read was never a touch in the parent (Fable 2026-11-26 F1, P0: 349 of 3,289
+    real subagent files touch the sealed set). Each touching record counts at the parent typed
+    turn current at its timestamp; one with no usable time anywhere before it seals every turn."""
+    folder = path.with_suffix("")
+    if not folder.is_dir():
+        return
+    for sp in sorted(folder.rglob("*.jsonl")):
+        last = None
+        with open(sp, errors="replace") as f:
+            for raw in f:
+                try:
+                    d = json.loads(raw)
+                except ValueError:
+                    d = None
+                last = _record_ts(d, last)
+                hit = _touch_hits(d, raw, markers)
+                if not hit:
+                    continue
+                if last is None:
+                    touched.extend(range(len(typed_ts)))
+                else:
+                    touched.append(max(bisect.bisect_right(typed_ts, last) - 1, 0))
+                for c in hit:
+                    by_class["subagent_" + c] = by_class.get("subagent_" + c, 0) + 1
+
+
 def scan_sealed(path: Path, markers=None, window: int = SEALED_WINDOW, typed=is_typed) -> SealedScan:
     """One pass over a transcript: which typed turns sit inside a sealed window.
 
@@ -359,6 +405,7 @@ def scan_sealed(path: Path, markers=None, window: int = SEALED_WINDOW, typed=is_
     the guard sees, stays a touch (Codex 2026-11-26 round 3 F1, P0)."""
     markers = sealed_markers(DEFAULT_SEALED_CONFIG) if markers is None else markers
     turn_of_line, typed_lines, touched, by_class = {}, [], [], {}
+    typed_ts = []      # each parent typed turn's time, for placing a subagent's touch
     cur = -1
     with open(path, errors="replace") as f:
         for n, raw in enumerate(f, 1):
@@ -369,18 +416,15 @@ def scan_sealed(path: Path, markers=None, window: int = SEALED_WINDOW, typed=is_
             if isinstance(d, dict) and typed(d):
                 cur += 1
                 typed_lines.append(n)
+                typed_ts.append(_record_ts(d, typed_ts[-1] if typed_ts else float("-inf")))
             turn_of_line[n] = max(cur, 0)
             # An unparseable line is checked too: failing to read it is no evidence it is clean.
-            if isinstance(d, dict) and not is_touch(d):
-                continue
-            low = raw.lower()
-            hit = marker_hits(low, markers)
-            if not hit and _guard_names(d, raw):
-                hit = ["guard"]
+            hit = _touch_hits(d, raw, markers)
             if hit:
                 touched.append(max(cur, 0))
                 for c in hit:
                     by_class[c] = by_class.get(c, 0) + 1
+    _subagent_touches(Path(path), typed_ts, markers, touched, by_class)
     bad = set()
     for k in touched:
         bad.update(range(k - window, k + window + 1))

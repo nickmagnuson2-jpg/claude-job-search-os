@@ -441,6 +441,49 @@ def test_the_report_drops_a_vault_root_walk_window_with_a_supplied_config(tmp_pa
     assert rep["sealed_excluded_total"] == 1
 
 
+def write_subagent(tmp_path, rows, sid="s1", name="agent-a"):
+    folder = tmp_path / sid / "subagents"
+    folder.mkdir(parents=True, exist_ok=True)
+    write_session(folder, name, rows)
+
+
+# Fable 2026-11-26 F1 (P0, confirmed on real data: 349 of 3,289 subagent files touch the sealed
+# set): a subagent's transcript sits under <session-id>/, so its sealed read was never a touch
+# in the parent. Each touching record maps to the parent typed turn current at its timestamp.
+def test_a_sealed_read_in_a_subagent_transcript_is_a_touch_in_the_parent(tmp_path):
+    write_subagent(tmp_path, [assistant(2.6), sealed_dir_cmd(2.7)])
+    res = run(tmp_path, typed_session(3), None, window=0)
+    assert res.excluded == 1 and kept_texts(res) == ["message 0", "message 2"]
+    assert res.touches_by_class == {"subagent_sibling": 1}
+
+
+def test_a_subagent_touch_takes_the_usual_window(tmp_path):
+    write_subagent(tmp_path, [sealed_dir_cmd(2.7)])
+    assert run(tmp_path, typed_session(3), None).excluded == 3
+
+
+def test_a_clean_subagent_transcript_is_not_a_touch(tmp_path):
+    write_subagent(tmp_path, [assistant(2.6), bash(2.7, "cat README.md")])
+    res = run(tmp_path, typed_session(3), None)
+    assert res.excluded == 0 and res.touches_by_class == {}
+
+
+def test_a_subagent_touch_with_no_timestamp_seals_every_turn(tmp_path):
+    rec = {k: v for k, v in sealed_dir_cmd(2.7).items() if k != "timestamp"}
+    write_subagent(tmp_path, [rec])
+    assert run(tmp_path, typed_session(4), None, window=0).excluded == 4
+
+
+def test_the_report_drops_a_subagent_touch_window(tmp_path, monkeypatch, repo):
+    tx = tmp_path / "tx"
+    tx.mkdir()
+    write_session(tx, "s1", [assistant(0), human(1, "that is wrong: PRIVATE WINDOW TEXT"), assistant(1.2)])
+    write_subagent(tx, [sealed_dir_cmd(1.5)])
+    rep = rm.build_report(tx, repo, WINDOW[0], WINDOW[1], {"proj-org"}, "r", "main")
+    assert "PRIVATE WINDOW TEXT" not in json.dumps(rep)
+    assert rep["sealed_excluded_total"] == 1
+
+
 def test_sealed_text_asks_the_guard_with_a_supplied_config(conf, monkeypatch):
     monkeypatch.setattr(csr, "_names_sealed", lambda text: "MARK-Z" in text)
     assert rm.sealed_text("see MARK-Z/notes", WISPR_CFG, conf) is True
