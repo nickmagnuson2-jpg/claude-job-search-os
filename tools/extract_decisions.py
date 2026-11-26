@@ -41,6 +41,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # so `import tools.<name>` finds siblings too (S2b, 2026-11-25)
 from json_leaves import leaves, strings
 
 try:

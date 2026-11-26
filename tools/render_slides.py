@@ -12,9 +12,11 @@ import argparse
 import pathlib
 import re
 import shutil
-from chrome_runner import ChromeNotFound, require_chrome, run as chrome_run
 import sys
 import tempfile
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))  # so `import tools.<name>` finds siblings too (S2b, 2026-11-25)
+from chrome_runner import ChromeNotFound, require_chrome, run as chrome_run
 
 # Chrome discovery moved to tools/chrome_runner.py on promotion. This module used to
 # HARDCODE /Applications/Google Chrome.app, which fails on any machine with Chromium

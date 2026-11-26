@@ -38,6 +38,7 @@ from urllib.parse import unquote
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # so `import tools.<name>` finds siblings too (S2b, 2026-11-25)
 from gmail_fetch import _write_token_atomic, sanitize_text  # one copy of each, not a copy
 
 SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]

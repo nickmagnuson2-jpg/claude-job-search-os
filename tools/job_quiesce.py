@@ -62,6 +62,8 @@ LAUNCH_AGENTS = Path.home() / "Library" / "LaunchAgents"
 
 # Default marker location: beside the sweep's own state, so a human looking at why the
 # baseline stopped finds the outstanding debt in the same directory.
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # so `import tools.<name>` finds siblings too (S2b, 2026-11-25)
 import mutation_state  # noqa: E402
 DEFAULT_MARKER = mutation_state.quiesce_marker_path()
 

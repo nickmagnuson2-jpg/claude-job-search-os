@@ -64,6 +64,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # so `import tools.<name>` finds siblings too (S2b, 2026-11-25)
 import cross_model_gate as cmg  # tools/ is sys.path[0] when this runs as a script
 from finding_write import read_lines
 

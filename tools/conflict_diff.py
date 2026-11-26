@@ -6,13 +6,6 @@ Usage: PYTHONIOENCODING=utf-8 python3 conflict_diff.py
 """
 import argparse, csv, sys, collections, openpyxl
 
-ap = argparse.ArgumentParser(description="Mechanically diff two contact runs. Exit 1 if hard conflicts remain.")
-ap.add_argument("--workbook", required=True, help="xlsx holding the first run's Contact Register")
-ap.add_argument("--records", required=True, help="CSV of the second run: company,function,person,verdict")
-ap.add_argument("--sheet", default="Contact Register", help="worksheet name in --workbook")
-ap.add_argument("--first-row", type=int, default=4, help="first data row in that sheet (1-indexed)")
-_A = ap.parse_args()
-XLSX, V3, SHEET, FIRST_ROW = _A.workbook, _A.records, _A.sheet, _A.first_row
 
 # v1's "Sought title satisfied" strings -> canonical function keys.
 MAP = {
@@ -60,46 +53,61 @@ def load_v3():
             elif row["person"].strip(): out[k].add(row["person"].strip())
     return out, neg
 
-v1, unmapped, supp = load_v1(); v3, v3_neg = load_v3()
-conflicts=[]
-for k in sorted(set(v1) | set(v3) | v3_neg):
-    co,fn = k; a, b = v1.get(k,set()), v3.get(k,set())
-    if k in v3_neg and a:
-        conflicts.append(("HARD","%s / %s"%(co,fn),"v1 names %s"%", ".join(sorted(a)),"v3 says NOBODY"))
-    elif a and b and not (a & b):
-        conflicts.append(("HARD","%s / %s"%(co,fn),"v1: %s"%", ".join(sorted(a)),"v3: %s"%", ".join(sorted(b))))
-    elif a and b and a != b:
-        conflicts.append(("SOFT","%s / %s"%(co,fn),"v1: %s"%", ".join(sorted(a)),"v3: %s"%", ".join(sorted(b))))
-    elif a and not b and k not in v3_neg:
-        conflicts.append(("V3_GAP","%s / %s"%(co,fn),"v1: %s"%", ".join(sorted(a)),"v3: not addressed"))
-    elif b and not a:
-        conflicts.append(("V1_GAP","%s / %s"%(co,fn),"v1: not addressed","v3: %s"%", ".join(sorted(b))))
 
-v1_people = {(co, n) for (co, _), ns in v1.items() for n in ns} | \
-            {(co, s.split(" (")[0]) for co, ss in supp.items() for s in ss}
-v3_people = {(co, n) for (co, _), ns in v3.items() for n in ns}
-both = sorted(v1_people & v3_people)
+def main():
+    global XLSX, V3, SHEET, FIRST_ROW
+    ap = argparse.ArgumentParser(description="Mechanically diff two contact runs. Exit 1 if hard conflicts remain.")
+    ap.add_argument("--workbook", required=True, help="xlsx holding the first run's Contact Register")
+    ap.add_argument("--records", required=True, help="CSV of the second run: company,function,person,verdict")
+    ap.add_argument("--sheet", default="Contact Register", help="worksheet name in --workbook")
+    ap.add_argument("--first-row", type=int, default=4, help="first data row in that sheet (1-indexed)")
+    _A = ap.parse_args()
+    XLSX, V3, SHEET, FIRST_ROW = _A.workbook, _A.records, _A.sheet, _A.first_row
 
-order={"HARD":0,"SOFT":1,"V3_GAP":2,"V1_GAP":3}
-conflicts.sort(key=lambda c:(order[c[0]],c[1]))
-print(f"v1 records: {sum(len(v) for v in v1.values())} | v3 found: {sum(len(v) for v in v3.values())} | v3 negatives: {len(v3_neg)}")
-if unmapped: print(f"!! UNMAPPED v1 sought-titles (fix MAP): {sorted(unmapped)}")
-print(f"\n{'KIND':<7} {'COMPANY / FUNCTION':<45} V1 / V3")
-print("-"*118)
-for kind,key,a,b in conflicts: print(f"{kind:<7} {key:<45} {a}  ||  {b}")
-n=sum(1 for c in conflicts if c[0]=="HARD")
-print("-"*118)
-print(f"HARD conflicts: {n}   SOFT: {sum(1 for c in conflicts if c[0]=='SOFT')}   "
-      f"v3 gaps: {sum(1 for c in conflicts if c[0]=='V3_GAP')}   v1 gaps: {sum(1 for c in conflicts if c[0]=='V1_GAP')}")
+    v1, unmapped, supp = load_v1(); v3, v3_neg = load_v3()
+    conflicts=[]
+    for k in sorted(set(v1) | set(v3) | v3_neg):
+        co,fn = k; a, b = v1.get(k,set()), v3.get(k,set())
+        if k in v3_neg and a:
+            conflicts.append(("HARD","%s / %s"%(co,fn),"v1 names %s"%", ".join(sorted(a)),"v3 says NOBODY"))
+        elif a and b and not (a & b):
+            conflicts.append(("HARD","%s / %s"%(co,fn),"v1: %s"%", ".join(sorted(a)),"v3: %s"%", ".join(sorted(b))))
+        elif a and b and a != b:
+            conflicts.append(("SOFT","%s / %s"%(co,fn),"v1: %s"%", ".join(sorted(a)),"v3: %s"%", ".join(sorted(b))))
+        elif a and not b and k not in v3_neg:
+            conflicts.append(("V3_GAP","%s / %s"%(co,fn),"v1: %s"%", ".join(sorted(a)),"v3: not addressed"))
+        elif b and not a:
+            conflicts.append(("V1_GAP","%s / %s"%(co,fn),"v1: not addressed","v3: %s"%", ".join(sorted(b))))
 
-if supp:
-    print(f"\nSUPPLEMENTAL v1 contacts ({sum(len(v) for v in supp.values())}) -- gathered during")
-    print("verification, asserted NO function. Not comparable; adjudicate separately.")
-    for co in sorted(supp):
-        for s_ in sorted(supp[co]): print(f"  {co}: {s_}")
+    v1_people = {(co, n) for (co, _), ns in v1.items() for n in ns} | \
+                {(co, s.split(" (")[0]) for co, ss in supp.items() for s in ss}
+    v3_people = {(co, n) for (co, _), ns in v3.items() for n in ns}
+    both = sorted(v1_people & v3_people)
 
-if both:
-    print(f"\nPRESENT IN BOTH RUNS ({len(both)}) -- person-level, ignoring function keys.")
-    print("A name here is NOT a gap even where the function rows above disagree.")
-    for co, n in both: print(f"  {co}: {n}")
-sys.exit(1 if n else 0)
+    order={"HARD":0,"SOFT":1,"V3_GAP":2,"V1_GAP":3}
+    conflicts.sort(key=lambda c:(order[c[0]],c[1]))
+    print(f"v1 records: {sum(len(v) for v in v1.values())} | v3 found: {sum(len(v) for v in v3.values())} | v3 negatives: {len(v3_neg)}")
+    if unmapped: print(f"!! UNMAPPED v1 sought-titles (fix MAP): {sorted(unmapped)}")
+    print(f"\n{'KIND':<7} {'COMPANY / FUNCTION':<45} V1 / V3")
+    print("-"*118)
+    for kind,key,a,b in conflicts: print(f"{kind:<7} {key:<45} {a}  ||  {b}")
+    n=sum(1 for c in conflicts if c[0]=="HARD")
+    print("-"*118)
+    print(f"HARD conflicts: {n}   SOFT: {sum(1 for c in conflicts if c[0]=='SOFT')}   "
+          f"v3 gaps: {sum(1 for c in conflicts if c[0]=='V3_GAP')}   v1 gaps: {sum(1 for c in conflicts if c[0]=='V1_GAP')}")
+
+    if supp:
+        print(f"\nSUPPLEMENTAL v1 contacts ({sum(len(v) for v in supp.values())}) -- gathered during")
+        print("verification, asserted NO function. Not comparable; adjudicate separately.")
+        for co in sorted(supp):
+            for s_ in sorted(supp[co]): print(f"  {co}: {s_}")
+
+    if both:
+        print(f"\nPRESENT IN BOTH RUNS ({len(both)}) -- person-level, ignoring function keys.")
+        print("A name here is NOT a gap even where the function rows above disagree.")
+        for co, n in both: print(f"  {co}: {n}")
+    sys.exit(1 if n else 0)
+
+
+if __name__ == "__main__":
+    main()
