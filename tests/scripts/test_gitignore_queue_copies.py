@@ -53,3 +53,27 @@ def test_the_glob_ignores_no_tracked_file():
 def test_the_glob_is_in_gitignore():
     lines = (REPO / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert GLOB in lines
+
+
+def test_the_scanners_temp_file_is_covered_by_the_glob(tmp_path, monkeypatch):
+    """An interrupted queue write leaves its temp file behind with the full queue in it, so
+    the temp name must match the ignore glob (Fable s4f F3: mkstemp's default 'tmpXXXX.tmp'
+    did not)."""
+    import os
+    import sys
+    sys.path.insert(0, str(REPO))
+    from tools.career_scanner import scanner
+
+    seen = []
+    real_replace = os.replace
+
+    def spy(src, dst):
+        seen.append(Path(src))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", spy)
+    path = scanner.write_queue_payload(tmp_path, {"roles": []})
+    assert len(seen) == 1
+    rel = (path.parent / seen[0].name).relative_to(tmp_path).as_posix()
+    assert fnmatch.fnmatchcase(rel, GLOB), rel
+    assert _ignored(rel), rel
