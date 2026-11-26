@@ -442,7 +442,9 @@ def read_gate_ledger(repo_root: Path) -> tuple[list[dict], int, str]:
     except (OSError, UnicodeDecodeError) as e:
         return rows, corrupt + 1, f"the main checkout's ledger cannot be read ({e})"
     own = {_row_key(r) for r in rows}
-    merged = rows + [r for r in main_rows if _row_key(r) not in own]
+    # A waiver clears only its own push (land_branch.collect_backfill states the same rule):
+    # main's waiver rows never reach a worktree push (Fable 11-26 F1).
+    merged = rows + [r for r in main_rows if _row_key(r) not in own and not r.get("waived")]
     note = f"the main checkout's ledger has {main_corrupt} unreadable line(s)" if main_corrupt else ""
     return merged, corrupt + main_corrupt, note
 

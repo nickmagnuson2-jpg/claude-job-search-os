@@ -127,6 +127,26 @@ def test_a_malformed_main_line_does_not_unmatch_the_runs_after_it(repos):
     assert g.open_p0_against(wt, {PATH}) == []
 
 
+def test_a_waiver_in_main_does_not_cover_a_worktree_push(repos):
+    """Fable 11-26 F1: read_gate_ledger merged main's waiver rows, so a waiver typed for
+    a push from main, on overlapping paths and after the branch's commits, cleared the
+    branch's push from its worktree. A waiver clears only its own push."""
+    main, wt = repos
+    _row(wt, report="output/analysis/unrelated.md", paths=["docs/x.md"])
+    g.record_waiver(main, [PATH], "a push from main")
+    rows, corrupt, _ = g.read_gate_ledger(wt)
+    assert corrupt == 0 and not any(r.get("waived") for r in rows)
+    assert g.check(wt, CHANGE, since=0).blocked is True
+
+
+def test_a_waiver_in_the_worktrees_own_ledger_is_still_read(repos):
+    main, wt = repos
+    _row(main, report="output/analysis/unrelated.md", paths=["docs/x.md"])
+    g.record_waiver(wt, [PATH], "this push")
+    rows, _, _ = g.read_gate_ledger(wt)
+    assert sum(1 for r in rows if r.get("waived")) == 1
+
+
 def test_main_ledger_missing_fails_closed_with_a_reason(repos):
     main, wt = repos
     _row(wt)
