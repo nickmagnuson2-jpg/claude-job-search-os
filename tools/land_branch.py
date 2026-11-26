@@ -711,6 +711,33 @@ _GIT_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--con
                    "--super-prefix"}
 
 
+def _ssh_host_candidates(args: list[str]) -> list[str]:
+    """Every token of an ssh argv that could name the host ssh connects to, lowercased
+    (host names are case-insensitive). Covers the destination as [user@]host[:path] or
+    ssh://[user@]host[:port]/path, the user from -l or -oUser, and the host from
+    -o HostName=, -oHostName= or the ps-joined `-o HostName <host>` (Codex 11-26 s5c F1 and
+    narrow F1; dc 14:11 ruling). -p, -oPort and -oUser values are not hosts. Erring toward
+    busy is the safe direction: a false busy only delays a landing, so every bare token is a
+    candidate rather than only the parsed destination.
+
+    Known limit: a host that only ssh_config supplies (`ssh gh` where `Host gh` sets
+    HostName github.com), a ProxyJump/ProxyCommand hop, or an IP address for GitHub is not
+    recognised. ps output does not carry ssh_config, so those cannot be read from argv."""
+    out = []
+    prev = ""
+    for t in args:
+        opt = t[2:] if t.startswith("-o") and len(t) > 2 else (t if prev == "-o" else None)
+        if opt is not None:
+            key, _, val = opt.replace("=", " ", 1).partition(" ")
+            if key.lower() == "hostname" and val:
+                out.append(val.strip().lower())
+        elif not t.startswith("-"):
+            out.append(t.removeprefix("ssh://").split("@")[-1].split(":")[0]
+                       .split("/")[0].lower())
+        prev = t
+    return out
+
+
 def _is_busy_command(command: str) -> bool:
     """True when the process IS a network git command or an ssh session to GitHub, read
     from its argv: argv[0]'s name, then git's subcommand. Text quoted inside another
@@ -722,10 +749,7 @@ def _is_busy_command(command: str) -> bool:
         return False
     exe = os.path.basename(toks[0])
     if exe == "ssh":
-        # The host in any form: git@github.com, git@github.com:owner/x.git, or github.com
-        # with the user given by -l or ssh config (Codex 11-26 s5c F1). Erring toward busy
-        # is the safe direction: a false busy only delays a landing.
-        return any(t.split("@")[-1].split(":")[0] in GITHUB_SSH_HOSTS for t in toks[1:])
+        return any(h in GITHUB_SSH_HOSTS for h in _ssh_host_candidates(toks[1:]))
     if exe != "git":
         return False
     i = 1

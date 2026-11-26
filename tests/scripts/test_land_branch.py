@@ -2233,6 +2233,36 @@ def test_ssh_to_github_is_busy_whichever_way_the_user_and_host_are_given(command
     assert lb._is_busy_command(command) is True
 
 
+@pytest.mark.parametrize("command", [
+    "ssh -o HostName=github.com gh git-receive-pack 'x.git'",
+    "ssh -oHostName=github.com gh git-receive-pack 'x.git'",
+    "ssh -o hostname=GitHub.com gh git-upload-pack 'x.git'",
+    "ssh -oHostName=ssh.github.com -oPort=443 -oUser=git gh git-receive-pack 'x.git'",
+    "ssh -o HostName github.com gh git-receive-pack 'x.git'",   # ps-joined "HostName github.com"
+    "ssh -oUser=git github.com git-receive-pack 'x.git'",
+    "ssh -lgit -p443 ssh.github.com git-receive-pack 'x.git'",
+    "ssh git@GitHub.com git-receive-pack 'x.git'",
+    "ssh ssh://git@github.com:22/owner/x.git",
+    "ssh ssh://github.com/owner/x.git",
+])
+def test_ssh_to_github_is_busy_when_the_host_comes_from_an_option_or_any_case(command):
+    """Codex 11-26 s5c narrow F1 (P0): `-o HostName=github.com` with an alias destination
+    did not count; dc 14:11 ruled the class (host as ssh reads it: user@host, -l,
+    -o/-oHostName, -oUser; -p and -oPort ignored)."""
+    assert lb._is_busy_command(command) is True
+
+
+@pytest.mark.parametrize("command", [
+    "ssh -o HostName=build.example.com gh uptime",
+    "ssh -oPort=22 -oUser=github.com build.example.com uptime",
+    "ssh -p 443 build.example.com uptime",
+])
+def test_ssh_with_options_to_another_host_is_not_busy(command):
+    """The option forms do not make every ssh busy: a User or Port value equal to a GitHub
+    host name is not a host."""
+    assert lb._is_busy_command(command) is False
+
+
 @pytest.mark.parametrize("command", ["xargs push origin", "/usr/bin/make fetch",
                                      "python3 pull"])
 def test_a_program_other_than_git_is_not_busy_even_with_push_as_its_next_word(command):
