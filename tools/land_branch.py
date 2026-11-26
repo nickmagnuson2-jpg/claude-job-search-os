@@ -86,11 +86,19 @@ SUITE_WAIT_S = 3600 + 1800
 def suite_supports_wait(tool: Path) -> bool:
     """True if the checkers' suite_record.py accepts --wait (C2). GitHub main's copy before C2
     lands rejects the flag with argparse exit 2, so it is passed only when supported (Grok
-    585ac8c5 F1). Unreadable means unsupported."""
-    try:
-        return '"--wait"' in tool.read_text(encoding="utf-8")
-    except OSError:
+    585ac8c5 F1). The parser is asked (`run --help`), not the file text: a comment or a
+    string naming "--wait" is not support (1294.F2, 1306.F3, 1322.F2). Unreadable, failing
+    or silent means unsupported."""
+    if not Path(tool).is_file():
         return False
+    try:
+        r = subprocess.run([sys.executable, str(tool), "run", "--help"], capture_output=True,
+                           text=True, timeout=60, cwd=str(Path(tool).parent))
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0 and re.search(r"^\s+--wait\b", r.stdout, re.M) is not None
+
+
 MAIN_NAMES = {"main", "origin/main", "refs/heads/main", "refs/remotes/origin/main"}
 
 
@@ -542,7 +550,7 @@ def merge_order(results: list[dict], conflicts: list[dict]) -> dict:
 
 
 def check(root: Path, branches: list[str], want_suite: bool = False, gh=gh_json, *,
-          allowlist_ok: bool = False) -> dict:
+          allowlist_ok: bool = False, descriptions: bool = False) -> dict:
     rc, porcelain, err = git(["worktree", "list", "--porcelain"], root)
     worktrees = parse_worktrees(porcelain) if rc == 0 else {}
     # The PUSH url: the hook receives it on a real push, and it can differ from the fetch url.
@@ -572,7 +580,19 @@ def check(root: Path, branches: list[str], want_suite: bool = False, gh=gh_json,
         m = merge_check(root, tips[a], tips[b])
         if not m["clean"]:
             conflicts.append({"a": a, "b": b, "files": m["files"], "error": m.get("error")})
-    checkers = checker_provenance(trusted_tools(root), main)
+    tools = trusted_tools(root)
+    checkers = checker_provenance(tools, main)
+    if descriptions:
+        # CLI check mode reads the description the merge will use, so a bad title shows
+        # before push day (2 of 10 titles over 72 chars were found only at push, 11-25).
+        # merge_push checks it itself and leaves this off, so nothing is reported twice.
+        for r in results:
+            probs = ([f"description not checked: {NO_TRUSTED}"] if tools is None
+                     else check_description(tools.parent, r["branch"])[1])
+            r["steps"]["description"] = {"ok": not probs, "problems": probs}
+            if probs:
+                r["refusals"] += probs
+                r["ready"] = False
     landing = []
     for r in results:
         if not r["ready"]:
@@ -678,11 +698,34 @@ EM_DASH = "—"
 GATE_DATA = (".cross-model-ledger.jsonl", ".audit-pii-ledger.jsonl", ".pii-denylist.txt",
              ".pii-denylist-targetwords.txt", ".pii-denylist-ambiguous.txt")
 CROSS_LEDGER, AUDIT_LEDGER = GATE_DATA[0], GATE_DATA[1]
-_BUSY_RE = re.compile(r"\bssh\b.*git@github\.com|(?:^|[\s/])git(?:\s+-C\s+\S+)?\s+"
-                      r"(?:push|fetch|pull)\b")
 WEDGE_HELP = ('diagnose: ps -ax -o pid,etime,command | grep -E "ssh git@github.com|SecretAgent"; '
               "a wedged agent is fixed by Nick: kill the waiting push pids, then "
               "pkill -f SecretAgent; sleep 2; open -a Secretive")
+
+
+# git's global options that take a separate value: skipped to reach the subcommand.
+_GIT_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env",
+                   "--super-prefix"}
+
+
+def _is_busy_command(command: str) -> bool:
+    """True when the process IS a network git command or an ssh session to GitHub, read
+    from its argv: argv[0]'s name, then git's subcommand. Text quoted inside another
+    program's arguments (a review prompt that mentions "git push") is not a push (11-25).
+    ps joins argv with spaces, so a token split is argv up to spaces inside an argument,
+    which can only add tokens after argv[0], never change it."""
+    toks = command.split()
+    if not toks:
+        return False
+    exe = os.path.basename(toks[0])
+    if exe == "ssh":
+        return any(t == "git@github.com" or t.startswith("git@github.com:") for t in toks[1:])
+    if exe != "git":
+        return False
+    i = 1
+    while i < len(toks) and toks[i].startswith("-"):
+        i += 2 if toks[i] in _GIT_VALUE_OPTS else 1
+    return i < len(toks) and toks[i] in ("push", "fetch", "pull")
 
 
 def busy_processes(ps_output: str | None = None) -> list[str]:
@@ -695,7 +738,7 @@ def busy_processes(ps_output: str | None = None) -> list[str]:
     out = []
     for line in ps_output.splitlines()[1:]:
         parts = line.split(None, 2)
-        if len(parts) == 3 and parts[0] != str(os.getpid()) and _BUSY_RE.search(parts[2]):
+        if len(parts) == 3 and parts[0] != str(os.getpid()) and _is_busy_command(parts[2]):
             out.append(line.strip())
     return out
 
@@ -1309,7 +1352,7 @@ def main(argv: list[str] | None = None) -> int:
                          want_suite=True if (args.suite or not args.dry_run) else False)
         print(json.dumps(rep, indent=2) if args.json else render_merge_push(rep))
         return 0 if rep["ok"] else 1
-    rep = check(root, list(dict.fromkeys(args.branches)), args.suite)
+    rep = check(root, list(dict.fromkeys(args.branches)), args.suite, descriptions=True)
     print(json.dumps(rep, indent=2) if args.json else render(rep))
     return 0 if rep["all_ready"] else 1
 

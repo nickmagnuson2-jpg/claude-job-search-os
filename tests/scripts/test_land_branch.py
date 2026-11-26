@@ -47,7 +47,9 @@ if mode == 'garbage':
     print('not json'); sys.exit(0)
 print(json.dumps(r)); sys.exit(0)
 """
-SUITE_STUB = ("import json, os, sys  # accepts \"--wait\" like the real C2 suite_record\n"
+SUITE_STUB = ("import json, os, sys\n"
+              "if sys.argv[1:] == ['run', '--help']:  # the parser probe: accepts --wait (C2)\n"
+              "    print('options:\\n  --wait WAIT'); sys.exit(0)\n"
               "open(os.environ['LB_ARGV_LOG'], 'a').write(json.dumps(['suite', *sys.argv[1:]]) + '\\n')\n"
               "sys.exit(int(os.environ.get('LB_SUITE_RC', '0')))\n")
 HOOK_STUB = """#!/bin/bash
@@ -431,6 +433,7 @@ def test_cli_usage_error_exits_2(repo, monkeypatch):
 
 def test_cli_exit_codes_follow_readiness(repo, monkeypatch, capsys):
     branch(repo, "ok1", {"f.py": "x = 1\n"})
+    describe_checkable(repo, "ok1")      # check mode reads the description (11-26 S4)
     branch(repo, "bad1", {"g.py": "x = 1\n"}, upstream="origin/main")
     monkeypatch.setattr(lb, "gh_json", gh_local_main(repo))
     monkeypatch.setattr(lb.check, "__defaults__", (False, gh_local_main(repo)))
@@ -778,6 +781,7 @@ def test_cli_messages_and_script_entry(repo, tmp_path, capsys):
 
 def test_cli_prints_the_report(repo, monkeypatch, capsys):
     branch(repo, "ok1", {"f.py": "x = 1\n"})
+    describe_checkable(repo, "ok1")
     monkeypatch.setattr(lb.check, "__defaults__", (False, gh_local_main(repo)))
     assert lb.main(["--repo-root", str(repo["root"]), "ok1"]) == 0
     assert capsys.readouterr().out.rstrip().endswith("ALL READY")
@@ -1066,6 +1070,12 @@ def describe(repo, name, title=None, body=GOOD_BODY):
     d = repo["root"] / "output" / "landing-descriptions"
     d.mkdir(parents=True, exist_ok=True)
     (d / f"{name}.md").write_text(f"{title or 'Add ' + name}\n\n{body}")
+
+
+def describe_checkable(repo, name):
+    """A good description plus the denylist check_description reads (as the mp fixture has)."""
+    describe(repo, name)
+    (repo["root"] / "tools" / ".pii-denylist.txt").write_text("Realname\n")
 
 
 def ready_branch(repo, name, files):
@@ -1816,15 +1826,6 @@ def test_check_refuses_when_the_allowlist_resolution_hits_a_git_error(mp, monkey
 
 # ---- C2 review fixes (Grok 585ac8c5 F1, F4)
 
-def test_suite_supports_wait_reads_the_checkers_copy(tmp_path):
-    new, old = tmp_path / "new.py", tmp_path / "old.py"
-    new.write_text('run.add_argument("--wait", type=float)\n')
-    old.write_text('run.add_argument("--timeout", type=int)\n')
-    assert lb.suite_supports_wait(new) is True
-    assert lb.suite_supports_wait(old) is False
-    assert lb.suite_supports_wait(tmp_path / "missing.py") is False
-
-
 def test_mp_does_not_pass_wait_to_a_checker_that_lacks_it(mp, monkeypatch):
     # GitHub main's suite_record before C2 lands rejects --wait (argparse exit 2). The
     # detection itself is test_suite_supports_wait_reads_the_checkers_copy; this pins the wiring.
@@ -2129,3 +2130,77 @@ def test_an_unreadable_git_status_gets_its_own_refusal_text(pf_main):
     msg = lb.preflight_refusal(lb.preflight(pf_main))
     assert "git status" in msg and "could not read" in msg
     assert "the failure is on main" not in msg and "preflight.tail" not in msg
+
+
+# ---- 11-26 S4: busy argv, check-mode descriptions, --wait probe -----------------------
+
+def test_busy_processes_ignores_git_push_quoted_inside_another_programs_arguments():
+    """11-25: a review prompt that quoted "git push" tripped busy() and refused a landing.
+    A process is busy only when it IS git push/fetch/pull or ssh to GitHub."""
+    ps = ("  PID ELAPSED COMMAND\n"
+          "  201 00:05 codex exec --sandbox read-only review the diff, then git push origin main is the next step\n"
+          "  202 00:01 python3 tools/codex_verify.py --prompt run git fetch origin first\n"
+          "  203 00:01 zsh -c echo git pull\n"
+          "  204 00:01 /opt/homebrew/bin/git --git-dir /x/.git -c a=b push origin main\n"
+          "  205 00:01 /usr/bin/ssh -o SendEnv=GIT_PROTOCOL git@github.com git-upload-pack 'o/r.git'\n"
+          "  206 00:01 grep ssh git@github.com\n"
+          "  207 00:01 git log --grep push\n")
+    got = lb.busy_processes(ps_output=ps)
+    assert [ln.split()[0] for ln in got] == ["204", "205"]
+
+
+def test_check_mode_runs_check_description(mp):
+    """2 of 10 titles over 72 chars were found only at push (11-25). check() in CLI check
+    mode holds a branch whose description fails, with the description's own problems."""
+    branch(mp, "one", {"one.py": "x = 1\n"})
+    describe(mp, "one", title="T" * 73)
+    r = by_name(lb.check(mp["root"], ["one"], gh=gh_local_main(mp), descriptions=True))["one"]
+    assert not r["ready"]
+    assert r["steps"]["description"]["ok"] is False
+    assert any("72" in p for p in r["refusals"]), r["refusals"]
+    describe(mp, "one")
+    r = by_name(lb.check(mp["root"], ["one"], gh=gh_local_main(mp), descriptions=True))["one"]
+    assert r["steps"]["description"] == {"ok": True, "problems": []}
+
+
+def test_cli_check_mode_asks_for_descriptions(monkeypatch, tmp_path):
+    seen = {}
+
+    def fake_check(root, branches, want_suite=False, **kw):
+        seen.update(kw)
+        return {"all_ready": True, "branches": []}
+    monkeypatch.setattr(lb, "check", fake_check)
+    monkeypatch.setattr(lb, "render", lambda rep: "")
+    assert lb.main(["one", "--json", "--repo-root", str(Path(__file__).resolve().parents[2])]) == 0
+    assert seen.get("descriptions") is True
+
+
+def test_merge_push_does_not_check_descriptions_twice(mp, monkeypatch):
+    seen = []
+    real = lb.check
+
+    def spy(*a, **kw):
+        seen.append(kw.get("descriptions", False))
+        return real(*a, **kw)
+    monkeypatch.setattr(lb, "check", spy)
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    run_mp(mp, ["one"])
+    assert seen == [False]
+
+
+def test_suite_supports_wait_asks_the_parser_not_the_text(tmp_path):
+    """1294.F2 / 1306.F3 / 1322.F2: a file that names "--wait" only in a comment or a
+    string must read as unsupported; only a parser that accepts it counts."""
+    parser = ("import argparse, sys\n"
+              "ap = argparse.ArgumentParser()\nsub = ap.add_subparsers(dest='c')\n"
+              "run = sub.add_parser('run')\n{extra}\nap.parse_args()\n")
+    real = tmp_path / "real.py"
+    real.write_text(parser.format(extra="run.add_argument('--wait', type=float)"))
+    comment = tmp_path / "comment.py"
+    comment.write_text('# accepts "--wait" one day\n' + parser.format(extra="x = '\"--wait\"'"))
+    broken = tmp_path / "broken.py"
+    broken.write_text("raise SystemExit(3)  # \"--wait\"\n")
+    assert lb.suite_supports_wait(real) is True
+    assert lb.suite_supports_wait(comment) is False
+    assert lb.suite_supports_wait(broken) is False
+    assert lb.suite_supports_wait(tmp_path / "missing.py") is False
