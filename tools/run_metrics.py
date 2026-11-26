@@ -320,7 +320,35 @@ def _guard_names(d, raw: str) -> bool:
     of a record, or on the raw line when it does not parse. JSON escapes would hide a name
     from it on the raw line (`\\n<name>` reads as one word), hence the decoded strings."""
     texts = _strings(d) if isinstance(d, (dict, list)) else (raw,)
-    return any(check_sealed_read._names_sealed(t) for t in texts)
+    return (any(check_sealed_read._names_sealed(t) for t in texts)
+            or (isinstance(d, dict) and _guard_tool_reads(d)))
+
+
+def _guard_tool_reads(d: dict) -> bool:
+    """Would the guard block a tool call in this record? A walk from the vault root
+    (`cd <vault> && grep -r x .`, Grep on the vault root) names no sealed folder, so only
+    the guard's Bash parsing with cd tracking and its target test see it (Codex 2026-11-26
+    round 2 F1, P0). Fields per tool follow check_sealed_read.main; an error is a touch."""
+    content = (d.get("message") or {}).get("content")
+    root = check_sealed_read._root()
+    for b in content if isinstance(content, list) else ():
+        if not (isinstance(b, dict) and b.get("type") == "tool_use"):
+            continue
+        name, ti = b.get("name"), b.get("input") or {}
+        try:
+            if name == "Bash" and check_sealed_read._bash_reads_sealed(str(ti.get("command") or "")):
+                return True
+            if name in ("Read", "Grep", "Glob"):
+                base = str(ti.get("file_path") or ti.get("path") or "")
+                glob = str(ti.get("pattern") if name == "Glob" else ti.get("glob") or "")
+                wild = re.search(r"[*?\[]", glob)
+                start = os.path.dirname(glob[:wild.start()]) if wild else ""
+                for t in (base, os.path.join(base, start) if start else ""):
+                    if t and check_sealed_read._under_sealed(root, t):
+                        return True
+        except Exception:   # the guard could not judge it: count it, never let it pass
+            return True
+    return False
 
 
 def scan_sealed(path: Path, markers=None, window: int = SEALED_WINDOW, typed=is_typed,

@@ -81,7 +81,8 @@ def sealed_dir_cmd(minute):
 def test_the_guard_names_this_filter_imports_still_exist():
     # s3-pii rev 7 changes check_sealed_read.py; a rename there must break here, loudly.
     for name in ("SEALED_HOME", "SEALED_REL", "OVERRIDE_WORD", "VAULT_RELS", "FAIL_CLOSED",
-                 "PERSONAL", "_root", "_names_sealed", "_PARENT_END"):
+                 "PERSONAL", "_root", "_names_sealed", "_PARENT_END", "_bash_reads_sealed",
+                 "_under_sealed"):
         assert hasattr(csr, name), name
     assert callable(vault_paths.sealed_rels)
     for name in ("load_sealed_meetings_config", "classify_meeting", "_transcript_names_sealed_contact"):
@@ -161,6 +162,53 @@ def test_the_guards_own_matcher_is_consulted_on_the_default_config(tmp_path, mon
     res = rm.nick_messages(tmp_path / "s1.jsonl")
     assert res.excluded == 3 and res.touches_by_class == {"guard": 1}
     assert any("MARK-Z" in t for t in seen)
+
+
+def tool(minute, name, inp):
+    return assistant(minute, "working", {"type": "tool_use", "id": f"t{minute}", "name": name, "input": inp})
+
+
+@pytest.mark.parametrize("record_of", [
+    lambda: tool(2.7, "Bash", {"command": f"cd {csr.PERSONAL} && grep -r needle ."}),   # Codex r2 F1
+    lambda: tool(2.7, "Grep", {"pattern": "needle", "path": csr.PERSONAL}),
+])
+def test_a_walk_from_the_vault_root_is_a_touch_on_the_default_config(tmp_path, record_of):
+    # Codex 2026-11-26 round 2 F1 (P0): the guard sees this only through its Bash parsing
+    # and cd tracking (check_sealed_read._bash_reads_sealed) and its target test
+    # (_under_sealed); no string names the sealed folder, so the string matchers miss it.
+    res = run(tmp_path, typed_session(3, touch_at=1, touch=record_of()), None)
+    assert res.excluded == 3 and res.touches_by_class == {"guard": 1}
+
+
+def test_a_glob_pattern_rooted_at_the_vault_is_a_touch(tmp_path):
+    res = run(tmp_path, typed_session(3, touch_at=1, touch=tool(2.7, "Glob", {"pattern": f"{csr.PERSONAL}/**/*.md"})), None)
+    assert res.excluded == 3
+
+
+def test_a_command_the_guard_cannot_judge_is_a_touch(tmp_path, monkeypatch):
+    def boom(_):
+        raise RuntimeError("parser failure")
+    monkeypatch.setattr(csr, "_bash_reads_sealed", boom)
+    res = run(tmp_path, typed_session(3, touch_at=1, touch=tool(2.7, "Bash", {"command": "ls"})), None)
+    assert res.excluded == 3 and res.touches_by_class == {"guard": 1}
+
+
+@pytest.mark.parametrize("record_of", [
+    lambda: tool(2.7, "Bash", {"command": f"cd {csr.PERSONAL} && git status"}),
+    lambda: tool(2.7, "Read", {"file_path": f"{csr.PERSONAL}/README.md"}),
+])
+def test_ordinary_vault_root_work_is_not_a_touch(tmp_path, record_of):
+    res = run(tmp_path, typed_session(3, touch_at=1, touch=record_of()), None)
+    assert res.excluded == 0 and res.touches_by_class == {}
+
+
+def test_a_vault_root_walk_keeps_its_window_out_of_the_report(tmp_path, repo):
+    tx = tmp_path / "tx"
+    tx.mkdir()
+    write_session(tx, "s1", [assistant(0), human(1, "that is wrong: PRIVATE WINDOW TEXT"),
+                             tool(1.5, "Bash", {"command": f"cd {csr.PERSONAL} && grep -r needle ."})])
+    rep = rm.build_report(tx, repo, WINDOW[0], WINDOW[1], set(), "r", "main")
+    assert "PRIVATE WINDOW TEXT" not in json.dumps(rep) and rep["sealed_excluded_total"] == 1
 
 
 def test_granola_sealed_meeting_classifies_sealed():
