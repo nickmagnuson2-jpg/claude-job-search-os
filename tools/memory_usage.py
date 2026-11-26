@@ -730,9 +730,8 @@ def summarize(events: list[Event], reconfirms: Callable[[int], bool]) -> dict[st
 # Every rule below (kind, half-life, breadth, state) is learning_state's; this layer only
 # applies it to the observed entries and writes the result.
 
-import sys  # noqa: E402
-# tools/ is already sys.path[0] when this runs as a script, and every importer has it on the
-# path to import this module, so no insert (mutation, 2026-11-25: dropping one was equivalent).
+# tools/ is on sys.path from the insert at the top of this module (S2b), so the sibling
+# imports below resolve both as a script and as tools.memory_usage.
 from hook_runtime import claude_project_dir  # noqa: E402
 from vault_paths import main_checkout  # noqa: E402
 
