@@ -210,6 +210,8 @@ tools/.audit-pii-ledger.jsonl
 # Full-suite pass records on merged trees (tools/suite_record.py); local, never pushed
 tools/.suite-ledger.jsonl
 
-# iCloud Drive conflict copies of the discovery queues ("tools/.role-queue 2.json",
-# 2026-11-25): the repo sits in an iCloud-synced folder, and a copy holds the same names.
-tools/.*-queue*.json
+# The discovery queues and every copy of them: iCloud Drive conflict copies
+# ("tools/.role-queue 2.json", 2026-11-25; the repo sits in an iCloud-synced folder), the
+# scanner's ".corrupt" quarantine, and an interrupted atomic write's temp file. Each holds
+# the same target-company names.
+tools/.*-queue*
