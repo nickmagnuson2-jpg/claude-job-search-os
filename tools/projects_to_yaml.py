@@ -78,25 +78,28 @@ class Project:
         return int(years[-1]) if years else 0
 
 
+def strip_html_comments(text: str) -> str:
+    """Remove every <!-- ... --> from the whole file before any line is parsed.
+
+    One pass over the text, so a comment never reaches a field or a bullet, whether it
+    sits inline, spans lines, opens on a field line, or closes before more text. An
+    unclosed <!-- hides the rest of the file. (2026-11-26: a dated note on the Zuora
+    Role line was copied into the CV `position:` field; the old line-by-line tracker
+    also dropped whole lines that opened a multi-line comment.)"""
+    text = HTML_COMMENT_RE.sub("", text)
+    cut = text.find("<!--")
+    return text if cut < 0 else text[:cut]
+
+
 def parse_project(path: Path) -> Project | None:
-    text = path.read_text(encoding="utf-8")
+    text = strip_html_comments(path.read_text(encoding="utf-8"))
     lines = text.splitlines()
 
     proj = Project(slug=path.stem, raw_path=path)
     current_section: str | None = None
     in_key_achievements = False
-    in_html_comment = False  # track multi-line <!-- ... --> blocks
 
     for line in lines:
-        # Multi-line HTML comment tracking — must run before any other matching
-        if in_html_comment:
-            if "-->" in line:
-                in_html_comment = False
-            continue
-        if "<!--" in line and "-->" not in line:
-            in_html_comment = True
-            continue
-
         # Section headers
         m = SECTION_RE.match(line)
         if m:
@@ -118,8 +121,6 @@ def parse_project(path: Path) -> Project | None:
             bm = BULLET_RE.match(line)
             if bm:
                 content = bm.group(1).strip()
-                # Strip inline (single-line) HTML comments
-                content = HTML_COMMENT_RE.sub("", content).strip()
                 # Skip empty placeholders
                 if content and content != "-":
                     proj.key_achievements.append(content)
