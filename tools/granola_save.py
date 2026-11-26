@@ -42,7 +42,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from meeting_vocab import split_transcript_turns  # noqa: E402
-from md_table import JsonArgumentParser, write_atomic  # noqa: E402
+from md_table import JsonArgumentParser, write_atomic_or_exit  # noqa: E402
 import vault_paths  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -301,11 +301,11 @@ def cmd_write(data: dict, output: Path, no_overwrite: bool = False) -> None:
 
     # Transcript file
     transcript_content = transcript_frontmatter(data) + "\n" + transcript_body(data, summary_basename)
-    write_atomic(output, transcript_content)
+    write_atomic_or_exit(output, transcript_content)
 
     # Summary file
     summary_content = summary_frontmatter(data, transcript_basename) + "\n" + summary_body(data, transcript_basename)
-    write_atomic(summary_path, summary_content)
+    write_atomic_or_exit(summary_path, summary_content)
 
     result = {
         "status": "ok",
