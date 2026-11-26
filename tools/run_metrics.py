@@ -236,12 +236,14 @@ def sealed_markers(sealed_config: Path | None = None) -> tuple:
     """(class, lowercased marker) pairs, built only from the guard's names.
 
     sibling: the sealed sibling directory; in_tree: the old in-repo folder's own name;
-    override: the SEAL_READ_OK assignment; vault: each folder in the sealed-folders config;
+    override: the SEAL_READ_OK variable, in any spelling of its value; vault: each folder in the sealed-folders config;
     fail_closed_vault: the whole vault data/ when that config is missing, malformed, empty
     or names a folder that is not there (the guard fails closed the same way)."""
     marks = [("sibling", check_sealed_read.SEALED_HOME.lower()),
              ("in_tree", check_sealed_read.SEALED_REL.rsplit("/", 1)[-1].lower()),
-             ("override", check_sealed_read.OVERRIDE_WORD.lower())]
+             # The variable's bare name: `NAME='1'` and `export NAME="1"` override as well, and
+             # the whole `NAME=1` word missed 9 of KB-A's 2,325 exclusions (reconciled 11-26).
+             ("override", check_sealed_read.OVERRIDE_WORD.split("=", 1)[0].lower())]
     vault = check_sealed_read.PERSONAL.rsplit("/", 1)[-1]
     if sealed_config is None:
         rels, closed = check_sealed_read.VAULT_RELS, check_sealed_read.FAIL_CLOSED

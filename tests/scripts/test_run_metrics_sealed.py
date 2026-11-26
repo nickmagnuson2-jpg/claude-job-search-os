@@ -92,7 +92,7 @@ def test_markers_are_built_from_the_guard_not_typed_here(conf):
     m = {v: c for c, v in rm.sealed_markers(conf)}
     assert m[csr.SEALED_HOME.lower()] == "sibling"
     assert m[IN_TREE.lower()] == "in_tree"
-    assert m[csr.OVERRIDE_WORD.lower()] == "override"
+    assert m[csr.OVERRIDE_WORD.split("=")[0].lower()] == "override"
     assert m[FOLDER] == "vault"
     assert "fail_closed_vault" not in m.values()
 
@@ -118,6 +118,17 @@ def test_each_sealed_source_excludes_its_window(tmp_path, conf, cls, command_of)
     assert kept_texts(res) == [f"message {k}" for k in list(range(5)) + list(range(16, 20))]
     assert res.excluded == 11 and res.typed_total == 20
     assert res.touches_by_class == {cls: 1}
+
+
+@pytest.mark.parametrize("command", [
+    f"{csr.OVERRIDE_WORD.split('=')[0]}='1' cat ../somewhere/a.md",   # quoted value
+    f"export {csr.OVERRIDE_WORD.split('=')[0]}=\"1\"; cat a.md",      # exported, double-quoted
+])
+def test_the_override_counts_in_any_spelling_of_its_value(tmp_path, conf, command):
+    # Reconciliation 2026-11-26: matching the whole `NAME=1` word kept 9 of KB-A's 2,325
+    # excluded messages; the bare name restores exact agreement (0 differences either way).
+    res = run(tmp_path, typed_session(3, touch_at=1, touch=bash(2.7, command)), conf)
+    assert res.excluded == 3 and res.touches_by_class == {"override": 1}
 
 
 def test_granola_sealed_meeting_classifies_sealed():
