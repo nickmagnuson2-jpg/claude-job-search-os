@@ -526,3 +526,25 @@ def test_sealed_text_asks_the_guard_with_a_supplied_config(conf, monkeypatch):
     monkeypatch.setattr(csr, "_names_sealed", lambda text: "MARK-Z" in text)
     assert rm.sealed_text("see MARK-Z/notes", WISPR_CFG, conf) is True
     assert rm.sealed_text("draft the follow-up to the recruiter", WISPR_CFG, conf) is False
+
+
+# Mutation 2026-11-26 (c2fdd2b0): the marker dedup and _record_ts's fallback survived.
+def test_each_marker_string_appears_once_and_the_fail_closed_class_wins(tmp_path, vault):
+    # Two missing folders under one parent: fail-closed, and `<vault>/data` arises three times
+    # (the fail-closed marker, then a parent of each folder). It is listed once, as fail-closed.
+    p = tmp_path / "two.conf"
+    p.write_text("data/missing-a\ndata/missing-b\n")
+    marks = rm.sealed_markers(p)
+    strings = [m for _, m in marks]
+    assert len(strings) == len(set(strings))
+    assert [c for c, m in marks if m == f"{VAULT}/data".lower()] == ["fail_closed_vault"]
+
+
+def test_a_typed_turn_with_an_unparsable_timestamp_takes_the_one_before(tmp_path):
+    # It must not break the placement of a subagent touch: turn 1 inherits turn 0's time,
+    # so a touch at minute 2.7 still lands on turn 1 (turn 2 starts at minute 4).
+    rows = typed_session(3)
+    rows[2]["timestamp"] = "not-a-time"
+    write_subagent(tmp_path, [sealed_dir_cmd(2.7)])
+    res = run(tmp_path, rows, None, window=0)
+    assert res.excluded == 1 and kept_texts(res) == ["message 0", "message 2"]
