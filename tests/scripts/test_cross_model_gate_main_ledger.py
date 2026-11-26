@@ -63,6 +63,21 @@ def test_a_row_only_in_main_covers_the_worktree_push(repos):
     assert v.blocked is False, v.message
 
 
+def test_the_cli_from_a_worktree_with_the_default_repo_root_reads_main(repos, tmp_path,
+                                                                        monkeypatch, capsys):
+    """S1's 11-26 evidence: the gate run from s4d's worktree with no --repo-root BLOCKED,
+    because the default (the worktree holding the gate) read only that worktree's ledger;
+    only --repo-root <main> passed. The CLI default must reach main's row too."""
+    main, wt = repos
+    _row(main, worktree="/elsewhere/review-wt")
+    ns = tmp_path / "ns.txt"
+    ns.write_text(f"200\t40\t{PATH}\n", encoding="utf-8")
+    monkeypatch.setattr(g, "REPO_ROOT", wt)              # the gate file's own checkout
+    monkeypatch.delenv("CODEX_VERIFY_WAIVE", raising=False)
+    rc = g.main(["--numstat", str(ns)])
+    assert rc == 0, capsys.readouterr()
+
+
 def test_an_open_p0_only_in_main_on_the_pushed_paths_blocks(repos):
     main, wt = repos
     _row(wt)                                                               # covers on its own

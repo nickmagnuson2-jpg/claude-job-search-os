@@ -1027,6 +1027,7 @@ def _p0_block_text(blocking: list[dict]) -> str:
             f"--severity P0\n"
             f"  Resolve:   PYTHONIOENCODING=utf-8 python3 tools/finding_write.py set "
             f"<addr> --disposition fixed|rejected|parked --why '<reason>'\n"
+            f"             a park also needs --source-fix <branch> or --nick-deferred '<Nick's words>'\n"
             f"  A parked P0 still blocks until Nick accepts it:\n"
             f"             ! PYTHONIOENCODING=utf-8 python3 tools/finding_write.py accept "
             f"<addr> --why '<reason>'\n"
