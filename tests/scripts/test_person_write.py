@@ -179,3 +179,22 @@ def test_list_enumerates_dossiers(tmp_path):
 def test_list_empty_when_no_dir(tmp_path):
     res, rc = run_pw("list", repo_root=tmp_path)
     assert rc == 0 and res["dossiers"] == []
+
+
+@pytest.mark.parametrize("section", ["Touchpoints", "TOUCHPOINTS", "touchpoints"])
+def test_add_entry_section_is_case_insensitive(tmp_path, section):
+    """Friction row: "Unknown section: 'Touchpoints'" while the dossier heading and the
+    error message both name it. The section name matches regardless of case."""
+    run_pw("create", "Sam Carter", repo_root=tmp_path)
+    res, rc = run_pw("add-entry", "sam-carter", "--section", section,
+                     "--text", "Coffee chat", "--date", "2026-06-02", repo_root=tmp_path)
+    assert rc == 0 and res["action"] == "add-entry", res
+    text = (people_dir(tmp_path) / "sam-carter.md").read_text(encoding="utf-8")
+    assert text.index("- 2026-06-02 — Coffee chat") > text.index("## Touchpoints")
+
+
+def test_add_entry_unknown_section_still_refused(tmp_path):
+    run_pw("create", "Sam Carter", repo_root=tmp_path)
+    res, rc = run_pw("add-entry", "sam-carter", "--section", "Notes",
+                     "--text", "x", repo_root=tmp_path)
+    assert rc != 0 and res["code"] == "bad_section"

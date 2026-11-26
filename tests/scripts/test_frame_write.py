@@ -907,11 +907,11 @@ def test_record_delivery_requires_its_version_and_date(tmp_path):
         r = subprocess.run([sys.executable, str(SCRIPT), "record-delivery", "--frame", str(f),
                             "--expect-version", "1", *map(str, args)],
                            capture_output=True, text=True)
-        assert r.returncode == 2 and "required" in r.stderr
+        assert r.returncode == 2 and "required" in json.loads(r.stdout)["message"]
     r = subprocess.run([sys.executable, str(SCRIPT), "record-delivery", "--frame", str(f),
                         "--expect-version", "1", "--delivered-version", "one", "--at", "x"],
                        capture_output=True, text=True)
-    assert r.returncode == 2 and "invalid int value" in r.stderr
+    assert r.returncode == 2 and "invalid int value" in json.loads(r.stdout)["message"]
     assert f.read_bytes() == before
 
 

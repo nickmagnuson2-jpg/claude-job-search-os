@@ -360,7 +360,7 @@ def test_log_without_direction_is_refused_and_writes_nothing(tmp_path):
     r = _run_raw("--repo-root", tmp_path, "log", "Jane Doe", "--date", "2026-06-19",
                  "--type", "email", "--summary", "Heard back from Jane", "--no-todo")
     assert r.returncode != 0
-    assert "--direction" in r.stderr
+    assert "--direction" in json.loads(r.stdout)["message"] and r.stderr == ""
     assert (tmp_path / "data/networking.md").read_text(encoding="utf-8") == before
     assert "| Sent |" in (tmp_path / "data/outreach-log.md").read_text(encoding="utf-8")
 
@@ -370,14 +370,14 @@ def test_the_old_override_flags_are_gone(tmp_path, flag):
     _setup_outreach(tmp_path)
     r = _run_raw("--repo-root", tmp_path, "log", "Jane Doe", "--summary", "hi",
                  "--direction", "none", "--no-todo", flag)
-    assert r.returncode != 0 and "unrecognized arguments" in r.stderr
+    assert r.returncode != 0 and "unrecognized arguments" in json.loads(r.stdout)["message"]
 
 
 def test_an_unknown_direction_is_refused(tmp_path):
     _setup_outreach(tmp_path)
     r = _run_raw("--repo-root", tmp_path, "log", "Jane Doe", "--summary", "hi",
                  "--direction", "inbound", "--no-todo")
-    assert r.returncode != 0 and "invalid choice" in r.stderr
+    assert r.returncode != 0 and "invalid choice" in json.loads(r.stdout)["message"]
 
 
 def test_direction_in_marks_the_type_and_flips_the_outreach_log(tmp_path):
@@ -825,3 +825,29 @@ def test_a_name_with_a_pipe_is_stored_and_found_the_same_way(tmp_path):
     assert c2 == 0, r2
     text = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
     assert "| Sam/Example | Beta/Inc |" in text and "### Sam/Example — Beta/Inc" in text
+
+
+# ---------------------------------------------------------------------------
+# log --dry-run runs the same refusals as log (friction row: a dry run said "Would log"
+# for a contact the real log refuses)
+# ---------------------------------------------------------------------------
+
+def test_dry_run_log_refuses_an_unknown_contact(tmp_path):
+    _setup_outreach(tmp_path)
+    before = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
+    result, code = run_nw_write(
+        "--repo-root", str(tmp_path), "--dry-run", "log", "Nobody Atall",
+        "--summary", "s", "--direction", "in")
+    assert code == 1 and result["status"] == "error" and result["code"] == "not_found"
+    assert (tmp_path / "data/networking.md").read_text(encoding="utf-8") == before
+
+
+def test_dry_run_log_agrees_with_check(tmp_path):
+    """--dry-run and --check give the same verdict for the same input."""
+    _setup_outreach(tmp_path)
+    for name in ("Jane Doe", "Nobody Atall"):
+        argv = ["log", name, "--summary", "s", "--direction", "none"]
+        dry, dcode = run_nw_write("--repo-root", str(tmp_path), "--dry-run", *argv)
+        chk, ccode = run_nw_write("--repo-root", str(tmp_path), *argv, "--check")
+        assert (dcode == 0) == (ccode == 0), (name, dry, chk)
+        assert dry["status"] == chk["status"]

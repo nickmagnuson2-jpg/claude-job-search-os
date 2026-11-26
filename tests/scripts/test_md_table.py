@@ -110,7 +110,10 @@ def test_json_argument_parser_usage_error_is_json_on_stdout(capsys):
         d = json.loads(out)
         assert d["status"] == "error" and d["code"] == "usage"
         assert "usage:" in d["message"] and "w.py" in d["message"]
-        assert "error:" in err and "usage: w.py" in err, "stderr keeps the stock usage text"
+        # stderr stays empty: the JSON message already carries the usage text, and a
+        # caller running `2>&1 | json.load` broke on the stock usage lines (amends
+        # 5f22a203; friction rows pipe_write JSONDecodeError and networking_write usage).
+        assert err == "", "a usage error writes only the JSON, on stdout"
 
 
 def test_json_argument_parser_help_is_not_an_error(capsys):
@@ -158,3 +161,13 @@ def test_three_readers_share_the_narrow_reader():
     import networking_followup, outreach_pending, pipeline_staleness  # noqa: E401
     for mod in (networking_followup, outreach_pending, pipeline_staleness):
         assert mod.read_file is mt.read_file_narrow, mod.__name__
+
+
+def test_json_argument_parser_usage_error_survives_2_to_1(capsys):
+    """stdout and stderr merged, as `2>&1 | python3 -c json.load` sees them, still parse."""
+    p = mt.JsonArgumentParser(prog="w.py")
+    p.add_argument("--x", required=True)
+    with pytest.raises(SystemExit):
+        p.parse_args([])
+    out, err = capsys.readouterr()
+    assert json.loads(err + out)["code"] == "usage"

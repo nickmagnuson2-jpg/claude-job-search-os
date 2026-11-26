@@ -74,17 +74,18 @@ def out_error(message: str, code: str = "error", **extra) -> None:
 
 
 class JsonArgumentParser(argparse.ArgumentParser):
-    """ArgumentParser whose usage errors also print the error JSON on stdout.
+    """ArgumentParser whose usage errors print only the error JSON, on stdout.
 
     A stock argparse rejection writes only to stderr, so a caller parsing stdout got
     an empty string and a JSONDecodeError that hid the real usage message (96 fires
-    on pipe_write.py alone, 2026-06 to 2026-10). Exit code stays 2 and stderr is
-    unchanged. Subparsers inherit the class from add_subparsers().
+    on pipe_write.py alone, 2026-06 to 2026-10). 5f22a203 added the JSON and kept the
+    stock stderr text; that text still broke the common `2>&1 | python3 -c json.load`
+    pattern with the same JSONDecodeError (S6 triage, 2026-11-25), so stderr is now
+    empty. The JSON message carries the usage line. Exit code stays 2. Subparsers
+    inherit the class from add_subparsers().
     """
 
     def error(self, message: str) -> None:
-        self.print_usage(sys.stderr)
-        print(f"{self.prog}: error: {message}", file=sys.stderr)
         print(json.dumps({"status": "error", "code": "usage",
                           "message": f"{message}. {self.format_usage().strip()}"},
                          ensure_ascii=False))

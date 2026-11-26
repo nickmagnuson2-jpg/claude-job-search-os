@@ -191,6 +191,7 @@ def cmd_create(args, people_dir: Path, dry_run: bool) -> None:
 
 
 def cmd_add_entry(args, people_dir: Path, dry_run: bool) -> None:
+    args.section = args.section.lower()   # "Touchpoints" names the same section
     if args.section not in SECTIONS:
         out_error(f"Unknown section: {args.section!r} (use commitments|owed|touchpoints)",
                   "bad_section")

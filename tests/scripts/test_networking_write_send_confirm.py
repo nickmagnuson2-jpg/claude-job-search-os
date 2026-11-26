@@ -187,6 +187,20 @@ def test_dry_run_checks_the_capture_and_writes_nothing(tmp_path):
     assert text(tmp_path) == before and "networking" not in dc.read_meta(cid)
 
 
+@pytest.mark.parametrize("mode", [("--dry-run",), ()])
+def test_previews_refuse_an_already_linked_capture(tmp_path, mode):
+    """A capture the live log refuses (already linked) is refused by --dry-run and --check
+    too: capture_direction runs before either preview returns (S6b Codex r1 F1 check)."""
+    cid = drafted(tmp_path)
+    before = text(tmp_path)
+    extra = () if mode else ("--check",)
+    r, c = nw(tmp_path, *mode, "log", "Jane Doe", "--date", "2026-06-21", "--type", "email",
+              "--summary", "again", "--direction", "none", "--capture", cid, "--no-todo",
+              *extra)
+    assert c != 0 and r["code"] == "capture_already_linked", r
+    assert text(tmp_path) == before
+
+
 # --- confirm: sent marks it outbound, not-sent leaves it plain ------------------------
 
 @pytest.mark.parametrize("outcome", ["unchanged", "edited"])

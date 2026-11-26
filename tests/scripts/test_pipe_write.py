@@ -425,7 +425,7 @@ def test_repo_root_after_subcommand_rejected():
         "add", "Acme", "PM", "--repo-root", ".",
     )
     assert code == 2
-    assert "unrecognized arguments" in stderr
+    assert stderr == "", "the usage error is the JSON on stdout only (2>&1-safe)"
     d = json.loads(stdout)
     assert d["code"] == "usage" and "unrecognized arguments" in d["message"]
 
@@ -491,7 +491,7 @@ def test_invalid_fit_verdict_rejected(tmp_path):
         "--fit-verdict", "great-fit", "--fit-reason", "x",
     )
     assert code == 2
-    assert "invalid choice" in stderr
+    assert "invalid choice" in json.loads(stdout)["message"] and stderr == ""
 
 
 # ---------------------------------------------------------------------------
@@ -1032,3 +1032,39 @@ def test_a_date_in_a_replaced_next_action_moves_to_notes(tmp_path):
                    "--next-action", "Prep the screen")
     cols = _row(tmp_path, "Acme Corp")
     assert cols[4] == "Prep the screen" and cols[6] == "Applied 2026-01-03"
+
+
+# ---------------------------------------------------------------------------
+# --dry-run after the subcommand (friction row: "unrecognized arguments: --dry-run")
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("argv", [
+    ["update", "Acme Corp", "Applied", "--dry-run"],
+    ["note", "Acme Corp", "--append", "a note", "--dry-run"],
+    ["add", "Beta Co", "PM", "--dry-run"],
+])
+def test_dry_run_after_the_subcommand_writes_nothing(tmp_path, argv):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    before = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    code, stdout, stderr = _run_pipe_write_raw("--repo-root", str(tmp_path), *argv)
+    d = json.loads(stdout)
+    assert code == 0 and d["status"] == "ok" and d.get("dry_run") is True, d
+    assert (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8") == before
+
+
+def test_dry_run_before_the_subcommand_still_works(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    before = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    code, stdout, _ = _run_pipe_write_raw("--repo-root", str(tmp_path), "--dry-run",
+                                          "update", "Acme Corp", "Applied")
+    assert code == 0 and json.loads(stdout).get("dry_run") is True
+    assert (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8") == before
+
+
+def test_no_dry_run_anywhere_still_writes(tmp_path):
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    before = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8")
+    code, stdout, _ = _run_pipe_write_raw("--repo-root", str(tmp_path),
+                                          "note", "Acme Corp", "--append", "a note")
+    assert code == 0 and not json.loads(stdout).get("dry_run")
+    assert (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8") != before
