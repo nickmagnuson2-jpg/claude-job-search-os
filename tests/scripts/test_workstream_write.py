@@ -482,7 +482,8 @@ def test_every_workstream_state_name_the_writer_imports_still_exists(ww):
     # the two cannot disagree. A rename there must fail HERE, by name, not at runtime.
     st = _state()
     assert ww.STATE_NAMES == ("_visible_lines", "read_header", "_read_next", "NEXT_FENCE",
-                              "MIN_ACTION")
+                              "MIN_ACTION", "load_exemptions", "ExemptFileError",
+                              "EXEMPT_FILE")
     missing = [n for n in ww.STATE_NAMES if not hasattr(st, n)]
     assert not missing, f"workstream_state no longer defines {missing}; workstream_write.py " \
                         "imports them for add-next"
@@ -569,3 +570,63 @@ def test_newest_next_date_reads_workstream_state(ww):
     assert ww.newest_next_date(WS_TEXT, FIXED.date()) == "2026-11-20"
     assert ww.newest_next_date(WS_TEXT.replace("```json next", "```json"), FIXED.date()) is None
     assert ww.newest_next_date("no table", FIXED.date()) is None
+
+
+# ---------------------------------------------------------------- exempt workstreams
+# 2026-11-25 20:14 (table-writers): a dated section written into a workstream listed in
+# backlog-exempt.json, after its cutover, made workstream_state report a problem and broke
+# every suite and the preflight for about 20 minutes. add_section is the only writer path that
+# adds a dated heading (add_next inserts a JSON item), so it refuses there.
+
+def _exempt(ws_dir, slugs, cutover="2026-11-08", raw=None):
+    (ws_dir / "backlog-exempt.json").write_text(
+        raw if raw is not None else json.dumps({"cutover": cutover, "exempt": slugs}),
+        encoding="utf-8")
+
+
+@pytest.fixture
+def tw(tmp_path):
+    d = tmp_path / "repo" / "data" / "workstreams"
+    d.mkdir(parents=True)
+    f = d / "table-writers.md"
+    f.write_text("# Table writers\n\nfree text, no header table\n", encoding="utf-8")
+    return f
+
+
+def test_a_dated_section_in_an_exempt_workstream_after_the_cutover_is_refused(ww, tw, capsys):
+    _exempt(tw.parent, ["table-writers"])
+    before = tw.read_bytes()
+    code, out = _call(ww, capsys, "add-section", str(tw), "--title", "S9: x", "--body", "- y")
+    assert code == 1 and out["code"] == "exempt_workstream"
+    assert "table-writers" in out["message"] and "backlog-exempt.json" in out["message"]
+    assert tw.read_bytes() == before
+
+
+def test_a_workstream_not_listed_as_exempt_still_writes(ww, tw, capsys):
+    _exempt(tw.parent, ["table-writers"])
+    other = tw.parent / "hooks.md"
+    other.write_text("# Hooks\n", encoding="utf-8")
+    code, out = _call(ww, capsys, "add-section", str(other), "--title", "S9: x", "--body", "- y")
+    assert code == 0 and out["status"] == "ok"
+
+
+def test_no_exempt_file_means_no_exemptions(ww, tw, capsys):
+    code, _out = _call(ww, capsys, "add-section", str(tw), "--title", "S9: x", "--body", "- y")
+    assert code == 0
+
+
+@pytest.mark.parametrize("cutover,code_", [("2026-11-21", 0), ("2026-11-20", 1)])
+def test_the_refusal_starts_the_day_after_the_cutover(ww, tw, capsys, cutover, code_):
+    # FIXED is 2026-11-21: workstream_state flags a heading dated AFTER the cutover only.
+    _exempt(tw.parent, ["table-writers"], cutover=cutover)
+    code, _out = _call(ww, capsys, "add-section", str(tw), "--title", "S9: x", "--body", "- y")
+    assert code == code_
+
+
+def test_a_malformed_exempt_file_refuses_rather_than_guessing(ww, tw, capsys):
+    _exempt(tw.parent, [], raw='{"cutover": "2026-11-08"}')
+    before = tw.read_bytes()
+    code, out = _call(ww, capsys, "add-section", str(tw), "--title", "S9: x", "--body", "- y")
+    assert code == 1 and out["code"] == "exempt_file_invalid"
+    assert tw.read_bytes() == before
+

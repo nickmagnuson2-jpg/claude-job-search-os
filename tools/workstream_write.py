@@ -53,10 +53,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from inbox_lock import ConcurrentModification, LockTimeout, atomic_update, file_lock  # noqa: E402
 import workstream_state as _ws  # noqa: E402
 
-# The workstream_state names add-next reuses. Private ones by org f1's ruling (2026-11-23), so
+# The workstream_state names add-next and the exempt refusal reuse. Private ones by org f1's ruling (2026-11-23), so
 # no other branch touches workstream_state.py; test_every_workstream_state_name_the_writer_
 # imports_still_exists fails by name if one is renamed.
-STATE_NAMES = ("_visible_lines", "read_header", "_read_next", "NEXT_FENCE", "MIN_ACTION")
+STATE_NAMES = ("_visible_lines", "read_header", "_read_next", "NEXT_FENCE", "MIN_ACTION",
+               "load_exemptions", "ExemptFileError", "EXEMPT_FILE")
 
 HEADING_FMT = "## {stamp} by `date` | {title}"
 STAMP_FMT = "%Y-%m-%d %H:%M"
@@ -139,6 +140,30 @@ def stale_next_message(target, newest: str, today: str) -> str:
             "first")
 
 
+def check_not_exempt(target: Path, today) -> None:
+    """Refuse a dated section in a workstream listed in backlog-exempt.json after its cutover.
+
+    2026-11-25 20:14: a section written this way into table-writers.md made workstream_state
+    report a problem and broke every suite and the preflight for about 20 minutes. The list
+    is read with workstream_state's own parser, so this writer and the check that fails the
+    suite cannot disagree. A malformed list refuses (the suite fails on it anyway). A dated
+    section ON the cutover day is allowed: the backlog check flags only headings after it.
+    KNOWN GAP: a `cat >>` heading write bypasses this writer, and no hook reads the list
+    (check_workstream_heading_time checks typed times and stale next items only); no fire
+    recorded through that path (org 3e, 2026-11-26: reopen when it fires once)."""
+    try:
+        cutover, slugs = _ws.load_exemptions(target.parent)
+    except _ws.ExemptFileError as e:
+        raise WriteError("exempt_file_invalid", f"{e}; fix it before writing a dated "
+                         "section") from None
+    if cutover is not None and target.stem in slugs and today > cutover:
+        raise WriteError("exempt_workstream",
+                         f"{target.stem} is listed in {_ws.EXEMPT_FILE} (cutover {cutover}), "
+                         "and a dated section after the cutover breaks the backlog check and "
+                         "every suite. Fill its backlog header rows and remove the slug from "
+                         f"{_ws.EXEMPT_FILE} first, or log in a non-exempt workstream")
+
+
 def add_section(path: Path, title: str, body: str) -> dict:
     target = check_target(path)
     title = check_title(title)
@@ -146,6 +171,7 @@ def add_section(path: Path, title: str, body: str) -> dict:
     try:
         with file_lock(target, timeout=LOCK_TIMEOUT_S):
             now = _now()
+            check_not_exempt(target, now.date())
             # STALE NEXT (Nick, 2026-11-23, codify #5): a dated section newer than the header's
             # newest next item is the shape that failed S3's 07:59 suite. Refused here because
             # this heading never appears in a command the guard could read.
