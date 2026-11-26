@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-"""check_network_git.py -- PreToolUse hook for Bash. BLOCKS a network git command.
+"""check_network_git.py -- PreToolUse hook for Bash. BLOCKS a network git command, and
+a `git stash` that changes the stash list.
+
+GIT STASH (added 2026-11-25, overnight-112526 S2). The stash list is one stack shared by the
+main checkout and every linked worktree, so a stash pushed or popped by one session can take
+or bury another session's entry, and a stash used for a red/green check has twice stashed the
+very test it meant to run. memory/feedback_dont_git_stash_for_a_before_after_check.md: 6
+fires against a reopen gate of 2. Blocked: `git stash` with no subcommand or with any
+subcommand except `list`, `show` and `create` (none of them changes the stack), at command position in the same places the
+network check looks. A `git stash` Nick wants, he runs himself with `!`. Instead: copy the
+file aside (`cp f <scratch>; edit; test; cp <scratch> f; cmp`), `git show HEAD:<path>`, or a
+second worktree.
 
 Every GitHub remote on this machine is SSH through a Secretive key that asks for Touch ID
 on each use. A `git fetch`, `pull`, `push` or `ls-remote` from a Claude Bash call raises a
@@ -155,8 +166,9 @@ def _no_prompt(sub: str, rest: list[str]) -> bool:
     return False
 
 
-def _git_network(args: list[str]) -> str | None:
-    """The network subcommand of a `git` call (its arguments after `git`), or None."""
+def _git_subcommand(args: list[str]) -> tuple[str, list[str]] | None:
+    """(subcommand, its arguments) of a `git` call (its arguments after `git`), or None
+    when there is no subcommand or git only prints help."""
     i = 0
     while i < len(args):
         w = args[i]
@@ -168,21 +180,51 @@ def _git_network(args: list[str]) -> str | None:
         if w.startswith("-"):
             i += 1              # a flag, or `--git-dir=x` style with its value attached
             continue
-        rest = args[i + 1:]
-        if w in NETWORK_SUBCOMMANDS:
-            return None if _no_prompt(w, rest) else w
-        if w == "remote":
-            sub = next((a for a in rest if not a.startswith("-")), "")
-            if sub in REMOTE_NETWORK and not (sub == "show" and "-n" in rest):
-                return f"remote {sub}"
-        if w == "submodule" and next((a for a in rest if not a.startswith("-")), "") == "update":
-            return "submodule update"
-        return None
+        return w, args[i + 1:]
     return None
 
 
-def find_network_git(command: str, depth: int = 0) -> str | None:
-    """The first network git command in `command`, as text for the message, or None."""
+def _git_network(args: list[str]) -> str | None:
+    """The network subcommand of a `git` call (its arguments after `git`), or None."""
+    found = _git_subcommand(args)
+    if found is None:
+        return None
+    w, rest = found
+    if w in NETWORK_SUBCOMMANDS:
+        return None if _no_prompt(w, rest) else w
+    if w == "remote":
+        sub = next((a for a in rest if not a.startswith("-")), "")
+        if sub in REMOTE_NETWORK and not (sub == "show" and "-n" in rest):
+            return f"remote {sub}"
+    if w == "submodule" and next((a for a in rest if not a.startswith("-")), "") == "update":
+        return "submodule update"
+    return None
+
+
+# `git stash list` and `git stash show` only read the stack, and `git stash create` writes a
+# commit object without touching the stack or the working tree (codex_verify.py uses it to
+# name the reviewed tree; 21 of 107 replay hits were it, 2026-11-25). Every other form
+# changes the stack: bare `git stash` and `git stash -<opt> ...` are `push`, and push/pop/
+# apply/drop/clear/save/store/branch all add, take or rewrite an entry. The subcommand is the FIRST
+# word after `stash`, never a later one, so `git stash -m list` (a push whose message is
+# "list") is not read as `list`.
+STASH_READ_ONLY = {"list", "show", "create"}
+
+
+def _git_stash(args: list[str]) -> str | None:
+    """'stash <sub>' when a `git` call changes the stash list, else None."""
+    found = _git_subcommand(args)
+    if found is None or found[0] != "stash":
+        return None
+    rest = found[1]
+    if "--help" in rest or "-h" in rest:
+        return None
+    sub = rest[0] if rest and not rest[0].startswith("-") else "push"
+    return None if sub in STASH_READ_ONLY else f"stash {sub}"
+
+
+def _find_git(command: str, judge, depth: int = 0) -> str | None:
+    """The first `git` call in `command` that `judge` flags, as text for the message."""
     if depth > MAX_DEPTH:
         # Too deep to see what runs: block rather than pass (Codex r2 F3). No ordinary
         # command nests bash -c / eval / $() this far.
@@ -192,25 +234,34 @@ def find_network_git(command: str, depth: int = 0) -> str | None:
         if words:
             head = os.path.basename(words[0])
             if head == "git":
-                sub = _git_network(words[1:])
-                if sub:
+                if judge(words[1:]):
                     return " ".join(words[:8])
             elif head in SHELLS:
                 for j, w in enumerate(words[1:-1], start=1):
                     if re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", w):
-                        hit = find_network_git(words[j + 1], depth + 1)
+                        hit = _find_git(words[j + 1], judge, depth + 1)
                         if hit:
                             return hit
                         break
             elif head == "eval":
-                hit = find_network_git(" ".join(words[1:]), depth + 1)
+                hit = _find_git(" ".join(words[1:]), judge, depth + 1)
                 if hit:
                     return hit
         for sub_cmd in sc.subs:
-            hit = find_network_git(sub_cmd, depth + 1)
+            hit = _find_git(sub_cmd, judge, depth + 1)
             if hit:
                 return hit
     return None
+
+
+def find_network_git(command: str, depth: int = 0) -> str | None:
+    """The first network git command in `command`, as text for the message, or None."""
+    return _find_git(command, _git_network, depth)
+
+
+def find_git_stash(command: str, depth: int = 0) -> str | None:
+    """The first `git stash` that changes the stash list, as text for the message, or None."""
+    return _find_git(command, _git_stash, depth)
 
 
 def main() -> None:
@@ -219,9 +270,26 @@ def main() -> None:
         sys.exit(0)             # policy: fail open on an unreadable payload
     if p.tool_name != "Bash":
         sys.exit(0)
-    hit = find_network_git(p.command or "")
+    command = p.command or ""
+    hit = find_network_git(command)
     if not hit:
-        sys.exit(0)
+        stash = find_git_stash(command)
+        if not stash:
+            sys.exit(0)
+        print(
+            f"BLOCKED: `git stash` from a Claude Bash call: `{stash}`.\n\n"
+            "The stash list is one stack shared by the main checkout and every worktree, so "
+            "another session can pop your entry or you can pop theirs; a stash taken for a "
+            "red check has also stashed the test itself (6 fires, "
+            "memory/feedback_dont_git_stash_for_a_before_after_check.md).\n\n"
+            "Instead:\n"
+            "  - Red check: `cp f <scratch>; edit f; run the test; cp <scratch> f; cmp`.\n"
+            "  - Old version of a file: `git show HEAD:<path> > <scratch>`, or a second "
+            "worktree.\n"
+            "  - `git stash list` and `git stash show` are allowed. If a stash is really "
+            "needed, ask Nick to run it himself with `!` in front.\n",
+            file=sys.stderr)
+        sys.exit(2)
     print(
         f"BLOCKED: network git from a Claude Bash call: `{hit}`.\n\n"
         "Every GitHub remote here is SSH through a Touch ID key, so this would raise a "

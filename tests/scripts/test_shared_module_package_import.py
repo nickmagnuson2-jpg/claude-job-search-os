@@ -128,3 +128,68 @@ def test_tool_imports_as_part_of_the_tools_package(name):
     r = subprocess.run([sys.executable, "-c", f"import tools.{name}"], cwd=REPO,
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr[-800:]
+
+
+# --- every tools/*.py (overnight-112526 S2, 2026-11-25) ------------------------------
+# feedback_redundant_means_no_caller_on_any_load_path: 4 fires. The list above covers only
+# tools that import md_table / hook_runtime / slug; a deletion that breaks `import tools.X`
+# anywhere else passed the suite (fire 4: a sys.path line in run_metrics.py). This test
+# imports EVERY tools/*.py as a package. Measured 2026-11-25 at e0d56d99: 18 of 246 fail.
+# They are listed with the reason, not fixed here (S2 owns only this test); fixing one makes
+# test_known_unimportable_list_is_not_stale fail, and the fix is to delete its line.
+# Each value is (reason, a fragment the import's stderr must contain): the stale-list test
+# checks the documented failure, not any failure, so a listed tool that swaps its known
+# failure for a new one still fails the suite (Codex S2 pre-commit F2).
+def _sibling(mod):
+    return ("imports a sibling module with no sys.path setup, so the package import fails",
+            f"No module named '{mod}'")
+
+
+KNOWN_UNIMPORTABLE = {
+    "booking_tracker": _sibling("count_report"),
+    "calendar_approval": _sibling("approval_signing"),
+    "calendar_fetch": _sibling("gmail_fetch"),
+    "calendar_write": _sibling("calendar_approval"),
+    "conflict_diff": ("parses sys.argv at module level (no __main__ guard), so importing it "
+                      "exits with an argparse usage error",
+                      "the following arguments are required"),
+    "deck_to_pdf": _sibling("chrome_runner"),
+    "extract_decisions": _sibling("json_leaves"),
+    "fit_chart_viewbox": _sibling("chrome_runner"),
+    "job_quiesce": _sibling("mutation_state"),
+    "launch_swarm": _sibling("cross_model_gate"),
+    "memory_usage": _sibling("count_report"),
+    "merge_chain": _sibling("allowlist_merge"),
+    "mutation_report": _sibling("mutation_state"),
+    "mutation_trend": _sibling("mutation_state"),
+    "provenance_probe": _sibling("json_leaves"),
+    "render_slides": _sibling("chrome_runner"),
+    "sf_property_records": _sibling("count_report"),
+    "slide_check": _sibling("check_deck_craft"),
+}
+ALL_TOOLS = sorted(p.stem for p in (REPO / "tools").glob("*.py"))
+
+
+def _imports(name: str) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, "-c", f"import tools.{name}"], cwd=REPO,
+                          capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+
+
+def test_known_unimportable_names_are_real_tools():
+    assert sorted(set(KNOWN_UNIMPORTABLE) - set(ALL_TOOLS)) == []
+
+
+@pytest.mark.parametrize("name", [n for n in ALL_TOOLS if n not in KNOWN_UNIMPORTABLE])
+def test_every_tool_imports_as_part_of_the_tools_package(name):
+    r = _imports(name)
+    assert r.returncode == 0, r.stderr[-800:]
+
+
+@pytest.mark.parametrize("name", sorted(KNOWN_UNIMPORTABLE))
+def test_known_unimportable_list_is_not_stale(name):
+    """A listed tool that now imports must leave the list, or the list hides the next break;
+    one that fails for a DIFFERENT reason is a new break, not the listed one."""
+    r = _imports(name)
+    assert r.returncode != 0, f"tools.{name} imports now: delete it from KNOWN_UNIMPORTABLE"
+    expected = KNOWN_UNIMPORTABLE[name][1]
+    assert expected in r.stderr, f"tools.{name} fails, but not with {expected!r}: {r.stderr[-400:]}"
