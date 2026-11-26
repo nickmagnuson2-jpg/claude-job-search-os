@@ -844,3 +844,16 @@ def test_a_fetcher_that_raises_makes_the_board_check_indeterminate():
 def test_a_fetcher_with_no_readable_signature_has_no_error_channel():
     """company_queue.py:519: a builtin inspect cannot read answers False, the declared bool."""
     assert cq._takes_errors(iter) is False
+
+
+def test_load_refuses_a_queue_whose_parent_cannot_be_traversed(tmp_path):
+    """Codex 11-25 F1 on s5 (P1, b7: fix on s5b): is_file, exists and is_symlink all
+    return False on a permission error, so an unreadable parent read as an empty queue."""
+    q = _queue_at(tmp_path)
+    q.write_text(json.dumps({"pending": [{"name": "Acme"}], "decided": []}), encoding="utf-8")
+    q.parent.chmod(0)
+    try:
+        with pytest.raises(ValueError, match="cannot be read"):
+            cq.load(tmp_path)
+    finally:
+        q.parent.chmod(0o755)

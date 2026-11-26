@@ -62,7 +62,8 @@ def _run(args, cwd=None, env_extra=None):
     it pass `env_extra`.
     """
     env = {k: v for k, v in os.environ.items()
-           if k not in ("MUTATION_CHECK_ACTIVE", "MUTATION_SWEEP_ACTIVE", "CLAUDECODE")}
+           if k not in ("MUTATION_CHECK_ACTIVE", "MUTATION_SWEEP_ACTIVE", "CLAUDECODE",
+                        "MUTATION_CACHE_DIR")}
     env["PYTHONIOENCODING"] = "utf-8"
     if cwd:
         env["MUTATION_REPO_ROOT"] = str(cwd)
@@ -2456,3 +2457,158 @@ def test_writing_the_target_without_a_cache_directory_is_fine(tmp_path):
     target.write_text("x = 1\n", encoding="utf-8")
     mc._write_owned(target, "x = 2\n")
     assert target.read_text(encoding="utf-8") == "x = 2\n"
+
+
+# --- a root reached through a symlink (S5, 2026-11-25) ---------------------------------------
+# --in-worktree makes its tree under tempfile.mkdtemp(), /var/folders/... on macOS, and /var
+# is a symlink to /private/var. REPO_ROOT kept the /var spelling, pytest's cwd resolved to
+# /private/var, and the /var test paths then sat outside pytest's rootdir, so
+# tests/conftest.py never loaded: "Unknown pytest.mark.live_data", the LIVE-DATA-ABSENT skip
+# never fired, and every whole-file baseline with a live_data test was red (S1, twice, 11-25).
+
+_SKIP_CONFTEST = textwrap.dedent("""
+    import pytest
+
+    def pytest_configure(config):
+        config.addinivalue_line("markers", "needs_owner_data: skipped here")
+
+    def pytest_runtest_setup(item):
+        if item.get_closest_marker("needs_owner_data"):
+            pytest.skip("OWNER-DATA-ABSENT")
+""")
+
+
+def _symlinked_repo(tmp_path):
+    real = tmp_path / "real" / "repo"
+    (real / "tools").mkdir(parents=True)
+    (real / "tests" / "scripts").mkdir(parents=True)
+    (real / "tools" / "subject.py").write_text(
+        "def classify(n):\n    if n > 0:\n        return 'pos'\n    return 'neg'\n", encoding="utf-8")
+    (real / "tests" / "conftest.py").write_text(_SKIP_CONFTEST, encoding="utf-8")
+    (real / "tests" / "scripts" / "test_subject.py").write_text(textwrap.dedent("""
+        import sys
+        from pathlib import Path
+        import pytest
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+        from subject import classify
+
+        def test_pos(): assert classify(1) == 'pos'
+        def test_neg(): assert classify(-1) == 'neg'
+
+        @pytest.mark.needs_owner_data
+        def test_owner_data(): raise AssertionError("conftest did not load: ran a skipped test")
+    """), encoding="utf-8")
+    # The shape that failed is a symlink at the TOP of the path (/var -> /private/var); a
+    # symlink lower down still loads the conftest. So the fixture is reached through the
+    # /var spelling of a /private/var tmp_path, which is where mkdtemp puts it on macOS.
+    resolved = str(real.resolve())
+    if not resolved.startswith("/private/var/") or not Path("/var").is_symlink():
+        pytest.skip("needs macOS's /var -> /private/var symlink")
+    return real, Path(resolved[len("/private"):])
+
+
+def test_repo_root_is_resolved_when_reached_through_a_symlink(tmp_path):
+    real, via_link = _symlinked_repo(tmp_path)
+    env = {**os.environ, "MUTATION_REPO_ROOT": str(via_link)}
+    p = subprocess.run([sys.executable, "-c",
+                        "import sys; sys.path.insert(0, sys.argv[1]); import mutation_check as m;"
+                        " print(m.REPO_ROOT)", str(REPO_ROOT / "tools")],
+                       capture_output=True, text=True, env=env, timeout=60)
+    assert p.stdout.strip() == str(real.resolve()), p.stderr
+
+
+def test_a_symlinked_root_still_loads_tests_conftest(tmp_path):
+    real, via_link = _symlinked_repo(tmp_path)
+    r = _run([str(via_link / "tools" / "subject.py"),
+              "--tests", str(via_link / "tests" / "scripts" / "test_subject.py")], cwd=via_link)
+    assert r.stdout.strip().startswith("{"), (r.stdout[-800:], r.stderr[-1500:])
+    d = json.loads(r.stdout)
+    assert d.get("code") != "baseline_red", d
+    assert d["status"] == "ok" and d["killed"] >= 1, d
+
+
+def test_a_relative_target_is_read_against_the_repo_root_not_the_cwd(tmp_path):
+    """A relative target or --tests path names a file in the repo, wherever the caller's
+    shell is: the run starts in tools/ here, and still finds tools/subject.py."""
+    src, t = _committed_fixture(tmp_path)
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("MUTATION_CHECK_ACTIVE", "MUTATION_SWEEP_ACTIVE", "CLAUDECODE")}
+    env.update(PYTHONIOENCODING="utf-8", MUTATION_REPO_ROOT=str(tmp_path))
+    r = subprocess.run([sys.executable, str(TOOL), "tools/subject.py", "--tests",
+                        t.name, "--json"], capture_output=True, text=True,
+                       cwd=str(tmp_path / "tools"), env=env, timeout=300)
+    d = json.loads(r.stdout)
+    assert d["status"] == "ok" and d["target"] == "tools/subject.py", (d, r.stderr[-500:])
+
+
+# --- the --cache survives an --in-worktree run (S5, 2026-11-25) ------------------------------
+# Every --in-worktree run reported cache hits 0: the cache lived in the temp worktree, deleted
+# at exit, and the key hashed MUTATION_REPO_ROOT / MUTATION_IN_WORKTREE_CHILD, which name that
+# per-run path. suite_record's second run would have re-measured all 159 mutants (~4.6 h).
+
+def test_an_in_worktree_child_writes_its_cache_in_the_callers_tree(tmp_path):
+    wt = _linked_wt_with_stub(tmp_path)
+    stub = (wt / "tools" / "mutation_check.py")
+    stub.write_text(_STUB.replace("'marker':", "'cache': os.environ.get('MUTATION_CACHE_DIR'),\n"
+                                               "    'marker':"), encoding="utf-8")
+    _git(wt, "commit", "-qam", "stub records the cache dir")
+    record = tmp_path / "record.json"
+    r = _run(["tools/plain.py", "--in-worktree", "--cache"], cwd=wt,
+             env_extra={"STUB_RECORD": str(record)})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert json.loads(record.read_text())["cache"] == str(wt.resolve() / ".mutation-cache")
+
+
+def test_a_cache_dir_the_caller_set_is_kept(tmp_path):
+    wt = _linked_wt_with_stub(tmp_path)
+    (wt / "tools" / "mutation_check.py").write_text(
+        _STUB.replace("'marker':", "'cache': os.environ.get('MUTATION_CACHE_DIR'),\n    'marker':"),
+        encoding="utf-8")
+    _git(wt, "commit", "-qam", "stub records the cache dir")
+    record, mine = tmp_path / "record.json", str(tmp_path / "my-cache")
+    r = _run(["tools/plain.py", "--in-worktree", "--cache"], cwd=wt,
+             env_extra={"STUB_RECORD": str(record), "MUTATION_CACHE_DIR": mine})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert json.loads(record.read_text())["cache"] == mine
+
+
+def test_the_env_fingerprint_does_not_see_which_temp_path_the_root_is(monkeypatch, tmp_path):
+    """Two runs of one tree in two temp worktrees: the variables naming the KEYED root hash
+    the same. Any other value of them still changes the fingerprint. The keyed root is the
+    argument, not this process's REPO_ROOT (test_mutation_check_speed seeds a fixture tree's
+    keys from this checkout)."""
+    prints = []
+    for name in ("one", "two"):
+        root = (tmp_path / name).resolve()
+        root.mkdir()
+        monkeypatch.setenv("MUTATION_REPO_ROOT", str(root))
+        # the marker carries the unresolved spelling run_in_worktree writes: on macOS the
+        # temp worktree is /var/folders/..., a symlink to the resolved /private/var root
+        spelled = str(root)
+        if spelled.startswith("/private/var/") and Path("/var").is_symlink():
+            spelled = spelled[len("/private"):]
+        monkeypatch.setenv(mc.IN_WORKTREE_CHILD_ENV, spelled)
+        prints.append(mc._env_fingerprint(root))
+    assert prints[0] == prints[1]
+    monkeypatch.setenv("MUTATION_REPO_ROOT", str(tmp_path / "elsewhere"))
+    assert mc._env_fingerprint(root) != prints[1]
+
+
+@pytest.mark.parametrize("flags, inherited", [([], None), (["--cache", "--no-cache"], None),
+                                              ([], "caller-set")])
+def test_without_the_cache_the_child_gets_no_cache_dir(tmp_path, flags, inherited):
+    """Grok 11-25 s5b F1 (org ruling: fix in code). With the cache off the variable does
+    nothing for the child, and it leaked into every nested test run, which made a test that
+    expects the default fail under an --in-worktree run (a false baseline_red)."""
+    wt = _linked_wt_with_stub(tmp_path)
+    (wt / "tools" / "mutation_check.py").write_text(
+        _STUB.replace("'marker':", "'cache': os.environ.get('MUTATION_CACHE_DIR'),\n    'marker':"),
+        encoding="utf-8")
+    _git(wt, "commit", "-qam", "stub records the cache dir")
+    record = tmp_path / "record.json"
+    extra = {"STUB_RECORD": str(record)}
+    if inherited:   # a caller that set it (Codex 11-25 d220eeef F1): it must not pass through
+        extra["MUTATION_CACHE_DIR"] = str(tmp_path / inherited)
+    r = _run(["tools/plain.py", "--in-worktree", *flags], cwd=wt, env_extra=extra)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert json.loads(record.read_text())["cache"] is None

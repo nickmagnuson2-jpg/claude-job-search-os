@@ -108,12 +108,18 @@ def load(repo_root: Path) -> dict:
     discovery find them again (Codex row 1359 P1, 2026-11-24). Callers: agent_discover
     refuses before the paid run; decide() refuses with the error and writes nothing."""
     p = queue_path(repo_root)
+    # lstat, not is_file/exists: those return False on a permission error too, so a queue
+    # under an untraversable parent read as empty (Codex 11-25 F1 on s5).
+    try:
+        st = p.lstat()
+    except FileNotFoundError:
+        return _empty()
+    except OSError as e:
+        raise ValueError(f"company queue at {p} cannot be read: {e}") from None
     if p.is_file():
         return _load_text(p.read_text(encoding="utf-8"))
-    if p.exists() or p.is_symlink():
-        raise ValueError(f"company queue at {p} is not a regular file "
-                         "(a directory or a broken symlink)")
-    return _empty()
+    raise ValueError(f"company queue at {p} is not a regular file "
+                     f"(a directory or a broken symlink; mode {st.st_mode:o})")
 
 
 def add(repo_root: Path, preset: str, entity: str, candidates: list[dict],

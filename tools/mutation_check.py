@@ -80,8 +80,14 @@ from pathlib import Path
 # Tests set it. Floored at 1: 0 would divide by zero after the first mutant (Codex
 # commit-3 round 2 F3).
 PROGRESS_EVERY = max(1, int(os.environ.get("MUTATION_PROGRESS_EVERY", "25")))
+# RESOLVED (S5, 2026-11-25): --in-worktree roots its tree in tempfile.mkdtemp(), which is
+# /var/folders/... on macOS, and /var is a symlink to /private/var. Unresolved, the root
+# kept the /var spelling while pytest's cwd resolved to /private/var, so every /var test
+# path sat outside pytest's rootdir and tests/conftest.py never loaded ("Unknown
+# pytest.mark.live_data"); the LIVE-DATA-ABSENT skip never fired and whole-file baselines
+# went red (S1, twice on 2026-11-25). One resolve here makes every cwd and path agree.
 REPO_ROOT = Path(os.environ.get("MUTATION_REPO_ROOT",
-                                str(Path(__file__).resolve().parent.parent)))
+                                str(Path(__file__).resolve().parent.parent))).resolve()
 ALLOW_FILE = REPO_ROOT / "tools" / "mutation-allow.json"
 
 # tests/conftest.py exits with this when a *.mutation_backup exists anywhere in the tree.
@@ -1445,7 +1451,12 @@ def cache_context(target: Path, original: str, test_files: list, root: Path) -> 
 
     NOT covered, and the reason the cache is opt-in (--cache) since 2026-11-05:
     gitignored trees, --timeout, environment variables _env_fingerprint drops, the
-    network, the clock."""
+    network, the clock. The checkout's absolute path: MUTATION_REPO_ROOT and
+    MUTATION_IN_WORKTREE_CHILD hash as "<root>" (so two --in-worktree runs of one HEAD share
+    keys), and the cwd is not hashed, so a test whose result depends on where the checkout
+    sits can have a verdict replayed from another path (Codex 11-25 s5b F1, parked). Nor the
+    HEAD commit itself: _repo_state keys on its tree, so two commits with one tree share
+    verdicts (F2, parked)."""
     def rel(p: Path) -> str:
         try:
             return p.resolve().relative_to(root.resolve()).as_posix()
@@ -1474,7 +1485,7 @@ def cache_context(target: Path, original: str, test_files: list, root: Path) -> 
         "version": CACHE_VERSION,
         "tool": _file_sha(SELF), "recorder": _file_sha(LINEMAP_MODULE),
         "python": sys.version,
-        "env": _env_fingerprint(),
+        "env": _env_fingerprint(root),
         "target": rel(target), "target_sha": _sha(original.encode("utf-8")),
         "tests": {rel(t): _file_sha(t) for t in tests},
         "support": support,
@@ -1495,8 +1506,17 @@ _VOLATILE_PREFIXES = ("CLAUDE", "ITERM", "TERM_", "SSH_", "XPC_", "__CF",
 # MUTATION_* and GIT_* are hashed (round 2 A.F4/C.F3/D.F4): a test can read them.
 
 
-def _env_fingerprint() -> str:
+# These name the run's own root, which --in-worktree makes fresh per run under a temp path.
+# They are hashed as "<root>" when they point at REPO_ROOT, so two runs of the same tree in
+# two temp worktrees share keys (S5, 2026-11-25); any other value is hashed as written.
+def _env_fingerprint(root: Path | None = None) -> str:
+    """`root` is the tree being keyed (cache_context's), never assumed to be this process's
+    REPO_ROOT: a caller can key a fixture tree from another checkout."""
     env = _test_env_base()
+    keyed = Path(root or REPO_ROOT).resolve()
+    for k in ("MUTATION_REPO_ROOT", IN_WORKTREE_CHILD_ENV):
+        if k in env and Path(env[k]).resolve() == keyed:
+            env[k] = "<root>"
     kept = sorted((k, v) for k, v in env.items()
                   if k not in _VOLATILE_ENV and not k.startswith(_VOLATILE_PREFIXES))
     return _sha(json.dumps(kept).encode("utf-8"))
@@ -2077,6 +2097,17 @@ IN_WORKTREE_FLAG = "--in-worktree"
 IN_WORKTREE_CHILD_ENV = "MUTATION_IN_WORKTREE_CHILD"
 
 
+def _under_root(arg: str) -> Path:
+    """A command-line path, absolute, with its DIRECTORY resolved the way REPO_ROOT is, so a
+    /var spelling of a /private/var tree still lies under the root and pytest gets paths
+    that agree with its cwd. The file name is kept as given: a symlinked file stays the
+    path the caller named."""
+    p = Path(arg)
+    if not p.is_absolute():
+        p = REPO_ROOT / p
+    return p.parent.resolve() / p.name
+
+
 def _is_worktree_child() -> bool:
     """True only in the child a worktree run started: the marker names this REPO_ROOT."""
     marker = os.environ.get(IN_WORKTREE_CHILD_ENV)
@@ -2157,6 +2188,17 @@ def run_in_worktree(argv: list[str], args) -> int:
         # MUTATION_REPO_ROOT is pinned to the new worktree: inherited, it would point the
         # child back at the caller's tree and mutate it in place after all.
         env = {**git_env, "MUTATION_REPO_ROOT": str(wt), IN_WORKTREE_CHILD_ENV: str(wt)}
+        # The --cache store stays in the CALLER'S tree (S5, 2026-11-25): in the temp
+        # worktree it was deleted at exit, so a second run of the same HEAD replayed
+        # nothing (hits 0 on every --in-worktree record that day). cache_dir() returns
+        # a caller's own MUTATION_CACHE_DIR when one is set, so that one is kept.
+        # ONLY with the cache on (Grok 11-25 s5b F1, org ruling): off, the variable does
+        # nothing for the child and leaks into every nested test run, where a test that
+        # expects the default then fails (a false baseline_red).
+        if args.cache and not args.no_cache:
+            env[CACHE_DIR_ENV] = str(cache_dir())
+        else:   # a caller-set one too: git_env copied os.environ (Codex 11-25 d220eeef F1)
+            env.pop(CACHE_DIR_ENV, None)
         return subprocess.run([sys.executable, str(wt / "tools" / "mutation_check.py")]
                               + child_argv, cwd=str(wt), env=env).returncode
     finally:
@@ -2264,9 +2306,7 @@ def main() -> int:
     if args.in_worktree and not _is_worktree_child():
         return run_in_worktree(sys.argv[1:], args)
 
-    target = Path(args.target)
-    if not target.is_absolute():
-        target = REPO_ROOT / target
+    target = _under_root(args.target)
     if not target.exists():
         print(json.dumps({"status": "error", "message": f"no such file: {target}"}))
         return 1
@@ -2339,7 +2379,7 @@ def main() -> int:
         return 1
 
     rel = str(target.relative_to(REPO_ROOT))
-    test_files = ([Path(t) for t in args.tests] if args.tests else map_tests(target))
+    test_files = ([_under_root(t) for t in args.tests] if args.tests else map_tests(target))
     if not test_files:
         print(json.dumps({"status": "error", "code": "no_tests",
                           "message": f"no test files map to {rel}; a file with no tests "
