@@ -190,6 +190,15 @@ def save_lines(path: Path, lines: list, original_content: str) -> None:
         sync_after_write(path)
 
 
+def commit_lines(path: Path, lines: list, original_content: str, dry_run: bool) -> None:
+    """The one save point for add / update / remove. A dry run returns here, after every
+    refusal its command makes, and before both the write and the companies.yaml sync, so a
+    preview can never say yes to a write the real command refuses (1478.F1, F2, F4)."""
+    if dry_run:
+        return
+    save_lines(path, lines, original_content)
+
+
 # ---------------------------------------------------------------------------
 # Outreach-log cross-update
 # ---------------------------------------------------------------------------
@@ -234,9 +243,8 @@ def cmd_add(args, networking_path: Path, dry_run: bool) -> None:
 
     # Load the file up front so the duplicate checks run in BOTH real and dry-run
     # mode — a --dry-run must report the SAME possible_duplicate / duplicate_warning
-    # the real run would, not a blind "Would add" (fable-audit Theme 2). On a
-    # missing/empty file there are no existing contacts, so dry-run still previews an
-    # add; only the real write requires the file to exist.
+    # the real run would, not a blind "Would add" (fable-audit Theme 2). A missing or
+    # empty file is refused in both modes too (1478.F4).
     content = read_file(networking_path)
     lines = [ln.rstrip("\n").rstrip("\r") for ln in content.splitlines(keepends=True)] if content else []
 
@@ -278,13 +286,6 @@ def cmd_add(args, networking_path: Path, dry_run: bool) -> None:
                 candidates=candidates,
             )
 
-    if dry_run:
-        row = fmt_contact_row(args.name, company, role, rel, today, "—", email)
-        out_ok("add", f"Would add contact: {args.name}",
-               dry_run=True,
-               would_mutate=[{"file": str(networking_path), "row": row}])
-        return
-
     if not content:
         out_error(f"File not found or empty: {networking_path}", "file_not_found")
 
@@ -318,8 +319,12 @@ def cmd_add(args, networking_path: Path, dry_run: bool) -> None:
         lines.insert(insert_at + 1, stub_heading)
         lines.insert(insert_at + 2, "")
 
-    save_lines(networking_path, lines, content)
-
+    commit_lines(networking_path, lines, content, dry_run)
+    if dry_run:
+        out_ok("add", f"Would add contact: {args.name}",
+               dry_run=True,
+               would_mutate=[{"file": str(networking_path), "row": row}])
+        return
     out_ok("add", f"Added contact: {args.name}",
            name=args.name, company=company)
 
@@ -668,13 +673,6 @@ def cmd_update(args, networking_path: Path, dry_run: bool) -> None:
     if args.email is not None and args.email.strip() and "@" not in args.email:
         out_error(f"invalid email {args.email!r}: must contain '@'", "invalid_email")
 
-    if dry_run:
-        out_ok("update", f"Would update contact: {args.name}",
-               dry_run=True, name=args.name,
-               fields={n: v for _, (n, v) in given.items()},
-               would_mutate=[{"file": str(networking_path)}])
-        return
-
     content, lines = load_lines(networking_path)
 
     contacts_start, contacts_end = find_section(lines, r"^##\s+Contacts")
@@ -712,18 +710,18 @@ def cmd_update(args, networking_path: Path, dry_run: bool) -> None:
                                 if new_company and new_company != "\u2014"
                                 else f"### {args.name}")
 
-    save_lines(networking_path, lines, content)
+    commit_lines(networking_path, lines, content, dry_run)
+    if dry_run:
+        out_ok("update", f"Would update contact: {args.name}",
+               dry_run=True, name=args.name,
+               fields={n: v for _, (n, v) in given.items()},
+               would_mutate=[{"file": str(networking_path)}])
+        return
     out_ok("update", f"Updated contact: {args.name}", name=args.name,
            fields={n: v for _, (n, v) in given.items()})
 
 
 def cmd_remove(args, networking_path: Path, dry_run: bool) -> None:
-    if dry_run:
-        out_ok("remove", f"Would archive contact: {args.name}",
-               dry_run=True,
-               would_mutate=[{"file": str(networking_path)}])
-        return
-
     content, lines = load_lines(networking_path)
 
     # Remove from Contacts table
@@ -746,8 +744,12 @@ def cmd_remove(args, networking_path: Path, dry_run: bool) -> None:
     if log_sec_start != -1:
         lines[log_sec_start] = lines[log_sec_start].replace("### ", "### [ARCHIVED] ", 1)
 
-    save_lines(networking_path, lines, content)
-
+    commit_lines(networking_path, lines, content, dry_run)
+    if dry_run:
+        out_ok("remove", f"Would archive contact: {args.name}",
+               dry_run=True,
+               would_mutate=[{"file": str(networking_path)}])
+        return
     out_ok("remove", f"Archived contact: {args.name}", name=args.name)
 
 

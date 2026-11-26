@@ -158,6 +158,15 @@ def resolve_person(people_dir: Path, ref: str) -> tuple:
 # Commands
 # ---------------------------------------------------------------------------
 
+def commit(path: Path, content: str, dry_run: bool) -> None:
+    """The one save point for create and add-entry. A dry run returns here, after every
+    refusal its command makes, so a preview can never say yes to a write the real command
+    refuses (1478.F3: add-entry previewed success for a dossier missing its section)."""
+    if dry_run:
+        return
+    write_atomic(path, content)
+
+
 def cmd_create(args, people_dir: Path, dry_run: bool) -> None:
     slug = args.slug if args.slug else slugify(args.name)
     if not slug:
@@ -181,12 +190,11 @@ def cmd_create(args, people_dir: Path, dry_run: bool) -> None:
         .replace("{PROFILE}", args.profile or "—")
     )
 
+    commit(path, content, dry_run)
     if dry_run:
         out_ok("create", f"Would create: {path}",
                dry_run=True, slug=slug, path=str(path))
         return
-
-    write_atomic(path, content)
     out_ok("create", f"Created dossier: {path}", slug=slug, path=str(path))
 
 
@@ -208,11 +216,6 @@ def cmd_add_entry(args, people_dir: Path, dry_run: bool) -> None:
 
     today = args.date if args.date else date.today().strftime("%Y-%m-%d")
     bullet = f"- {today} — {args.text}"
-
-    if dry_run:
-        out_ok("add-entry", f"Would append to {args.section}: {bullet}",
-               dry_run=True, path=str(path), section=args.section)
-        return
 
     content = read_file(path)
     lines = content.splitlines()
@@ -249,8 +252,11 @@ def cmd_add_entry(args, people_dir: Path, dry_run: bool) -> None:
     new_content = "\n".join(lines)
     if content.endswith("\n"):
         new_content += "\n"
-    write_atomic(path, new_content)
-
+    commit(path, new_content, dry_run)
+    if dry_run:
+        out_ok("add-entry", f"Would append to {args.section}: {bullet}",
+               dry_run=True, path=str(path), section=args.section)
+        return
     out_ok("add-entry", f"Appended to {args.section}: {bullet}",
            path=str(path), section=args.section, entry=bullet)
 

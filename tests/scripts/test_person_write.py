@@ -314,3 +314,42 @@ def test_the_module_imports_without_running_main():
         r = sp.run([sys.executable, "-c", code], capture_output=True, text=True,
                    cwd=str(TOOLS_DIR.parent), env={**os.environ, "PYTHONIOENCODING": "utf-8"})
         assert r.returncode == 0 and r.stdout == "", (code, r.stdout, r.stderr)
+
+
+def test_add_entry_dry_run_refuses_a_dossier_missing_the_sections_heading(tmp_path):
+    """1478.F3: the dry run returned "Would append" before the missing_section refusal
+    the real add-entry makes (test above), so a preview said yes to a refused write."""
+    run_pw("create", "Sam Carter", repo_root=tmp_path)
+    p = people_dir(tmp_path) / "sam-carter.md"
+    p.write_text(p.read_text(encoding="utf-8").replace("## What I Owe", "## Owed (renamed)"),
+                 encoding="utf-8")
+    before = p.read_text(encoding="utf-8")
+    res, rc = run_pw("add-entry", "sam-carter", "--section", "owed", "--text", "x",
+                     repo_root=tmp_path, dry_run=True)
+    assert rc == 1 and res["code"] == "missing_section", res
+    assert p.read_text(encoding="utf-8") == before
+
+
+def test_add_entry_dry_run_previews_the_bullet_and_writes_nothing(tmp_path):
+    run_pw("create", "Sam Carter", repo_root=tmp_path)
+    p = people_dir(tmp_path) / "sam-carter.md"
+    before = p.read_text(encoding="utf-8")
+    res, rc = run_pw("add-entry", "sam-carter", "--section", "owed", "--text", "lunch",
+                     "--date", "2026-11-26", repo_root=tmp_path, dry_run=True)
+    assert rc == 0 and res["dry_run"] is True and res["section"] == "owed", res
+    assert res["summary"] == "Would append to owed: - 2026-11-26 — lunch"
+    assert p.read_text(encoding="utf-8") == before
+
+
+@pytest.mark.parametrize("rename", [False, True], ids=["accepted", "missing-section"])
+def test_add_entry_dry_run_and_real_give_the_same_verdict(tmp_path, rename):
+    """Parity: the dry run's exit code and error code match the real add-entry's."""
+    run_pw("create", "Sam Carter", repo_root=tmp_path)
+    p = people_dir(tmp_path) / "sam-carter.md"
+    if rename:
+        p.write_text(p.read_text(encoding="utf-8").replace("## What I Owe", "## Owed"),
+                     encoding="utf-8")
+    argv = ("add-entry", "sam-carter", "--section", "owed", "--text", "x")
+    dry, drc = run_pw(*argv, repo_root=tmp_path, dry_run=True)
+    real, rrc = run_pw(*argv, repo_root=tmp_path)
+    assert (drc, dry.get("code")) == (rrc, real.get("code")), (dry, real)
