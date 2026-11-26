@@ -99,6 +99,7 @@ ALLOW_FILE = REPO_ROOT / "tools" / "mutation-allow.json"
 # helper, mutation_sweep, an ad-hoc loader) does not, and a bare import made this
 # module unimportable outside a pytest run that had already inserted tools/.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import vault_paths  # noqa: E402
 from conftest_guard import (  # noqa: E402
     CONFTEST_REFUSAL, backup_dir, backup_path, prune_orphans,
 )
@@ -650,26 +651,11 @@ def _kill_process_group(proc: subprocess.Popen) -> None:
 
 
 def _main_checkout(root: Path) -> Path | None:
-    """The main checkout's root when `root` is a linked git worktree, else None. A linked
-    worktree has a `.git` FILE naming `gitdir: <main>/.git/worktrees/<name>`."""
-    dotgit = root / ".git"
-    if not dotgit.is_file():
-        return None
-    try:
-        line = dotgit.read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
-    if not line.startswith("gitdir:"):
-        return None
-    gitdir = Path(line.split(":", 1)[1].strip())
-    gitdir = gitdir if gitdir.is_absolute() else (root / gitdir)
-    # <main>/.git/worktrees/<name> -> <main>
-    parts = gitdir.resolve().parts
-    if "worktrees" in parts:
-        i = len(parts) - 1 - parts[::-1].index("worktrees")
-        if i >= 1 and parts[i - 1] == ".git":
-            return Path(*parts[:i - 1])
-    return None
+    """The main checkout's root when `root` is a linked git worktree, else None.
+    vault_paths.main_checkout is the one locator (11-26 S4); it returns `root` itself when
+    `root` is not a linked worktree or cannot be placed, which reads here as None."""
+    main = Path(vault_paths.main_checkout(root))
+    return main.resolve() if main != Path(root) else None
 
 
 def _test_env_base(environ=None, root: Path | None = None) -> dict:

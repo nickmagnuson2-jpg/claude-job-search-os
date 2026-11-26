@@ -312,11 +312,11 @@ def test_an_unreadable_main_ledger_fails_closed_from_a_worktree(main_and_worktre
 
 
 def test_an_unplaceable_main_fails_closed_from_a_worktree(main_and_worktree, monkeypatch):
-    import cross_model_gate as gate
+    import codex_verify as cv        # has_clean_record places main as the writer does (11-26 S4)
     main, wt = main_and_worktree
 
     def boom(root):
-        raise RuntimeError("git did not name a .git common dir")
-    monkeypatch.setattr(gate, "main_checkout_of", boom)
+        raise RuntimeError("cannot find the main checkout")
+    monkeypatch.setattr(cv, "_main_checkout", boom)
     with pytest.raises(rec.LedgerError):
         rec.has_clean_record(wt, _git(wt, "rev-parse", "HEAD^{tree}"))

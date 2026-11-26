@@ -56,6 +56,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from tools import cross_model_gate as gate  # noqa: E402
+import vault_paths  # noqa: E402  (tools/ is on sys.path via cross_model_gate)
 
 # Probes run HERE and pasted in as facts, so the model never needs to ask. Each one is a
 # question a sandboxed model has already answered wrongly, or would.
@@ -828,15 +829,9 @@ def _is_linked_worktree(root: Path) -> bool:
 def _real_ledger_roots() -> set[Path]:
     """This checkout and, when it is a linked worktree, its main checkout: the two real
     ledgers a test must never write. Read from the .git file, so no git call is needed."""
-    roots = {REPO_ROOT.resolve()}
-    git = REPO_ROOT / ".git"
-    if git.is_file():
-        text = git.read_text(encoding="utf-8")
-        if "gitdir:" in text:
-            gitdir = Path(text.split("gitdir:", 1)[1].strip()).resolve()
-            if gitdir.parent.name == "worktrees":     # <main>/.git/worktrees/<name>
-                roots.add(gitdir.parents[2])
-    return roots
+    # vault_paths.main_checkout is the one locator (11-26 S4); it returns REPO_ROOT itself
+    # when this is not a linked worktree, which the set absorbs.
+    return {REPO_ROOT.resolve(), Path(vault_paths.main_checkout(REPO_ROOT)).resolve()}
 
 
 # The fields of a finding that no disposition changes. A review row's identity is its

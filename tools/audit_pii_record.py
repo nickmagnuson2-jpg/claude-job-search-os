@@ -112,13 +112,12 @@ def has_clean_record(root: Path, tree: str) -> bool:
     copy would hold main's rows. FAILS CLOSED: a main checkout that cannot be placed, or a
     main ledger that cannot be read, raises LedgerError; a missing main ledger holds no
     record, so it grants nothing."""
-    import cross_model_gate as gate
     rows = read_rows(root)
     try:
-        main = gate.main_checkout_of(root)
-    except (RuntimeError, OSError) as e:
+        main = resolve_main(root)         # the same resolver the writer uses (11-26 S4)
+    except (MainUnresolved, OSError) as e:
         raise LedgerError(f"the main checkout's {LEDGER} could not be located ({e})") from None
-    if main is not None:
+    if main.resolve() != Path(root).resolve():
         rows = rows + read_rows(main)
     return any(r.get("kind") == "audit" and r.get("verdict") == "clean" and r.get("tree") == tree
                for r in rows)

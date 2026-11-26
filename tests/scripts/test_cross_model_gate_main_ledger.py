@@ -119,13 +119,13 @@ def test_outside_a_linked_worktree_nothing_changes(tmp_path):
 
 
 
-def test_git_naming_no_common_dir_raises(repos, monkeypatch):
-    """Kills the IF_FALSE survivor on the common-dir check (S2d mutation)."""
+def test_a_linked_worktree_that_cannot_be_placed_raises(repos, tmp_path):
+    """Fails closed: vault_paths.main_checkout falls back to the worktree itself when its
+    .git file names no main checkout, and the wrapper must raise rather than return it
+    (that fallback would read the worktree's own ledger as main's). 11-26 S4."""
     main, wt = repos
-
-    class R:
-        returncode, stdout, stderr = 1, "", "fatal: not a git repository"
-    monkeypatch.setattr(g.subprocess, "run", lambda *a, **k: R())
+    (wt / ".git").write_text(f"gitdir: {tmp_path / 'nowhere' / '.git' / 'worktrees' / 'w'}\n",
+                             encoding="utf-8")
     with pytest.raises(RuntimeError):
         g.main_checkout_of(wt)
 

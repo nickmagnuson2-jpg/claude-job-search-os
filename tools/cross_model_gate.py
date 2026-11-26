@@ -47,6 +47,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import inbox_lock  # noqa: E402
+import vault_paths  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LEDGER_NAME = ".cross-model-ledger.jsonl"
@@ -393,21 +394,20 @@ def read_ledger_with_health(repo_root: Path) -> tuple[list[dict], int]:
 
 
 def main_checkout_of(repo_root: Path) -> Path | None:
-    """The main checkout when repo_root is a linked worktree, found from git's common dir
-    (never a hard-coded path); None when repo_root is not a linked worktree. Raises
-    RuntimeError when a linked worktree's main checkout cannot be placed. The one locator
-    both ledger readers use: read_gate_ledger here and audit_pii_record.has_clean_record."""
+    """The main checkout when repo_root is a linked worktree; None when it is not one.
+    Raises RuntimeError when a linked worktree's main checkout cannot be placed.
+
+    A fail-closed wrapper over vault_paths.main_checkout, the one locator (11-26 S4): that
+    function falls back to `root` on any failure, which suits a hook, but here a fallback
+    would read this worktree's own ledger as main's and let a push through, so a linked
+    worktree it cannot place raises instead. Used by read_gate_ledger and the preview."""
     root = Path(repo_root).resolve()
     if not (root / ".git").is_file():
         return None
-    r = subprocess.run(["git", "-C", str(root), "rev-parse", "--path-format=absolute",
-                        "--git-common-dir"], capture_output=True, text=True, timeout=10)
-    common = Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
-    if common is None or common.name != ".git" or not common.is_dir():
-        raise RuntimeError(f"git did not name a .git common dir for {root}")
-    # No `main == root` check: root's .git is a file (tested above), so a common dir that
-    # is root/.git fails the is_dir() test first (S2d mutation survivor, deleted).
-    return common.parent.resolve()
+    main = Path(vault_paths.main_checkout(root)).resolve()
+    if main == root:
+        raise RuntimeError(f"cannot place the main checkout of linked worktree {root}")
+    return main
 
 
 def _row_key(row: dict) -> tuple:
