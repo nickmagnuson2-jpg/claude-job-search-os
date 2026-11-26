@@ -2204,3 +2204,34 @@ def test_suite_supports_wait_asks_the_parser_not_the_text(tmp_path):
     assert lb.suite_supports_wait(comment) is False
     assert lb.suite_supports_wait(broken) is False
     assert lb.suite_supports_wait(tmp_path / "missing.py") is False
+
+
+# ---- 11-26 S4: tests that kill the 6 changed-lines mutation survivors at 315bfb53 -------
+
+@pytest.mark.parametrize("command", ["", "   "])
+def test_an_empty_command_line_is_not_busy(command):
+    """Survivors :718 (guard skipped -> IndexError) and :719 (None for False)."""
+    assert lb._is_busy_command(command) is False
+
+
+def test_ssh_is_busy_only_when_it_goes_to_github():
+    """Survivor :722 (the ssh host comparison negated)."""
+    assert lb._is_busy_command("/usr/bin/ssh git@github.com git-receive-pack 'x.git'") is True
+    assert lb._is_busy_command("ssh -T git@github.com:owner/x.git") is True
+    assert lb._is_busy_command("ssh user@build.example.com uptime") is False
+
+
+@pytest.mark.parametrize("command", ["xargs push origin", "/usr/bin/make fetch",
+                                     "python3 pull"])
+def test_a_program_other_than_git_is_not_busy_even_with_push_as_its_next_word(command):
+    """Survivors :723 (the non-git return skipped) and :724 (None for False)."""
+    assert lb._is_busy_command(command) is False
+
+
+def test_a_missing_suite_tool_is_unsupported_without_running_anything(tmp_path, monkeypatch):
+    """Survivor :92: with the missing-file return skipped, the subprocess failed on the
+    missing file and still read as unsupported. Nothing may run for a missing tool."""
+    def ran(*a, **k):
+        raise AssertionError(f"ran a subprocess for a missing tool: {a}")
+    monkeypatch.setattr(lb.subprocess, "run", ran)
+    assert lb.suite_supports_wait(tmp_path / "missing.py") is False
