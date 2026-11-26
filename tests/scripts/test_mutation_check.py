@@ -1422,6 +1422,33 @@ def test_a_run_leaves_the_process_signal_handlers_as_it_found_them(tmp_path, mon
     assert {s: signal.getsignal(s) for s in held} == before
 
 
+def test_a_second_run_puts_back_the_handlers_in_place_before_it_not_before_the_first(
+        tmp_path, monkeypatch, capsys):
+    """Hand mutation of 7ee9418f (S4, 11-26): with _PREV_HANDLERS never cleared, a second
+    run kept the first run's entries and put back the handler from before run 1, not the
+    one a caller installed between the runs."""
+    import signal
+    held = [s for s in mc._HELD_SIGNALS]
+    before = {s: signal.getsignal(s) for s in held}
+
+    def mine(_signum, _frame):
+        pass
+
+    try:
+        (tmp_path / "a").mkdir()
+        tool = _tiny_repo(tmp_path / "a")
+        _run_in_process_where_mutants_stall(tool, tmp_path / "a", monkeypatch, capsys)
+        for s in held:
+            signal.signal(s, mine)
+        (tmp_path / "b").mkdir()
+        tool = _tiny_repo(tmp_path / "b")
+        _run_in_process_where_mutants_stall(tool, tmp_path / "b", monkeypatch, capsys)
+        assert {s: signal.getsignal(s) for s in held} == {s: mine for s in held}
+    finally:
+        for s, h in before.items():
+            signal.signal(s, signal.SIG_DFL if h is None else h)
+
+
 def test_timeouts_without_survivors_are_not_a_clean_status(tmp_path, monkeypatch, capsys):
     """`ok` says every mutant got a verdict."""
     tool = _tiny_repo(tmp_path)
