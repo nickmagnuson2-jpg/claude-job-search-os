@@ -1004,9 +1004,19 @@ def open_p0_against(repo_root: Path, required: set) -> list[dict]:
     except (RuntimeError, OSError, subprocess.SubprocessError):
         main = None
     if main is not None and ledger_path(main).is_file():
-        own = {(r.get("report"), r.get("recorded")) for r in read_ledger(repo_root)}
+        # A run's identity is _row_key, model included (Codex 11-26 F1: keyed on report and
+        # recorded alone, a worktree Codex row hid main's Grok P0 that shared both). collect()
+        # numbers findings by ledger line, so main's rows are read with the same numbering;
+        # a line that does not parse keys as no run, and its P0s stay counted.
+        main_rows = {}
+        for i, line in enumerate(finding_write.read_lines(ledger_path(main)), start=1):
+            try:
+                main_rows[i] = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+        own = {_row_key(r) for r in read_ledger(repo_root)}
         found += [f for f in finding_write.collect(main, severity="P0")
-                  if (f["report"], f["recorded"]) not in own]
+                  if _row_key(main_rows.get(f["run"], {})) not in own]
     return [f for f in found if required & set(f["paths"]) and blocks_push(f)]
 
 

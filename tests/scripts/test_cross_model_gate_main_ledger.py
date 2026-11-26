@@ -100,6 +100,33 @@ def test_the_worktree_copy_wins_over_main_on_the_same_run(repos):
     assert g.check(wt, CHANGE, since=0).blocked is False
 
 
+def test_another_models_p0_in_main_with_the_same_report_and_second_still_blocks(repos):
+    """Codex 11-26 F1 (P0): open_p0_against treated (report, recorded) as a run's
+    identity, so a worktree Codex row suppressed main's Grok P0 that shared both. The
+    run identity is the gate's own _row_key, which includes the model."""
+    main, wt = repos
+    shared = {"report": "output/analysis/shared.md"}
+    _row(wt, **shared)                                                       # codex, covers
+    _row(main, report="output/analysis/unrelated.md", paths=["docs/x.md"])
+    _row(main, **shared, model="grok", findings=_open_p0())                  # same report+second
+    assert len(g.open_p0_against(wt, {PATH})) == 1
+    assert g.check(wt, CHANGE, since=0).blocked is True
+
+
+def test_a_malformed_main_line_does_not_unmatch_the_runs_after_it(repos):
+    """Main's rows are numbered as collect() numbers them; a line that does not parse is
+    skipped, and the stale mirror after it is still recognised as this worktree's run."""
+    main, wt = repos
+    fixed = _open_p0()
+    fixed[0]["disposition"] = "fixed"
+    _row(wt, findings=fixed)
+    p = g.ledger_path(main)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("{not json\n", encoding="utf-8")
+    _row(main, findings=_open_p0(), worktree=str(wt))           # stale mirror, line 2
+    assert g.open_p0_against(wt, {PATH}) == []
+
+
 def test_main_ledger_missing_fails_closed_with_a_reason(repos):
     main, wt = repos
     _row(wt)
