@@ -12,6 +12,14 @@ BLOCKS (exit 2) a cross-session message that
       shapes of feedback_run_date_dont_infer_local_time's fires (added 2026-11-25, S1).
       Times come from running `date` (feedback_log_timestamps_from_date_not_estimates).
 
+HOLD (S3, 2026-11-26): during an org HOLD stage 2 no data/ write is allowed, so "log first"
+cannot happen and (a) refused every numbered check-in (5 fires in 5 close-outs; sections sent
+a plain-form status instead, which hides the gap). "(3) unlogged: held ..." is accepted ONLY
+while a HOLD is on record: the newest ORG heading in data/workstreams/orchestration.md (main
+checkout) whose title names HOLD does not also say lifted, eased, released or ended, and is
+under 2 hours old by its own heading time. Order is line order in the file. The org writes
+that heading before it freezes writes; without it the held form is refused like any other.
+
 WHY (measured 2026-11-23, output/overnight-112226/S1-staging/sendmessage-hook/PLAN.md):
   received corpus (726 messages): 6 check-ins with an unlogged value, all true; each cost an
   org correction round trip. Sent corpus (1,432 SendMessage calls since 2026-11-21): 67 carry
@@ -34,9 +42,12 @@ from __future__ import annotations
 import os
 import re
 import sys
+from datetime import datetime, timedelta
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hook_runtime import read_payload  # noqa: E402
+from vault_paths import main_checkout  # noqa: E402
 
 NAME = "check_sendmessage_checkin"
 
@@ -47,6 +58,12 @@ _BTICK = re.compile(r"`[^`\n]*`")
 
 _UNLOGGED = re.compile(r"\(3\)\s*unlogged\s*:\s*(.*?)(?=\s*\(4\)|\n|$)", re.I)
 _NONE = re.compile(r"^[\s*_-]*(none|nothing)\b", re.I)
+_HELD = re.compile(r"^[\s*_-]*held\b", re.I)
+_ORG_HEAD = re.compile(r"^## (\d{4}-\d{2}-\d{2} \d{2}:\d{2}) by `date` \| ORG [^:\n]*:(.*)$", re.M)
+_HOLD_WORD = re.compile(r"\bHOLD\b")
+_HOLD_END = re.compile(r"\b(?:lifted|eased|released|ended)\b", re.I)
+HOLD_MAX_AGE = timedelta(hours=2)
+HOLD_LOG = Path("data") / "workstreams" / "orchestration.md"
 _GUESS = re.compile(r"(?<![\w:])\d{1,2}:(?:\d[xX]|[xX]{1,2})(?!\w)")
 _APPROX = re.compile(r"(?:~\s?|\babout\s+)\d{1,2}:\d{2}\b", re.I)
 _DATE_LABEL = re.compile(r"\bby\s+`?date`?", re.I)
@@ -69,16 +86,44 @@ def _strip_quotes(text: str, backticks: bool = True) -> str:
     return _BTICK.sub(" ", text) if backticks else text
 
 
-def _unlogged(text: str) -> bool:
+def _unlogged_values(text: str) -> list:
+    """The value of every "(3) unlogged:" check-in field that is not none/nothing."""
     plain = _strip_quotes(text)
+    out = []
     for m in _UNLOGGED.finditer(plain):
         line_start = plain.rfind("\n", 0, m.start()) + 1
         prefix = plain[line_start:m.start()]
         if prefix.strip(" \t-*>") and "(2)" not in prefix:
             continue                       # a mid-sentence mention, not a check-in field
         if not _NONE.match(m.group(1)):
-            return True
-    return False
+            out.append(m.group(1))
+    return out
+
+
+def _unlogged(text: str) -> bool:
+    return bool(_unlogged_values(text))
+
+
+def hold_on_record(log_text: str, now: datetime) -> bool:
+    """Is an org HOLD open on the record? The newest ORG heading naming HOLD decides: an
+    end word closes it; otherwise it opens it, for HOLD_MAX_AGE from its heading time."""
+    start = None
+    for m in _ORG_HEAD.finditer(log_text):
+        title = m.group(2)
+        if not _HOLD_WORD.search(title):
+            continue
+        start = None if _HOLD_END.search(title) else datetime.strptime(m.group(1), "%Y-%m-%d %H:%M")
+    return start is not None and timedelta(0) <= now - start < HOLD_MAX_AGE
+
+
+def _hold_now() -> bool:
+    """Read the main checkout's orchestration log. Unreadable means no HOLD on record."""
+    root = main_checkout(Path(__file__).resolve().parents[1])
+    try:
+        text = (root / HOLD_LOG).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return hold_on_record(text, datetime.now())
 
 
 def _guessed_time(text: str) -> bool:
@@ -91,9 +136,12 @@ def _guessed_time(text: str) -> bool:
     return False
 
 
-def judge(text: str) -> str | None:
-    """'unlogged', 'guessed_time', or None."""
-    if _unlogged(text):
+def judge(text: str, hold=None) -> str | None:
+    """'unlogged', 'guessed_time', or None. `hold` is a zero-argument callable saying
+    whether an org HOLD is on record (default: read the orchestration log); it is called
+    only for a held-form check-in."""
+    values = _unlogged_values(text)
+    if values and not (all(_HELD.match(v) for v in values) and (hold or _hold_now)()):
         return "unlogged"
     if _guessed_time(text):
         return "guessed_time"
@@ -102,7 +150,8 @@ def judge(text: str) -> str | None:
 
 FIX = {
     "unlogged": "(3) unlogged is not none. Log first (append the entry, time from `date`), "
-                "then send with (3) unlogged: none.",
+                "then send with (3) unlogged: none. During an org HOLD on record in "
+                "orchestration.md, write (3) unlogged: held.",
     "guessed_time": "a guessed time (HH:Mx, HH:MMish, \"it's about/~ HH:MM\", or ~/about HH:MM "
                     "beside 'by date'). Run `date` and paste its HH:MM; to mention a guessed "
                     "time, quote it.",
