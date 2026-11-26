@@ -1410,6 +1410,18 @@ def test_a_mutant_whose_tests_time_out_is_not_scored_as_killed(tmp_path, monkeyp
     assert d["timeout"] == 3, "the limit that was hit is not on the record"
 
 
+def test_a_run_leaves_the_process_signal_handlers_as_it_found_them(tmp_path, monkeypatch,
+                                                                    capsys):
+    """S5, 11-26: after an in-process run, _on_signal stayed the SIGINT handler, so a later
+    test's KeyboardInterrupt became SystemExit(130). The run restores what it replaced."""
+    import signal
+    held = [s for s in mc._HELD_SIGNALS]
+    before = {s: signal.getsignal(s) for s in held}
+    tool = _tiny_repo(tmp_path)
+    _run_in_process_where_mutants_stall(tool, tmp_path, monkeypatch, capsys)
+    assert {s: signal.getsignal(s) for s in held} == before
+
+
 def test_timeouts_without_survivors_are_not_a_clean_status(tmp_path, monkeypatch, capsys):
     """`ok` says every mutant got a verdict."""
     tool = _tiny_repo(tmp_path)

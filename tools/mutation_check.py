@@ -2028,9 +2028,25 @@ def _restore_in_flight() -> dict | None:
         outcome = _restore(target, original)
         _IN_FLIGHT = None
         _RESTORE_OUTCOME = outcome
+        _disarm_signals()
         if outcome["state"] != RESTORED:
             _shout(_failure_report(outcome))
     return outcome
+
+
+# The handlers arm_restore replaced, put back once the restore has run (S5, 11-26: an
+# in-process run left _on_signal as SIGINT's handler, so a later KeyboardInterrupt in
+# the same process became SystemExit(130)).
+_PREV_HANDLERS: dict = {}
+
+
+def _disarm_signals() -> None:
+    for sig, prev in list(_PREV_HANDLERS.items()):
+        try:
+            signal.signal(sig, signal.SIG_DFL if prev is None else prev)
+        except (ValueError, OSError):
+            pass
+    _PREV_HANDLERS.clear()
 
 
 def _on_signal(signum, _frame):
@@ -2072,9 +2088,11 @@ def arm_restore(target: Path, original: str, head_matched: bool | None = None) -
     atexit.register(_restore_in_flight)
     for sig in _HELD_SIGNALS:
         try:
-            signal.signal(sig, _on_signal)
+            prev = signal.signal(sig, _on_signal)
         except (ValueError, OSError):
-            pass          # not on the main thread, or unsupported on this platform
+            continue      # not on the main thread, or unsupported on this platform
+        if prev is not _on_signal:
+            _PREV_HANDLERS.setdefault(sig, prev)
 
 
 def load_allowlist() -> dict:
