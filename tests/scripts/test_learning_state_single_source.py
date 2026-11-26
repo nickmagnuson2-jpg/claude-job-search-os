@@ -239,7 +239,7 @@ def test_detector_finds_todays_known_sites():
     cutover commit together with the sites."""
     found = tree_findings()
     expected = {
-        "tools/scan_promotion_candidates.py": {"frontmatter_split", "gate_grammar", "promoted_predicate"},
+        "tools/scan_promotion_candidates.py": {"frontmatter_split", "promoted_predicate"},
         "tools/promotion_schema.py": {"frontmatter_split", "gate_grammar", "promoted_vocab",
                                       "exit_paths", "promoted_predicate"},
         "tools/detector_run.py": {"frontmatter_split"},
