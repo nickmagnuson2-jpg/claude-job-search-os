@@ -739,19 +739,34 @@ def test_an_open_p0_on_a_pushed_path_refuses(sr, repo, tmp_parent, capsys):
     assert _ledger_rows(repo) == []
 
 
-def test_a_verified_merge_chain_tip_is_skipped_for_land_branch(sr, repo, tmp_parent, capsys):
-    """land_branch --merge-push judges the chain itself (with backfilled rows held in
-    memory during --dry-run), then runs the suite on the chain tip. Judging it again here
-    would refuse every dry run, so a tip that IS a verified chain is skipped, computed,
-    never by an option."""
+def _chain(repo):
     mc = _gate_mod("merge_chain")
     base = _git(repo, "rev-parse", "main").stdout.strip()
     t1 = _branch(repo, "one", {"tools/x.py": _BIG, "tests/test_x.py": PASSING})
     m1 = mc.build(repo, base, t1, "one")
     _git(repo, "branch", "chain", m1)
+    return t1, m1
+
+
+def test_an_unreviewed_merge_chain_tip_is_refused_not_skipped(sr, repo, tmp_parent, capsys):
+    """Codex 2026-11-26 F1 (P0): a skip on chain shape let a hand-built chain run with no
+    review. A verified chain is judged as the chain land_branch pushes."""
+    t1, _m1 = _chain(repo)
+    code, out = _run(sr, repo, capsys, "chain", "--base", "main")
+    assert code == 1, out
+    assert out["code"] == "gate_would_refuse"
+    assert "tools/x.py" in out["message"] and t1[:8] in out["message"]
+    assert _ledger_rows(repo) == []
+
+
+def test_a_merge_chain_reviewed_at_its_branch_tip_runs(sr, repo, tmp_parent, capsys):
+    """land_branch --merge-push --suite runs the suite on its chain tip; rows keyed to
+    each branch tip's tree clear it, as they clear the push."""
+    t1, _m1 = _chain(repo)
+    _review(repo, _tree(repo, t1), ["tools/x.py"])
     code, out = _run(sr, repo, capsys, "chain", "--base", "main")
     assert code == 0, out
-    assert out["gate"].startswith("skipped: tip is a verified merge chain")
+    assert out["gate"].startswith("cleared")
 
 
 def test_a_branch_that_merged_main_into_itself_is_still_judged(sr, repo, tmp_parent, capsys):

@@ -432,9 +432,6 @@ def cmd_status(root: Path) -> int:
     return _out({"status": "free"}, 0)
 
 
-GATE_CHAIN_SKIP = "skipped: tip is a verified merge chain; land_branch judges it"
-
-
 def gate_verdict(main: Path, base_sha: str, tip_sha: str,
                  merged_commit: str) -> tuple[str | None, str]:
     """Would the push gate refuse this branch? (None, note) when it would not, else
@@ -446,10 +443,15 @@ def gate_verdict(main: Path, base_sha: str, tip_sha: str,
     paths changed against base need rows keyed to the branch tip's tree, plus the open-P0
     check. No gate logic is copied here.
 
-    One case is skipped, and only when computed: a tip that already IS a verified merge
-    chain (land_branch --merge-push --suite) was judged by land_branch's preview_gate,
-    with backfilled rows that exist only in memory during --dry-run. There is no option
-    to turn this check off (org ruling, 2026-11-26).
+    A tip that already IS a verified merge chain (land_branch --merge-push --suite runs
+    the suite on its chain tip) is judged as that chain, check_chain(main, base, tip),
+    the push land_branch will make: merging it into base again would put the chain tip's
+    merge tree where a branch tip belongs, which no review row is keyed to. It is never
+    skipped: Codex 2026-11-26 F1 (P0) showed a skip on chain shape let any hand-built
+    chain run unjudged, since walk() proves topology, not that preview_gate ran. Limit:
+    during land_branch --dry-run, review rows not yet copied to main's ledger (its
+    backfill, normally empty because codex_verify mirrors) are not seen here, so such a
+    dry run refuses; fail closed. There is no option to turn this check off.
 
     Fails closed: a gate that cannot answer refuses, as the push gate does.
     """
@@ -477,20 +479,21 @@ def _no_git_env():
 
 def _gate_verdict(cross_model_gate, merge_chain, main: Path, base_sha: str, tip_sha: str,
                   merged_commit: str) -> tuple[str | None, str]:
+    judged = merged_commit
     try:
         merge_chain.walk(main, base_sha, tip_sha)
-        return None, GATE_CHAIN_SKIP
+        judged = tip_sha
     except merge_chain.ChainError:
         pass
     except merge_chain.GitError as e:
         return "gate_unreadable", f"could not read {tip_sha[:8]} as a merge chain: {e}"
     try:
-        v = cross_model_gate.check_chain(main, base_sha, merged_commit)
+        v = cross_model_gate.check_chain(main, base_sha, judged)
     except Exception as e:  # any failure inside the gate: refuse, never run unjudged
         return "gate_unreadable", f"the push gate failed: {type(e).__name__}: {e}"
     if v is None:
-        return "gate_unreadable", ("the push gate did not judge the merged commit "
-                                   f"{merged_commit[:8]} as a merge")
+        return "gate_unreadable", ("the push gate did not judge "
+                                   f"{judged[:8]} as a merge chain")
     if v.blocked:
         return "gate_would_refuse", ("the push gate would refuse this branch, so the "
                                      "suite was not started.\n" + v.message)
