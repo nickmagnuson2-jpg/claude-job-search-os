@@ -233,3 +233,24 @@ def test_install_refuses_a_repo_path_it_cannot_quote_and_loads_nothing(tmp_path)
         assert "cannot be quoted" in r.stderr, r.stderr
         assert list(agents.iterdir()) == [], bad
         assert not any(line.startswith("load ") for line in log), log
+
+
+def test_a_scratch_source_without_a_logs_override_never_clears_the_repo_logs(tmp_path):
+    # Parked P1 1475.F2 (s1c, 2026-11-25), fixed 2026-11-26: LOGS_DIR defaulted to the
+    # repo's tools/launchd/logs even when LAUNCHD_SOURCE_DIR pointed at a scratch tree, so a
+    # scratch install without LAUNCHD_LOGS_DIR deleted the live jobs' logs.
+    src, agents, calls, fake = _tree(tmp_path)
+    repo = tmp_path / "fake-main"
+    live = repo / "tools" / "launchd" / "logs"
+    live.mkdir(parents=True)
+    (live / "gmail-fetch.log").write_text("live", encoding="utf-8")
+    (src / "logs").mkdir()
+    (src / "logs" / "gmail-fetch.log").write_text("stale", encoding="utf-8")
+    env = {k: v for k, v in os.environ.items() if k != "LAUNCHD_LOGS_DIR"}
+    env.update({"LAUNCHD_SOURCE_DIR": str(src), "LAUNCHD_TARGET_DIR": str(agents),
+                "LAUNCHCTL": str(fake), "LAUNCHD_REPO_ROOT": str(repo),
+                "LAUNCHD_CLAUDE_PROJECT_DIR": str(tmp_path / "proj")})
+    r = subprocess.run(["bash", str(SCRIPT), "install"], capture_output=True, text=True, env=env)
+    assert r.returncode == 0, r.stderr
+    assert (live / "gmail-fetch.log").read_text(encoding="utf-8") == "live"
+    assert not (src / "logs" / "gmail-fetch.log").exists(), "the scratch tree's own stale log stays"

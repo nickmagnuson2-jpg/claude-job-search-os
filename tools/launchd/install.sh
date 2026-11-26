@@ -52,7 +52,14 @@ RENDER_SLUG="$(basename "$RENDER_PROJECT")"
 # The rendered plists log to the main checkout's tools/launchd/logs, so that is where stale
 # logs are cleared, even when install runs from a worktree (Grok s1c r2 F1). Overridable for
 # tests and scratch renders, which must never touch the real log folder.
-LOGS_DIR="${LAUNCHD_LOGS_DIR:-$RENDER_REPO/tools/launchd/logs}"
+# A scratch source tree (LAUNCHD_SOURCE_DIR set) clears its own logs/ by default, never the
+# main checkout's: before 2026-11-26 a scratch install without LAUNCHD_LOGS_DIR deleted the
+# live jobs' logs (s1c parked P1 1475.F2).
+if [ -n "${LAUNCHD_SOURCE_DIR:-}" ]; then
+    LOGS_DIR="${LAUNCHD_LOGS_DIR:-$SOURCE_DIR/logs}"
+else
+    LOGS_DIR="${LAUNCHD_LOGS_DIR:-$RENDER_REPO/tools/launchd/logs}"
+fi
 
 # Every shell-command use of a placeholder in the templates sits inside double quotes
 # ("__REPO_ROOT__/tools/x.py"), so a path with a space stays one word. Inside double quotes
