@@ -397,3 +397,30 @@ def test_a_stash_block_does_not_fall_through_to_the_network_message(cmd):
     code, err = _run(cmd)
     assert code == 2
     assert "network git" not in err and "None" not in err
+
+
+
+# Codex S2 tip r1 F1 (parked 2.F1, fixed in S2c 2026-11-25): help counts only right after
+# `stash` or right after its subcommand; anywhere else it may be an option's value.
+@pytest.mark.parametrize("cmd", [
+    "git stash push -m --help",
+    "git stash push -m -h",
+    "git stash -m --help",
+    "git stash push --message --help",
+    "git stash push -q -m -h -- tools/x.py",
+])
+def test_help_as_an_option_value_still_blocks(cmd):
+    code, err = _run(cmd)
+    assert code == 2, f"{cmd!r} should block"
+    assert "git stash" in err
+
+
+@pytest.mark.parametrize("cmd", [
+    "git stash --help",
+    "git stash -h",
+    "git stash push --help",
+    "git stash pop -h",
+])
+def test_help_in_first_position_still_passes(cmd):
+    code, err = _run(cmd)
+    assert code == 0, f"{cmd!r} should pass: {err}"
