@@ -156,6 +156,16 @@ def test_the_prompt_carries_the_logging_block_with_the_sections_log_file(run_dir
     assert "| S1:" in prompt
 
 
+def test_the_prompt_carries_the_sections_workarounds_line(run_dir):
+    """A workaround needs a filed source fix in the same report (Nick, 2026-11-25: "always
+    fix at the source"); the line reaches every session in its own dispatch text."""
+    p = write_brief(run_dir, filled_template())
+    brief = ls.parse_brief(p.read_text())
+    assert brief.sections[0].workarounds
+    prompt = ls.section_prompt(brief.sections[0], org="proj-org", brief_rel="output/overnight-010126/brief.md")
+    assert f"Workarounds: {brief.sections[0].workarounds}" in prompt
+
+
 # ---------------------------------------------------------------- structure
 
 def test_backlog_must_come_before_sections(run_dir):
@@ -185,7 +195,7 @@ def test_standby_org_is_required(run_dir):
     assert any("Standby org" in x for x in ls.brief_check(p, org="proj-org"))
 
 
-@pytest.mark.parametrize("field", ["Owns", "Done when"])
+@pytest.mark.parametrize("field", ["Owns", "Done when", "Workarounds"])
 def test_section_owns_and_done_when_are_required(run_dir, field):
     t = re.sub(rf"^- \*\*{field}:\*\*.*\n", "", filled_template(), flags=re.M)
     p = write_brief(run_dir, t)
