@@ -1040,3 +1040,40 @@ def test_s2c_write_before_a_chdir_is_not_moved_by_it(name):
 def test_s2c_chdir_order_blocks(name):
     code, _ = _bash(_PY_ORDER_BLOCKS[name])
     assert code == 2, name
+
+
+# --- s2c survivors (output/analysis/112526-s2c-r2-mutation-check_guard_edit_approval.json) ---
+# Only a chdir or argparse makes the verdict strict (an unknown target then blocks). Without
+# them, an unknown directory with a non-guard file name passes, as before s2c. Each case
+# writes '<unknown dir>/o.json' (os.path.join keeps the name; '+' folds to a bare unknown),
+# which _may_be_guard clears, so only strictness decides. The open() takes a variable so
+# the _WRITE_CALL pre-filter (no ')' inside the call) sees a write.
+_PY_STRICT_PASSES = {
+    # kills :454 NEGATE_CMP (`import os` must not set strict)
+    "plain_import_unknown_dir":
+        f"python3 - <<'PY'\nimport os\nopen('{_G}')\np = os.path.join(os.getcwd(), 'o.json')\nopen(p, 'w')\nPY",
+    # kills :460 NEGATE_CMP (`from os import ...` must not set strict)
+    "from_import_unknown_dir":
+        f"python3 - <<'PY'\nfrom os.path import join\nfrom os import getcwd\nopen('{_G}')\n"
+        "p = join(getcwd(), 'o.json')\nopen(p, 'w')\nPY",
+}
+_PY_STRICT_BLOCKS = {
+    # kills :679 IF_FALSE (argparse: every target must be known)
+    "argparse_unknown_dir":
+        f"python3 - <<'PY'\nimport argparse, os\nopen('{_G}')\np = os.path.join(os.getcwd(), 'o.json')\nopen(p, 'w')\nPY",
+    # kills :568 IF_FALSE (FileType(**kw) hides its mode, so it is not followed)
+    "file_type_kwargs_unseen":
+        f"python3 - <<'PY'\nimport argparse\nk = {{'mode': 'w'}}\nargparse.FileType(**k)\nopen('{_G}')\nopen('n', 'w')\nPY",
+}
+
+
+@pytest.mark.parametrize("name", sorted(_PY_STRICT_PASSES))
+def test_s2c_only_chdir_or_argparse_makes_unknown_targets_block(name):
+    code, err = _bash(_PY_STRICT_PASSES[name])
+    assert code == 0, (name, err)
+
+
+@pytest.mark.parametrize("name", sorted(_PY_STRICT_BLOCKS))
+def test_s2c_strict_and_unseen_file_type_block(name):
+    code, _ = _bash(_PY_STRICT_BLOCKS[name])
+    assert code == 2, name
