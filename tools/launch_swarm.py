@@ -25,7 +25,8 @@ WHAT brief_check REQUIRES (framework/templates/overnight-brief.md is the shape):
 
   * a Codex (family openai) AND a Grok (family xai) review of the brief's CURRENT text in
     tools/.cross-model-ledger.jsonl, with every finding on those rows dispositioned
-    (review_check, below).
+    (review_check, below). While the gate's Grok-outage stand-in is active
+    (cross_model_gate.FABLE_STANDIN_UNTIL), a Fable row fills the Grok slot (with_standin).
 
 THE REVIEW CHECK. On 2026-11-24 a brief passed every check above while Codex and Grok had
 both found the same P0 in it (ledger 1323/1324 F1); the checks read form, not substance.
@@ -210,6 +211,17 @@ def framed_briefs(row: dict) -> list:
     return [m.group(1).strip()] if m else []
 
 
+def with_standin(have: set) -> set:
+    """The families a brief's reviews count as, with the gate's Grok-outage stand-in applied.
+
+    One rule for briefs and pushes: while cmg.fable_standin_active() (Nick's dated ruling),
+    a Fable (author-family) row fills the xai slot. Codex is still required, so Fable never
+    clears a brief alone."""
+    if "xai" not in have and cmg.AUTHOR_FAMILY in have and cmg.fable_standin_active():
+        return have | {"xai"}
+    return have
+
+
 def review_check(text: str, ledger_root: Path, brief_path: Path | None = None) -> list:
     """Every reason the ledger does not show this brief text reviewed and dispositioned."""
     body = text.strip()
@@ -221,7 +233,7 @@ def review_check(text: str, ledger_root: Path, brief_path: Path | None = None) -
                 if body and body in framed_briefs(r)
                 and not r.get("waived") and cmg.row_is_usable(r)]
     problems = []
-    have = {cmg.row_model(r) for _, r in covering}
+    have = with_standin({cmg.row_model(r) for _, r in covering})
     for fam, model in REVIEW_FAMILIES.items():
         if fam not in have:
             problems.append(f"no {model} review (family {fam}) in the cross-model ledger covers this brief's "
@@ -246,6 +258,11 @@ def review_warnings(text: str, ledger_root: Path) -> list:
                 if f.get("severity") == "P0":
                     out.append(f"open P0 {n}.{f.get('id')} ({r.get('model', '?')}) on a review of an earlier "
                                f"text of this brief: {f.get('summary', '')[:160]}")
+    have = {cmg.row_model(r) for _, r in _ledger_rows(ledger_root)[0]
+            if body and body in framed_briefs(r) and not r.get("waived") and cmg.row_is_usable(r)}
+    if have != with_standin(have):
+        out.append(f"Fable stood in for Grok on this brief (Grok-outage ruling, "
+                   f"cross_model_gate.FABLE_STANDIN_UNTIL = {cmg.FABLE_STANDIN_UNTIL})")
     return out
 
 

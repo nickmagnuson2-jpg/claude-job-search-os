@@ -254,13 +254,15 @@ AUTHOR_FAMILY = "anthropic"
 # would be circular, since codex_verify imports this module. A parity test pins them.
 LEGACY_MODEL_FAMILIES = {"codex": "openai", "grok": "xai", "fable": "anthropic"}
 
-# TEMPORARY EXCEPTION, Nick 2026-10-30: Grok (xai) hit its provider usage limit, which resets
-# when the monthly cycle ends on 2026-11-12, and Nick chose not to buy more. Until then the
-# author family (Fable) may fill ONE of the slots a tier demands, but at least one family
-# OUTSIDE the author's is still required, so Fable alone never clears a push. Every push
-# that relies on it says so in the gate message. The date is the expiry: from 2026-11-13
-# the normal rule applies again with nothing to revert. Delete this block after that.
-FABLE_STANDIN_UNTIL = date(2026, 11, 12)
+# GROK-OUTAGE EXCEPTION. While Grok (xai) is out of quota, the author family (Fable) may
+# fill ONE of the slots a tier demands, but at least one family OUTSIDE the author's is
+# still required, so Fable alone never clears a push. Every push that relies on it says so
+# in the gate message. The date is the expiry: the day after it, the normal rule applies
+# again with nothing to revert. Each outage needs Nick's words to move the date:
+#   2026-10-30: monthly limit, resets 2026-11-12 (Nick chose not to buy more).
+#   2026-11-26: weekly limit hit 00:31, resets about 11-28; Nick chose "Fable for brief
+#               AND branches" (orchestration.md RULING, 11-26). launch_swarm reads it too.
+FABLE_STANDIN_UNTIL = date(2026, 11, 28)
 
 
 def fable_standin_active(today: date | None = None) -> bool:

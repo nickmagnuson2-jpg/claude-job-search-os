@@ -540,6 +540,48 @@ def test_one_family_alone_is_refused(run_dir, tmp_ledger, model, family, missing
     assert len(ls.brief_check(p, org="proj-org")) == 1
 
 
+# 2026-11-26 (Nick): while Grok is out, the gate's dated stand-in lets Fable fill the xai slot
+# for a brief, as it does for a push. Codex is still required.
+def test_during_the_standin_codex_plus_fable_launches_and_says_so(run_dir, tmp_ledger, monkeypatch):
+    monkeypatch.setattr(ls.cmg, "fable_standin_active", lambda today=None: True)
+    t = filled_template()
+    p = write_brief(run_dir, t, reviewed=False)
+    add_row(tmp_ledger, t, "codex", "openai")
+    add_row(tmp_ledger, t, "fable", "anthropic")
+    assert ls.brief_check(p, org="proj-org") == []
+    assert any("Fable stood in for Grok" in w for w in ls.review_warnings(t, tmp_ledger))
+
+
+def test_during_the_standin_fable_alone_is_refused(run_dir, tmp_ledger, monkeypatch):
+    monkeypatch.setattr(ls.cmg, "fable_standin_active", lambda today=None: True)
+    t = filled_template()
+    p = write_brief(run_dir, t, reviewed=False)
+    add_row(tmp_ledger, t, "fable", "anthropic")
+    probs = ls.brief_check(p, org="proj-org")
+    assert any("no codex review" in x for x in probs)
+
+
+def test_after_the_standin_expires_fable_does_not_fill_the_grok_slot(run_dir, tmp_ledger, monkeypatch):
+    monkeypatch.setattr(ls.cmg, "fable_standin_active", lambda today=None: False)
+    t = filled_template()
+    p = write_brief(run_dir, t, reviewed=False)
+    add_row(tmp_ledger, t, "codex", "openai")
+    add_row(tmp_ledger, t, "fable", "anthropic")
+    assert any("no grok review" in x for x in ls.brief_check(p, org="proj-org"))
+    assert not any("Fable stood in" in w for w in ls.review_warnings(t, tmp_ledger))
+
+
+def test_codex_plus_grok_does_not_mention_the_standin(run_dir, tmp_ledger, monkeypatch):
+    monkeypatch.setattr(ls.cmg, "fable_standin_active", lambda today=None: True)
+    t = filled_template()
+    p = write_brief(run_dir, t, reviewed=False)
+    add_row(tmp_ledger, t, "codex", "openai")
+    add_row(tmp_ledger, t, "grok", "xai")
+    add_row(tmp_ledger, t, "fable", "anthropic")
+    assert ls.brief_check(p, org="proj-org") == []
+    assert not any("Fable stood in" in w for w in ls.review_warnings(t, tmp_ledger))
+
+
 def test_two_rows_of_one_family_do_not_make_two_families(run_dir, tmp_ledger):
     t = filled_template()
     p = write_brief(run_dir, t, reviewed=False)
