@@ -35,6 +35,9 @@ DEFINITIONS (stated here because each one is a choice):
         when the sender is in --org;
       - self: a message this session sent matching SELF_CORRECTION_RE.
     A plain tool error (file not found, a failing command) is not a caught failure.
+  * Sealed filter: a typed turn within SEALED_WINDOW (5) typed turns of a record that
+    touches a sealed marker keeps its counts and loses its text, so it is never a failure
+    candidate; sealed_excluded counts those turns (see scan_sealed).
   * Branch commits: the commit, rebase and cherry-pick entries in the branch's reflog that
     are still in its history (so a reset or rebase onto a later main does not count main's
     commits); without a reflog, main..tip. First commit = the earliest author time among
@@ -70,6 +73,11 @@ from pathlib import Path
 # (tests/scripts/test_shared_module_package_import.py).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from hook_runtime import claude_project_dir  # noqa: E402
+# The sealed markers come from the guard by import, never typed or re-parsed here: a rename
+# there breaks tests/scripts/test_run_metrics_sealed.py, not this filter silently (KB-S2).
+import check_sealed_read  # noqa: E402
+import meeting_vocab  # noqa: E402
+import vault_paths  # noqa: E402
 
 
 
@@ -87,10 +95,11 @@ RUN_FIELDS = (
     "run_id", "window_start", "window_end", "org", "sessions_count", "sessions",
     "org_messages_sent", "nick_prompts_total", "nick_minutes_total",
     "branches", "failure_candidates", "candidates_by_catcher_class", "definitions",
+    "sealed_excluded_total",
 )
 SESSION_FIELDS = (
     "name", "session_id", "first", "last", "wall_min", "active_min",
-    "nick_prompts", "nick_minutes", "sent_messages", "branches",
+    "nick_prompts", "nick_minutes", "sent_messages", "branches", "sealed_excluded",
 )
 
 CORRECTION_RE = re.compile(
@@ -156,6 +165,7 @@ class Session:
     branches: set = field(default_factory=set)
     worktrees: set = field(default_factory=set)
     lookbehind: float | None = None
+    sealed_excluded: int = 0     # typed turns in the window whose text was dropped (sealed filter)
     _seen_received: set = field(default_factory=set, repr=False)
 
     @property
@@ -191,20 +201,177 @@ def _strings(obj):
             yield from _strings(v)
 
 
-def _add_received(s: "Session", t: float, text: str) -> None:
-    """Record each cross-session message in `text` once per session (same sender and body)."""
+def _add_received(s: "Session", t: float, text: str, sealed: bool = False) -> None:
+    """Record each cross-session message in `text` once per session (same sender and body).
+    A message inside a sealed window keeps its sender and time; its body is None."""
     for m in XSESSION_RE.finditer(text):
         key = (m.group(1), _norm(m.group(2)))
         if key in s._seen_received:
             continue
         s._seen_received.add(key)
-        s.received.append((t, m.group(1), m.group(2)))
+        s.received.append((t, m.group(1), None if sealed else m.group(2)))
 
 
-def load_session(path: Path, start: float, end: float) -> Session | None:
-    s = Session(session_id=path.stem)
+# ---------------------------------------------------------------- sealed filter (KB-S2, 2026-11-26)
+#
+# A transcript turn near a sealed read is sealed by content, not only by path (KB brief
+# constraint 5). The rule, accepted by org 3e for KB-A: a record that TOUCHES a sealed marker
+# in typed turn k excludes typed turns k-window .. k+window. A touch before the first typed
+# turn counts as turn 0. Touches are looked for in every record, sidechain and pre-window
+# ones included; the always-loaded instruction records below name the sealed folder in
+# nearly every session and are not touches (KB-A: reading them as touches removed 70%).
+#
+# Only class names leave this filter (touches_by_class); marker values never do, because
+# the vault folder names are private (tools/.sealed-folders.conf is gitignored).
+
+SEALED_WINDOW = 5
+# None = the guard's own reading of tools/.sealed-folders.conf (check_sealed_read.VAULT_RELS).
+DEFAULT_SEALED_CONFIG: Path | None = None
+NOT_TOUCH_TYPES = frozenset({"api-request", "api-request-blob", "api-request-shape", "queue-operation"})
+NOT_TOUCH_ATTACHMENTS = frozenset({"instructions", "invoked_skills", "skill_listing",
+                                   "queued_command", "nested_memory"})
+
+
+def sealed_markers(sealed_config: Path | None = None) -> tuple:
+    """(class, lowercased marker) pairs, built only from the guard's names.
+
+    sibling: the sealed sibling directory; in_tree: the old in-repo folder's own name;
+    override: the SEAL_READ_OK assignment; vault: each folder in the sealed-folders config;
+    fail_closed_vault: the whole vault data/ when that config is missing, malformed, empty
+    or names a folder that is not there (the guard fails closed the same way)."""
+    marks = [("sibling", check_sealed_read.SEALED_HOME.lower()),
+             ("in_tree", check_sealed_read.SEALED_REL.rsplit("/", 1)[-1].lower()),
+             ("override", check_sealed_read.OVERRIDE_WORD.lower())]
+    vault = check_sealed_read.PERSONAL.rsplit("/", 1)[-1]
+    if sealed_config is None:
+        rels, closed = check_sealed_read.VAULT_RELS, check_sealed_read.FAIL_CLOSED
+    else:
+        try:
+            rels = tuple(r.lower() for r in (vault_paths.sealed_rels(Path(sealed_config)) or ()))
+        except ValueError:
+            rels = ()
+        root = check_sealed_read._root() / check_sealed_read.PERSONAL
+        closed = not rels or not all((root / r).is_dir() for r in rels)
+    marks += [("vault", r) for r in rels]
+    if closed:
+        marks.append(("fail_closed_vault", f"{vault}/data/".lower()))
+    return tuple(marks)
+
+
+def is_touch(record: dict) -> bool:
+    """Can this record touch the sealed set? KB-A's accepted reading (org 3e, 2026-11-26)."""
+    kind = record.get("type")
+    if kind in NOT_TOUCH_TYPES:
+        return False
+    if kind == "attachment" and (record.get("attachment") or {}).get("type") in NOT_TOUCH_ATTACHMENTS:
+        return False
+    if kind == "user" and record.get("isMeta") and record.get("toolUseResult") is None:
+        return False
+    return True
+
+
+def is_typed(record: dict) -> bool:
+    """run_metrics' Nick-prompt rule: a human-origin user line, not meta, not a sidechain."""
+    return (record.get("type") == "user" and (record.get("origin") or {}).get("kind") == "human"
+            and not record.get("isMeta") and not record.get("isSidechain"))
+
+
+@dataclass
+class SealedScan:
+    turn_of_line: dict           # 1-based line -> typed-turn index it falls in (0 before the first)
+    typed_lines: list            # 1-based lines of typed records, in order
+    bad_turns: set               # typed-turn indexes inside a sealed window
+    touches_by_class: dict
+
+    def sealed(self, line: int) -> bool:
+        return self.turn_of_line.get(line, 0) in self.bad_turns
+
+
+def scan_sealed(path: Path, markers=None, window: int = SEALED_WINDOW, typed=is_typed) -> SealedScan:
+    """One pass over a transcript: which typed turns sit inside a sealed window."""
+    markers = sealed_markers(DEFAULT_SEALED_CONFIG) if markers is None else markers
+    turn_of_line, typed_lines, touched, by_class = {}, [], [], {}
+    cur = -1
     with open(path, errors="replace") as f:
-        for line in f:
+        for n, raw in enumerate(f, 1):
+            try:
+                d = json.loads(raw)
+            except ValueError:
+                d = None
+            if isinstance(d, dict) and typed(d):
+                cur += 1
+                typed_lines.append(n)
+            turn_of_line[n] = max(cur, 0)
+            # An unparseable line is checked too: failing to read it is no evidence it is clean.
+            if isinstance(d, dict) and not is_touch(d):
+                continue
+            low = raw.lower()
+            hit = [c for c, m in markers if m in low]
+            if hit:
+                touched.append(max(cur, 0))
+                for c in hit:
+                    by_class[c] = by_class.get(c, 0) + 1
+    bad = set()
+    for k in touched:
+        bad.update(range(k - window, k + window + 1))
+    return SealedScan(turn_of_line, typed_lines, bad, by_class)
+
+
+@dataclass
+class SealedResult:
+    kept: list                   # {"uuid", "ts", "text", "line"} per kept typed message
+    typed_total: int
+    excluded: int
+    touches_by_class: dict
+
+
+def nick_messages(path: Path, sealed_config: Path | None = None, window: int = SEALED_WINDOW,
+                  is_typed=is_typed) -> SealedResult:
+    """Nick's typed messages in one transcript, with every sealed-window turn removed.
+    `line` is the record's 1-based line in the file. Text of excluded turns is never read
+    into the result."""
+    scan = scan_sealed(path, sealed_markers(sealed_config), window, is_typed)
+    want = {n for n in scan.typed_lines if not scan.sealed(n)}
+    kept = []
+    with open(path, errors="replace") as f:
+        for n, raw in enumerate(f, 1):
+            if n not in want:
+                continue
+            d = json.loads(raw)
+            kept.append({"uuid": d.get("uuid"), "ts": d.get("timestamp"),
+                         "text": _text_of((d.get("message") or {}).get("content")), "line": n})
+    return SealedResult(kept, len(scan.typed_lines), len(scan.typed_lines) - len(kept),
+                        scan.touches_by_class)
+
+
+def sealed_text(text: str, meetings_config: dict | None, sealed_config: Path | None = None,
+                config_loader=meeting_vocab.load_sealed_meetings_config) -> bool:
+    """Is a free-text row (a Wispr dictation) sealed? A sealed marker, a sealed meeting
+    identity, a sealed name or a sealed keyword says yes. With no sealed-meetings config
+    there is no way to recognise one, so every row is sealed (fail closed, as
+    meeting_vocab.classify_meeting does). Granola meetings use classify_meeting itself."""
+    cfg = meetings_config if meetings_config is not None else config_loader()
+    if cfg is None:
+        return True
+    low = (text or "").lower()
+    if any(m in low for _, m in sealed_markers(sealed_config)):
+        return True
+    if any(a and a in low for a in cfg.get("attendees", ())):
+        return True
+    if any(k and k in low for k in cfg.get("keywords", ())):
+        return True
+    return meeting_vocab._transcript_names_sealed_contact(text or "", cfg)
+
+
+def load_session(path: Path, start: float, end: float, markers=None) -> Session | None:
+    """One session's activity in [start, end]. Counts include sealed-window turns; their
+    TEXT does not: it is None in human, received, sent and hook_errors, and the session's
+    sealed_excluded says how many typed turns were dropped."""
+    s = Session(session_id=path.stem)
+    scan = scan_sealed(path, markers)
+    with open(path, errors="replace") as f:
+        for n, line in enumerate(f, 1):
+            sealed = scan.sealed(n)
             try:
                 d = json.loads(line)
             except ValueError:
@@ -231,7 +398,7 @@ def load_session(path: Path, start: float, end: float) -> Session | None:
                 if kind in ("queue-operation", "attachment"):
                     for text in _strings(d):
                         if "cross-session-message" in text:
-                            _add_received(s, t, text)
+                            _add_received(s, t, text, sealed)
                 continue
             s.stamps.append(t)
             br = d.get("gitBranch")
@@ -247,20 +414,21 @@ def load_session(path: Path, start: float, end: float) -> Session | None:
                     if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "SendMessage":
                         inp = b.get("input") or {}
                         if inp.get("message"):
-                            s.sent.append((t, inp.get("to", ""), inp["message"]))
+                            s.sent.append((t, inp.get("to", ""), None if sealed else inp["message"]))
                 continue
             origin = (d.get("origin") or {}).get("kind")
             text = _text_of(content)
             if origin == "human" and not d.get("isMeta"):
-                s.human.append((t, text))
+                s.human.append((t, None if sealed else text))
+                s.sealed_excluded += sealed
                 continue
-            _add_received(s, t, text)
+            _add_received(s, t, text, sealed)
             if isinstance(content, list):
                 for b in content:
                     if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("is_error"):
                         et = _text_of([b])
                         if HOOK_RE.search(et) and re.search(r"BLOCKED|hook error", et):
-                            s.hook_errors.append((t, et))
+                            s.hook_errors.append((t, None if sealed else et))
     return s if s.stamps else None
 
 
@@ -268,11 +436,14 @@ def resolve_names(sessions: list[Session]) -> dict:
     received = {}
     for s in sessions:
         for _, from_name, body in s.received:
-            received.setdefault(_norm(body), from_name)
+            if body is not None:
+                received.setdefault(_norm(body), from_name)
     names = {}
     for s in sessions:
         found = None
         for _, _, body in s.sent:
+            if body is None:
+                continue
             hit = received.get(_norm(body))
             if hit:
                 found = hit
@@ -295,17 +466,27 @@ def _event(t, session_name, catcher, cls, kind, text):
 def failures(s: Session, names: dict, org_names: set) -> list:
     me = display_name(s, names)
     out = []
+    # Text is None inside a sealed window: such an event is not a candidate, so no excerpt
+    # of it can reach the report (KB-S2: run_metrics no longer emits sealed-window text).
     for t, text in s.hook_errors:
+        if text is None:
+            continue
         m = HOOK_RE.search(text)
         out.append(_event(t, me, f"hook:{m.group(1)}", "hook", "hook_block", text))
     for t, text in s.human:
+        if text is None:
+            continue
         if CORRECTION_RE.search(text) or NICK_CATCH_RE.search(text):
             out.append(_event(t, me, "nick", "nick", "nick_correction", text))
     for t, sender, body in s.received:
+        if body is None:
+            continue
         if CORRECTION_RE.search(body):
             cls = "org" if sender in org_names else "peer"
             out.append(_event(t, me, sender, cls, "peer_correction", body))
     for t, _, body in s.sent:
+        if body is None:
+            continue
         if SELF_CORRECTION_RE.search(body):
             out.append(_event(t, me, me, "self", "self_correction", body))
     return sorted(out, key=lambda e: e["ts"])
@@ -428,12 +609,13 @@ def build_report(transcripts: Path, repo: Path, start: str, end: str, org_names:
                  nick_cap_min: float = 10, land_ref: str | None = "refs/remotes/origin/main") -> dict:
     t0, t1 = parse_ts(start), parse_ts(end)
     sessions = []
+    markers = sealed_markers(DEFAULT_SEALED_CONFIG)
     for p in sorted(Path(transcripts).glob("*.jsonl")):
         if os.path.getmtime(p) < t0:
             # Speed guard, not an equivalence: a transcript copied or restored with an old
             # mtime would be skipped (Codex r3 F2, parked; 0 of 395 live files on 2026-11-23).
             continue
-        s = load_session(p, t0, t1)
+        s = load_session(p, t0, t1, markers)
         if s:
             sessions.append(s)
     names = resolve_names(sessions)
@@ -453,7 +635,7 @@ def build_report(transcripts: Path, repo: Path, start: str, end: str, org_names:
             "wall_min": round((s.last - s.first) / 60, 1),
             "active_min": round(active_minutes(s.stamps, idle_cap_min), 1),
             "nick_prompts": s.nick_prompts, "nick_minutes": round(s.nick_minutes(nick_cap_min), 1),
-            "sent_messages": len(s.sent), "branches": bs,
+            "sent_messages": len(s.sent), "branches": bs, "sealed_excluded": s.sealed_excluded,
         })
     fails = dedupe_failures(fails)
     by_class = {}
@@ -465,6 +647,7 @@ def build_report(transcripts: Path, repo: Path, start: str, end: str, org_names:
         "org_messages_sent": dispatches,
         "nick_prompts_total": sum(r["nick_prompts"] for r in srows),
         "nick_minutes_total": round(sum(r["nick_minutes"] for r in srows), 1),
+        "sealed_excluded_total": sum(r["sealed_excluded"] for r in srows),
         "branches": [branch_timing(Path(repo), b, main_ref, land_ref) for b in sorted(branches)],
         "failure_candidates": sorted(fails, key=lambda e: e["ts"]),
         "candidates_by_catcher_class": by_class,
