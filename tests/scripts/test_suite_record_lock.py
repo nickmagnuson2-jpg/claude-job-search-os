@@ -180,9 +180,9 @@ def test_the_holder_record_names_this_run_while_it_runs(sr, repo, lockdir, tmp_p
     seen = {}
     real = sr._run_pytest
 
-    def spy(wt, junit, log, timeout, keep_fds=()):
+    def spy(wt, junit, log, timeout, keep_fds=(), **kw):
         seen["holder"] = sr.read_holder(repo / LEDGER)
-        return real(wt, junit, log, timeout, keep_fds)
+        return real(wt, junit, log, timeout, keep_fds, **kw)
 
     monkeypatch.setattr(sr, "_run_pytest", spy)
     code, out = _run(sr, repo, capsys, "--branch", "feat", "--base", "main")
@@ -309,12 +309,126 @@ def test_pytest_receives_the_held_lock_fd(sr, repo, lockdir, tmp_parent, capsys,
     seen = {}
     real = sr._run_pytest
 
-    def spy(wt, junit, log, timeout, keep_fds=()):
+    def spy(wt, junit, log, timeout, keep_fds=(), **kw):
         seen["fds"] = keep_fds
         seen["held"] = sr.held_fd(repo / LEDGER)
-        return real(wt, junit, log, timeout, keep_fds)
+        return real(wt, junit, log, timeout, keep_fds, **kw)
 
     monkeypatch.setattr(sr, "_run_pytest", spy)
     code, out = _run(sr, repo, capsys, "--branch", "feat", "--base", "main")
     assert code == 0, out
     assert isinstance(seen["held"], int) and seen["fds"] == (seen["held"],)
+
+
+# ---- parked 1306.F2 / 1322.F3: --wait accepted NaN and infinity
+
+@pytest.mark.parametrize("value", ["nan", "NaN", "inf", "Infinity", "+inf"])
+def test_a_non_finite_wait_is_a_usage_error(sr, repo, lockdir, capsys, value):
+    with pytest.raises(SystemExit) as e:
+        sr.main(["--repo-root", str(repo), "run", "--branch", "x", "--wait", value])
+    assert e.value.code == 2
+
+
+# ---- parked 1306.F1 / 1322.F4: a stale record named a dead run as the current holder
+
+def _dead_pid():
+    p = subprocess.Popen([sys.executable, "-c", "pass"])
+    p.wait()
+    return p.pid
+
+
+def test_a_stale_holder_record_is_not_named_as_the_holder(sr, repo, lockdir, tmp_parent,
+                                                          capsys):
+    """A run killed after its pytest also exited leaves its record behind. The next run takes
+    the lock before it rewrites the record, so a refusal in that window must not name the
+    dead run (and must not say its pytest is still running)."""
+    _branch(repo, "feat", {"tests/test_feat.py": PASSING})
+    dead = _dead_pid()
+    holder = _hold(repo, lockdir, 30)        # the new holder, which has written its record
+    try:
+        sr.holder_path(repo / LEDGER).write_text(json.dumps(   # ...as seen inside the window
+            {"pid": dead, "pytest_pid": _dead_pid(), "branch": "gone-branch",
+             "started_at": "2026-11-25T00:00:00+00:00"}), encoding="utf-8")
+        code, out = _run(sr, repo, capsys, "--branch", "feat", "--base", "main")
+    finally:
+        holder.kill()
+        holder.wait()
+    assert code == 1 and out["code"] == "suite_locked"
+    assert "gone-branch" not in out["message"] and str(dead) not in out["message"]
+    assert "has exited" not in out["message"]
+    assert "has not named itself yet" in out["message"]
+    assert out["holder"] == {}
+
+
+def test_a_killed_run_whose_pytest_still_runs_is_still_named(sr, repo, lockdir, tmp_parent,
+                                                             capsys):
+    """The stale rule must not hide the case Grok 585ac8c5 F3 named: the run is dead but its
+    pytest is alive and holds the lock."""
+    _branch(repo, "feat", {"tests/test_feat.py": PASSING})
+    holder = _hold(repo, lockdir, 30)
+    try:
+        sr.holder_path(repo / LEDGER).write_text(json.dumps(
+            {"pid": _dead_pid(), "pytest_pid": holder.pid, "branch": "orphan-branch",
+             "started_at": "2026-11-25T00:00:00+00:00"}), encoding="utf-8")
+        code, out = _run(sr, repo, capsys, "--branch", "feat", "--base", "main")
+    finally:
+        holder.kill()
+        holder.wait()
+    assert code == 1 and "orphan-branch" in out["message"]
+    assert "has exited; its pytest is still running" in out["message"]
+
+
+def test_the_holder_record_carries_pytest_pid_while_pytest_runs(sr, repo, lockdir, tmp_parent,
+                                                                capsys, monkeypatch):
+    _branch(repo, "feat", {"tests/test_feat.py": PASSING})
+    seen = {}
+    real_wait = subprocess.Popen.wait
+
+    def spy(self, timeout=None):
+        if timeout is not None:       # pytest's wait; git's subprocess.run waits without one
+            seen.setdefault("holder", sr.read_holder(repo / LEDGER))
+            seen.setdefault("child", self.pid)
+        return real_wait(self, timeout=timeout)
+
+    monkeypatch.setattr(subprocess.Popen, "wait", spy)
+    code, out = _run(sr, repo, capsys, "--branch", "feat", "--base", "main")
+    assert code == 0, out
+    assert seen["holder"]["pytest_pid"] == seen["child"]
+    assert seen["holder"]["pid"] == os.getpid()
+
+
+# ---- parked 1294.F1: Ctrl-C unwound the lock while pytest (own session) kept running
+
+def test_an_interrupt_during_the_suite_kills_pytest(sr, tmp_path):
+    import _thread
+    import threading
+    wt = tmp_path / "wt"
+    (wt / "tests").mkdir(parents=True)
+    pidfile = tmp_path / "pytest.pid"
+    (wt / "tests" / "test_slow.py").write_text(
+        "import os, time, pathlib\n"
+        "def test_slow():\n"
+        f"    pathlib.Path({str(pidfile)!r}).write_text(str(os.getpid()))\n"
+        "    time.sleep(60)\n", encoding="utf-8")
+
+    def interrupt_when_started():
+        deadline = time.monotonic() + 60
+        while not pidfile.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        _thread.interrupt_main()
+
+    threading.Thread(target=interrupt_when_started, daemon=True).start()
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            sr._run_pytest(wt, tmp_path / "j.xml", tmp_path / "log", timeout=120)
+        pid = int(pidfile.read_text())
+        deadline = time.monotonic() + 10
+        while sr._alive(pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not sr._alive(pid), "pytest kept running after the interrupt"
+    finally:
+        if pidfile.exists():
+            try:
+                os.kill(int(pidfile.read_text()), 9)
+            except (ProcessLookupError, ValueError):
+                pass

@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import shutil
 import signal
@@ -235,12 +236,20 @@ def _tail(log: Path, n: int = 15) -> str:
 
 
 def _run_pytest(wt: Path, junit: Path, log: Path, timeout: int,
-                keep_fds: tuple[int, ...] = ()) -> int | None:
+                keep_fds: tuple[int, ...] = (), on_start=None) -> int | None:
     """pytest's returncode, or None on timeout (the whole process group is killed).
 
     keep_fds: the suite lock's fd, inherited by pytest. flock belongs to the open file
     description, so while pytest holds its copy the lock outlives this process: killing the
-    named holder no longer frees the slot while its pytest keeps running (Grok 585ac8c5 F3)."""
+    named holder no longer frees the slot while its pytest keeps running (Grok 585ac8c5 F3).
+
+    on_start(pid): called with pytest's pid once it is running (the holder record stores it).
+
+    Any interrupt while waiting (Ctrl-C, SystemExit) kills pytest's process group before it
+    propagates (parked 1294.F1): pytest runs in its own session, so it would not get the
+    terminal's SIGINT, and with the inherited lock fd it would keep the slot held after this
+    process unwound. LIMIT: SIGKILL of this process cannot be caught; that case is the
+    "has exited; its pytest is still running" refusal."""
     argv = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
             f"--junitxml={junit}"]
     env = child_env()
@@ -249,11 +258,20 @@ def _run_pytest(wt: Path, junit: Path, log: Path, timeout: int,
                                 stdin=subprocess.DEVNULL, start_new_session=True,
                                 pass_fds=keep_fds)
         try:
+            if on_start is not None:
+                on_start(proc.pid)
             return proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             os.killpg(proc.pid, signal.SIGKILL)
             proc.wait()
             return None
+        except BaseException:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.wait()
+            raise
 
 
 # ---------------------------------------------------------------- one suite at a time
@@ -288,6 +306,33 @@ def read_holder(ledger: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def current_holder(ledger: Path) -> dict:
+    """The holder record, or {} when it is stale (parked 1306.F1 / 1322.F4).
+
+    A run killed with SIGKILL leaves its record behind. The next run takes the lock before it
+    rewrites the record, so a refusal in that window would name the dead run. A record is
+    stale when the run that wrote it AND the pytest it started (pytest_pid, written once
+    pytest runs; null before) are both gone: then neither can be holding the lock, so whoever
+    holds it has not named itself yet. A dead run with a live pytest is NOT stale: that pytest holds the
+    lock through the inherited fd (Grok 585ac8c5 F3). LIMIT: a reused pid reads as alive."""
+    h = read_holder(ledger)
+    # Only records that carry the pytest_pid key (this copy writes it, null until pytest
+    # starts) can be judged stale; a record from an older copy is named as before.
+    if h and "pytest_pid" in h and not _alive(h.get("pid")) and not _alive(h["pytest_pid"]):
+        return {}
+    return h
+
+
+def _note_pytest_pid(ledger: Path, pid: int) -> None:
+    """Add pytest's pid to this run's holder record. Called under the lock by its holder."""
+    h = read_holder(ledger)
+    if h.get("pid") == os.getpid():
+        hp = holder_path(ledger)
+        tmp = hp.with_name(hp.name + ".tmp")
+        tmp.write_text(json.dumps({**h, "pytest_pid": pid}), encoding="utf-8")
+        os.replace(tmp, hp)
+
+
 @contextmanager
 def suite_lock(ledger: Path, branch: str, wait: float):
     """Hold the suite lock for the block. Raises SuiteLocked if it is still held after `wait`."""
@@ -295,13 +340,14 @@ def suite_lock(ledger: Path, branch: str, wait: float):
     try:
         stack.enter_context(file_lock(ledger, timeout=wait))
     except LockTimeout:
-        raise SuiteLocked(read_holder(ledger)) from None
+        raise SuiteLocked(current_holder(ledger)) from None
     with stack:
         hp = holder_path(ledger)
         hp.write_text(json.dumps({
             "pid": os.getpid(), "branch": branch,
             "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "session": os.environ.get("CLAUDE_SESSION_ID", ""),
+            "pytest_pid": None,     # set once pytest runs (_note_pytest_pid)
         }), encoding="utf-8")
         try:
             yield
@@ -362,7 +408,7 @@ def cmd_status(root: Path) -> int:
         # Exit 2, as `check` does: exit 1 means held, and an error must not read as either.
         return _out({"status": "error", "code": "git_error", "message": str(e)}, 2)
     def held() -> int:
-        h = read_holder(ledger)
+        h = current_holder(ledger)
         pid = h.get("pid") if h else None
         return _out({"status": "held", "branch": h.get("branch") if h else None,
                      "started_at": h.get("started_at") if h else None, "pid": pid,
@@ -427,7 +473,8 @@ def _run_locked(root: Path, common_git: Path, ledger: Path, branch: str, base: s
         junit, log = tmp / "junit.xml", tmp / "pytest.log"
         start = time.monotonic()
         fd = held_fd(ledger)
-        rc = _run_pytest(wt, junit, log, timeout, keep_fds=(fd,) if fd is not None else ())
+        rc = _run_pytest(wt, junit, log, timeout, keep_fds=(fd,) if fd is not None else (),
+                         on_start=lambda pid: _note_pytest_pid(ledger, pid))
         duration = round(time.monotonic() - start, 1)
         if rc is None:
             return _fail("timeout", f"timeout after {timeout} s", duration_s=duration, **ids)
@@ -497,6 +544,8 @@ def _nonneg(v: str) -> float:
         f = float(v)
     except ValueError:
         raise argparse.ArgumentTypeError(f"not a number: {v}") from None
+    if not math.isfinite(f):     # parked 1306.F2 / 1322.F3: NaN passed `< 0`, inf never ends
+        raise argparse.ArgumentTypeError(f"--wait must be a finite number: {v}")
     if f < 0:
         raise argparse.ArgumentTypeError("--wait must be >= 0")
     return f
