@@ -703,6 +703,9 @@ WEDGE_HELP = ('diagnose: ps -ax -o pid,etime,command | grep -E "ssh git@github.c
               "pkill -f SecretAgent; sleep 2; open -a Secretive")
 
 
+# GitHub's ssh endpoints (ssh.github.com serves ssh over port 443).
+GITHUB_SSH_HOSTS = {"github.com", "ssh.github.com"}
+
 # git's global options that take a separate value: skipped to reach the subcommand.
 _GIT_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env",
                    "--super-prefix"}
@@ -719,7 +722,10 @@ def _is_busy_command(command: str) -> bool:
         return False
     exe = os.path.basename(toks[0])
     if exe == "ssh":
-        return any(t == "git@github.com" or t.startswith("git@github.com:") for t in toks[1:])
+        # The host in any form: git@github.com, git@github.com:owner/x.git, or github.com
+        # with the user given by -l or ssh config (Codex 11-26 s5c F1). Erring toward busy
+        # is the safe direction: a false busy only delays a landing.
+        return any(t.split("@")[-1].split(":")[0] in GITHUB_SSH_HOSTS for t in toks[1:])
     if exe != "git":
         return False
     i = 1

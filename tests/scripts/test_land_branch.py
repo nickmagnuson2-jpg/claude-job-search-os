@@ -2221,6 +2221,18 @@ def test_ssh_is_busy_only_when_it_goes_to_github():
     assert lb._is_busy_command("ssh user@build.example.com uptime") is False
 
 
+@pytest.mark.parametrize("command", [
+    "ssh -l git github.com git-receive-pack owner/repo.git",
+    "ssh github.com -l git git-receive-pack owner/repo.git",
+    "ssh github.com git-upload-pack 'owner/repo.git'",          # User git from ssh config
+    "ssh -p 443 git@ssh.github.com git-receive-pack 'x.git'",
+])
+def test_ssh_to_github_is_busy_whichever_way_the_user_and_host_are_given(command):
+    """Codex 11-26 s5c F1 (P0): only the combined git@github.com token was recognised, so
+    `ssh -l git github.com ...` (no git push parent, e.g. under ls-remote) did not count."""
+    assert lb._is_busy_command(command) is True
+
+
 @pytest.mark.parametrize("command", ["xargs push origin", "/usr/bin/make fetch",
                                      "python3 pull"])
 def test_a_program_other_than_git_is_not_busy_even_with_push_as_its_next_word(command):
