@@ -49,6 +49,10 @@ DEFAULT_TYPES = {"flagship", "employment", "consulting", "contract", "co-founded
 FIELD_RE = re.compile(r"^- \*\*(?P<key>[A-Za-z]+):\*\*\s*(?P<value>.*?)\s*$")
 SECTION_RE = re.compile(r"^##\s+(?P<title>.+?)\s*$")
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+# The header fields a project file may set. Named, so a stray `- **Slug:**` or
+# `- **Raw_path:**` line cannot overwrite a Project attribute the parser owns
+# (before 2026-11-26 any existing attribute name was accepted).
+METADATA_FIELDS = frozenset({"period", "role", "client", "location", "type"})
 BULLET_RE = re.compile(r"^\s*-\s+(.*)$")
 
 
@@ -112,7 +116,7 @@ def parse_project(path: Path) -> Project | None:
         if fm and current_section is None:
             key = fm.group("key").lower()
             value = fm.group("value").strip()
-            if hasattr(proj, key):
+            if key in METADATA_FIELDS:
                 setattr(proj, key, value)
             continue
 

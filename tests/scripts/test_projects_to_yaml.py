@@ -66,3 +66,27 @@ def test_no_comment_marker_reaches_any_parsed_value(tmp_path):
     proj = parse(tmp_path, body)
     for v in (proj.client, proj.role, proj.period, *proj.key_achievements):
         assert "<!--" not in v and "-->" not in v, v
+
+
+# --- behaviour the file had no tests for until 2026-11-26 (mutation survivors on the fix branch) ---
+
+def test_an_unknown_field_name_sets_nothing(tmp_path):
+    proj = parse(tmp_path, HEAD + "- **Role:** Head of Ops\n- **Slug:** hijacked\n- **Notes:** x\n")
+    assert proj.slug == "acme"
+    assert not hasattr(proj, "notes")
+
+
+def test_bullets_outside_key_achievements_are_not_achievements(tmp_path):
+    body = HEAD + "- **Role:** Head of Ops\n\n## Description\n\n- Context bullet\n\n## Key Achievements\n\n- Real win\n"
+    assert parse(tmp_path, body).key_achievements == ["Real win"]
+
+
+def test_placeholder_bullets_are_skipped(tmp_path):
+    body = HEAD + "- **Role:** Head of Ops\n\n## Key Achievements\n\n- -\n- Real win\n"
+    assert parse(tmp_path, body).key_achievements == ["Real win"]
+
+
+def test_a_file_without_role_period_or_client_is_not_a_project(tmp_path):
+    assert parse(tmp_path, "# Notes\n\n- **Period:** 2020\n- **Client:** Acme\n") is None
+    assert parse(tmp_path, "# Notes\n\n- **Role:** X\n- **Client:** Acme\n") is None
+    assert parse(tmp_path, "# Notes\n\n- **Period:** 2020\n- **Role:** X\n") is None
