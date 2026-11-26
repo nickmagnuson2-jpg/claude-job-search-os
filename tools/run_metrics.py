@@ -234,6 +234,17 @@ NOT_TOUCH_ATTACHMENTS = frozenset({"instructions", "invoked_skills", "skill_list
                                    "queued_command", "nested_memory"})
 
 
+def _require_checkout() -> None:
+    """Refuse rather than guess the root. The guard takes its sealed names from the checkout
+    it is imported from (or SEAL_REPO_ROOT); run from a copy in a scratch folder, that is no
+    checkout, so the sibling and guard names come out wrong and real sealed turns are kept
+    (dc 2026-11-26 14:49, P0: about 150 turns). A worktree resolves to its main checkout."""
+    root = check_sealed_read._root()
+    if not (root / ".git").exists():
+        raise RuntimeError("sealed filter: the guard's root is not a git checkout (run from a "
+                           "copy?); set SEAL_REPO_ROOT to the main checkout")
+
+
 def sealed_markers(sealed_config: Path | None = None) -> tuple:
     """(class, lowercased marker) pairs, built only from the guard's names.
 
@@ -243,6 +254,7 @@ def sealed_markers(sealed_config: Path | None = None) -> tuple:
     (the guard's _PARENT_END), never a named file beside the folder; vault: each folder in the sealed-folders config;
     fail_closed_vault: the whole vault data/ when that config is missing, malformed, empty
     or names a folder that is not there (the guard fails closed the same way)."""
+    _require_checkout()
     marks = [("sibling", check_sealed_read.SEALED_HOME.lower()),
              ("in_tree", check_sealed_read.SEALED_REL.rsplit("/", 1)[-1].lower()),
              # The variable's bare name: `NAME='1'` and `export NAME="1"` override as well, and

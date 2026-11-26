@@ -36,6 +36,7 @@ def vault(tmp_path, monkeypatch):
     root = tmp_path / "checkout"
     root.mkdir()
     (root / csr.PERSONAL / FOLDER).mkdir(parents=True)
+    (root / ".git").mkdir()      # a checkout: the filter refuses a root that is not one
     monkeypatch.setattr(csr, "_root", lambda: root)
     return root
 
@@ -482,6 +483,43 @@ def test_the_report_drops_a_subagent_touch_window(tmp_path, monkeypatch, repo):
     rep = rm.build_report(tx, repo, WINDOW[0], WINDOW[1], {"proj-org"}, "r", "main")
     assert "PRIVATE WINDOW TEXT" not in json.dumps(rep)
     assert rep["sealed_excluded_total"] == 1
+
+
+# dc 2026-11-26 14:49 (P0): run from a copy (git show / git archive into scratch), the guard's
+# root resolves from the code's location, so the sibling and guard names came from the wrong
+# directory and about 150 real turns that should be sealed were kept. A root that is not a
+# checkout refuses unless SEAL_REPO_ROOT names one.
+COPY_PROBE = "import run_metrics; run_metrics.sealed_markers(); print('ran')"
+
+
+def _copy_tools(tmp_path):
+    import shutil
+    dst = tmp_path / "copy" / "tools"
+    shutil.copytree(Path(rm.__file__).resolve().parent, dst,
+                    ignore=shutil.ignore_patterns("__pycache__", ".*"))
+    return dst
+
+
+def _run_copy(tools, env_root):
+    import os
+    import subprocess
+    env = {k: v for k, v in os.environ.items() if k != "SEAL_REPO_ROOT"}
+    if env_root:
+        env["SEAL_REPO_ROOT"] = str(env_root)
+    return subprocess.run([sys.executable, "-c", COPY_PROBE], cwd=tools, env=env,
+                          capture_output=True, text=True, timeout=60)
+
+
+def test_a_copy_outside_any_checkout_refuses(tmp_path):
+    proc = _run_copy(_copy_tools(tmp_path), None)
+    assert proc.returncode != 0 and "ran" not in proc.stdout
+    assert "SEAL_REPO_ROOT" in proc.stderr
+
+
+def test_a_copy_with_seal_repo_root_set_runs(tmp_path):
+    real = Path(rm.__file__).resolve().parents[1]
+    proc = _run_copy(_copy_tools(tmp_path), real)
+    assert proc.returncode == 0 and "ran" in proc.stdout
 
 
 def test_sealed_text_asks_the_guard_with_a_supplied_config(conf, monkeypatch):
