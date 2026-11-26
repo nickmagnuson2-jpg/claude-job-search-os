@@ -140,3 +140,96 @@ def test_the_real_tree_has_no_job_in_both_folders():
     both = sorted({p.name for p in live.glob("*.plist")}
                   & {p.name for p in (live / "disarmed").glob("*.plist")})
     assert not both, f"plist(s) both standing and disarmed: {both}"
+
+
+# ---------------------------------------------------------------- rendering an awkward path
+# Parked P1s 1470.F2 / 1473.F1-F2 / 1475.F1 / 1475.F3 (s1c reviews, 2026-11-25), fixed at the
+# source on 11-26: three -c jobs left __REPO_ROOT__ unquoted, so a checkout path with a space
+# word-split the python call; and the sed renderer wrote '&' / '#' / '<' unescaped, so '&'
+# rewrote the path, '#' aborted the install and '<' broke the plist's XML.
+import plistlib  # noqa: E402
+import shlex  # noqa: E402
+import shutil  # noqa: E402
+
+import pytest  # noqa: E402
+
+AWKWARD = "/private/tmp/s3 render q&a #1 <x>"
+# One path per defect, so each fails red on its own: the space alone (word split), '&' alone
+# (sed rewrites it to the matched token, silently), and all of them together.
+PATHS = ("/private/tmp/s3 render space", "/private/tmp/s3render&amp", AWKWARD)
+SHELL_FLAGS = ("-c", "-lc")
+
+
+def _real_templates(src):
+    """Every tracked plist, standing and disarmed, copied flat into a throwaway source dir."""
+    real = REPO / "tools" / "launchd"
+    names = []
+    for p in sorted(real.glob(f"{PREFIX}*.plist")) + sorted((real / "disarmed").glob(f"{PREFIX}*.plist")):
+        shutil.copy(p, src / p.name)
+        names.append(p.name)
+    return names
+
+
+def _render_all(tmp_path, repo_root):
+    src, agents, _, _ = _tree(tmp_path, standing=(), disarmed=())
+    names = _real_templates(src)
+    env_extra = {"LAUNCHD_REPO_ROOT": repo_root,
+                 "LAUNCHD_CLAUDE_PROJECT_DIR": "/private/tmp/s3 proj&dir/-slug"}
+    old = dict(os.environ)
+    os.environ.update(env_extra)
+    try:
+        r, log = _sh(tmp_path, "install")
+    finally:
+        os.environ.clear()
+        os.environ.update(old)
+    return src, agents, names, r, log
+
+
+@pytest.mark.parametrize("path", PATHS)
+def test_every_template_renders_to_valid_xml_for_an_awkward_path(tmp_path, path):
+    src, agents, names, r, _ = _render_all(tmp_path, path)
+    assert r.returncode == 0, r.stderr
+    for name in names:
+        rendered = plistlib.loads((agents / name).read_bytes())   # raises on bad XML
+        assert path in repr(rendered) or "__REPO_ROOT__" not in (src / name).read_text(), name
+
+
+@pytest.mark.parametrize("path", PATHS)
+def test_every_shell_command_keeps_the_repo_path_as_one_word(tmp_path, path):
+    src, agents, names, r, _ = _render_all(tmp_path, path)
+    assert r.returncode == 0, r.stderr
+    checked = 0
+    for name in names:
+        template = plistlib.loads((src / name).read_bytes())["ProgramArguments"]
+        rendered = plistlib.loads((agents / name).read_bytes())["ProgramArguments"]
+        for i, arg in enumerate(template):
+            if i == 0 or template[i - 1] not in SHELL_FLAGS or "__REPO_ROOT__" not in arg:
+                continue
+            words = shlex.split(rendered[i])
+            whole = [w for w in words if w == path or w.startswith(path + "/")]
+            assert len(whole) == arg.count("__REPO_ROOT__"), (name, words)
+            checked += 1
+    assert checked >= 6, checked   # 4 standing + 2 disarmed -c jobs name the repo root
+
+
+@pytest.mark.parametrize("path", PATHS)
+def test_non_shell_arguments_carry_the_path_verbatim(tmp_path, path):
+    src, agents, names, r, _ = _render_all(tmp_path, path)
+    assert r.returncode == 0, r.stderr
+    for name in names:
+        template = plistlib.loads((src / name).read_bytes())
+        rendered = plistlib.loads((agents / name).read_bytes())
+        for key in ("StandardOutPath", "StandardErrorPath", "WorkingDirectory"):
+            if key in template:
+                assert rendered[key] == template[key].replace("__REPO_ROOT__", path), (name, key)
+
+
+def test_install_refuses_a_repo_path_it_cannot_quote_and_loads_nothing(tmp_path):
+    for bad in ('/private/tmp/a"b', "/private/tmp/a$b", "/private/tmp/a`b", "/private/tmp/a\\b"):
+        sub = tmp_path / str(abs(hash(bad)))
+        sub.mkdir()
+        _, agents, _, r, log = _render_all(sub, bad)
+        assert r.returncode != 0, bad
+        assert "cannot be quoted" in r.stderr, r.stderr
+        assert list(agents.iterdir()) == [], bad
+        assert not any(line.startswith("load ") for line in log), log

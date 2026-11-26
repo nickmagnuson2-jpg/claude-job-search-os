@@ -54,10 +54,37 @@ RENDER_SLUG="$(basename "$RENDER_PROJECT")"
 # tests and scratch renders, which must never touch the real log folder.
 LOGS_DIR="${LAUNCHD_LOGS_DIR:-$RENDER_REPO/tools/launchd/logs}"
 
-# render <template> <dest>: the plist with its three placeholders filled in.
+# Every shell-command use of a placeholder in the templates sits inside double quotes
+# ("__REPO_ROOT__/tools/x.py"), so a path with a space stays one word. Inside double quotes
+# the shell still expands " $ ` and \, and a newline cannot be carried at all, so a path
+# holding one is refused here, before anything is rendered or loaded (s1c parked P1s
+# 1470.F2 / 1473.F1 / 1475.F1, fixed 2026-11-26).
+for _v in "$RENDER_REPO" "$RENDER_PROJECT" "$RENDER_SLUG"; do
+    case "$_v" in
+        *[\"\$\`\\]* | *$'\n'*)
+            echo "install.sh: this path cannot be quoted safely in a launchd shell command" \
+                 "(it holds \" \$ \` \\ or a newline): $_v" >&2
+            exit 1 ;;
+    esac
+done
+
+# render <template> <dest>: the plist with its three placeholders filled in, in one pass and
+# XML-escaped, so '&' or '<' in a path stays literal. sed did this until 2026-11-26; it
+# rewrote '&' to the matched token and aborted on '#' (s1c parked P1s 1473.F2 / 1475.F3).
 render() {
-    sed -e "s#__CLAUDE_PROJECT_DIR__#$RENDER_PROJECT#g" -e "s#__CLAUDE_PROJECT_SLUG__#$RENDER_SLUG#g" \
-        -e "s#__REPO_ROOT__#$RENDER_REPO#g" "$1" > "$2"
+    python3 - "$1" "$2" "$RENDER_REPO" "$RENDER_PROJECT" "$RENDER_SLUG" <<'PY'
+import re
+import sys
+from xml.sax.saxutils import escape
+src, dst, repo, project, slug = sys.argv[1:6]
+values = {"__REPO_ROOT__": repo, "__CLAUDE_PROJECT_DIR__": project,
+          "__CLAUDE_PROJECT_SLUG__": slug}
+with open(src, encoding="utf-8") as f:
+    text = f.read()
+text = re.sub("|".join(values), lambda m: escape(values[m.group(0)]), text)
+with open(dst, "w", encoding="utf-8") as f:
+    f.write(text)
+PY
 }
 
 # install_one <label>: render the plist into place and (re)load it.

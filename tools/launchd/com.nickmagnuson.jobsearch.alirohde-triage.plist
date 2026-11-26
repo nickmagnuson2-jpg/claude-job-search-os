@@ -9,7 +9,7 @@
     <array>
         <string>/bin/bash</string>
         <string>-c</string>
-        <string>/opt/homebrew/bin/python3 __REPO_ROOT__/tools/alirohde_nudge.py --repo-root __REPO_ROOT__</string>
+        <string>/opt/homebrew/bin/python3 "__REPO_ROOT__/tools/alirohde_nudge.py" --repo-root "__REPO_ROOT__"</string>
     </array>
 
     <key>EnvironmentVariables</key>
