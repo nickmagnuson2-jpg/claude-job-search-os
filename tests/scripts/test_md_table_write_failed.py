@@ -122,3 +122,51 @@ def test_my_world_synthesis_reports_write_failed(tmp_path, read_only):
         _run("my_world_synthesis.py", "--repo-root", tmp_path, "append",
              "--covered-through", "2026-11-01", stdin="## block\ntext\n"),
         refl / "_longitudinal.md")
+
+
+# --- Codex 1.F1 / 1.F2 on 55ec0274 (worktree ledger) -------------------------
+
+def test_write_atomic_or_exit_wording_is_neutral_and_extra_fields_pass_through(
+        tmp_path, read_only, capsys):
+    """1.F1: the wrapper cannot know whether an earlier file was saved, so it must not
+    claim "nothing was saved"; the caller says what was written via an extra field."""
+    target = read_only(tmp_path / "ro") / "f.md"
+    with pytest.raises(SystemExit):
+        mt.write_atomic_or_exit(target, "x", written=["earlier.md"])
+    out = json.loads(capsys.readouterr().out.strip())
+    assert "nothing was saved" not in out["message"]
+    assert out["message"].startswith(f"{target} could not be written")
+    assert out["written"] == ["earlier.md"]
+
+
+def _granola_input(tmp_path: Path) -> Path:
+    inp = tmp_path / "in.json"
+    inp.write_text(json.dumps({"meeting_id": "x", "title": "t", "captured": "2026-08-25 10:00",
+                               "transcript": "Me: hi\nThem: hello", "summary": "s",
+                               "type": "recruiter", "session_desc": "d"}), encoding="utf-8")
+    return inp
+
+
+def test_granola_save_names_the_transcript_it_wrote_when_the_summary_fails(tmp_path):
+    """1.F1: the transcript lands, the summary write fails; the error must say the
+    transcript was written instead of claiming nothing was saved."""
+    out = tmp_path / "out" / "o.md"
+    summary = out.with_name("o-summary.md")
+    summary.mkdir(parents=True)  # os.replace cannot put a file over a directory
+    r = _run("granola_save.py", "write", "--output", out, "--input", _granola_input(tmp_path))
+    _assert_write_failed(r, summary)
+    res = json.loads(r.stdout.strip().splitlines()[-1])
+    assert out.is_file()
+    assert res["written"] == [str(out)]
+    assert "nothing was saved" not in res["message"]
+
+
+@needs_permissions
+def test_granola_save_reports_write_failed_when_the_output_dir_cannot_be_made(
+        tmp_path, read_only):
+    """1.F2: the output-dir mkdir ran outside the wrapper and crashed with a traceback."""
+    parent = read_only(tmp_path / "ro") / "sub"
+    out = parent / "o.md"
+    r = _run("granola_save.py", "write", "--output", out, "--input", _granola_input(tmp_path))
+    _assert_write_failed(r, parent)
+    assert json.loads(r.stdout.strip().splitlines()[-1])["written"] == []
