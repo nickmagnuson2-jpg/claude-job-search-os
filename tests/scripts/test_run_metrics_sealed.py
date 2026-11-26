@@ -81,7 +81,7 @@ def sealed_dir_cmd(minute):
 def test_the_guard_names_this_filter_imports_still_exist():
     # s3-pii rev 7 changes check_sealed_read.py; a rename there must break here, loudly.
     for name in ("SEALED_HOME", "SEALED_REL", "OVERRIDE_WORD", "VAULT_RELS", "FAIL_CLOSED",
-                 "PERSONAL", "_root"):
+                 "PERSONAL", "_root", "_names_sealed", "_PARENT_END"):
         assert hasattr(csr, name), name
     assert callable(vault_paths.sealed_rels)
     for name in ("load_sealed_meetings_config", "classify_meeting", "_transcript_names_sealed_contact"):
@@ -100,7 +100,7 @@ def test_markers_are_built_from_the_guard_not_typed_here(conf):
 def test_the_default_config_is_the_guards_own_reading():
     # Compared as booleans so a failure prints no private folder name.
     marks = rm.sealed_markers(None)
-    same_vault = {v for c, v in marks if c == "vault"} == set(csr.VAULT_RELS)
+    same_vault = set(csr.VAULT_RELS) <= {v for c, v in marks if c == "vault"}
     same_closed = any(c == "fail_closed_vault" for c, _ in marks) == bool(csr.FAIL_CLOSED)
     assert same_vault and same_closed
 
@@ -129,6 +129,38 @@ def test_the_override_counts_in_any_spelling_of_its_value(tmp_path, conf, comman
     # excluded messages; the bare name restores exact agreement (0 differences either way).
     res = run(tmp_path, typed_session(3, touch_at=1, touch=bash(2.7, command)), conf)
     assert res.excluded == 3 and res.touches_by_class == {"override": 1}
+
+
+@pytest.mark.parametrize("cls,command_of", [
+    ("vault", lambda: f"cd ../{VAULT}/data && cat {FOLDER.rsplit('/', 1)[-1]}/note.md"),  # basename/
+    ("vault_parent", lambda: f"grep -R needle ../{VAULT}/data"),         # recursive read of a parent
+    ("vault_parent", lambda: f"grep -R needle ../{VAULT}/data/"),        # same, trailing slash
+    ("vault_parent", lambda: f"ls ../{VAULT}/data/*"),                   # same, glob
+])
+def test_a_vault_folder_counts_in_the_guards_shorter_spellings(tmp_path, conf, cls, command_of):
+    # Codex 2026-11-26 F1 (P0): the guard counts the folder's basename when path-shaped and
+    # a recursive read of any parent inside the vault; the full `data/<folder>` string alone
+    # let the turns around such a read keep their text.
+    res = run(tmp_path, typed_session(3, touch_at=1, touch=bash(2.7, command_of())), conf)
+    assert res.excluded == 3 and res.touches_by_class.get(cls) == 1
+
+
+def test_a_named_file_beside_the_sealed_folder_is_not_a_touch(tmp_path, conf):
+    # The guard: "A named file beside a sealed folder ... is not a parent." Measured on 629
+    # transcripts, a plain substring for the parent added 349 exclusions the guard does not make.
+    res = run(tmp_path, typed_session(3, touch_at=1, touch=bash(2.7, f"cat ../{VAULT}/data/log.md")), conf)
+    assert res.excluded == 0 and res.touches_by_class == {}
+
+
+def test_the_guards_own_matcher_is_consulted_on_the_default_config(tmp_path, monkeypatch):
+    # The default config uses check_sealed_read._names_sealed itself (quote stripping,
+    # parents, basenames) on every decoded string, so a spelling no marker lists still counts.
+    seen = []
+    monkeypatch.setattr(csr, "_names_sealed", lambda text: seen.append(text) or "MARK-Z" in text)
+    write_session(tmp_path, "s1", typed_session(3, touch_at=1, touch=bash(2.7, "cat a\\nMARK-Z/b")))
+    res = rm.nick_messages(tmp_path / "s1.jsonl")
+    assert res.excluded == 3 and res.touches_by_class == {"guard": 1}
+    assert any("MARK-Z" in t for t in seen)
 
 
 def test_granola_sealed_meeting_classifies_sealed():
@@ -271,7 +303,7 @@ def test_is_typed_can_be_replaced(tmp_path, conf):
 
 def test_missing_vault_config_fails_closed_to_the_whole_vault_data(tmp_path, vault):
     marks = rm.sealed_markers(tmp_path / "missing.conf")
-    assert ("fail_closed_vault", f"{VAULT}/data/".lower()) in marks
+    assert ("fail_closed_vault", f"{VAULT}/data".lower()) in marks
 
 
 def test_a_config_naming_a_folder_outside_the_vault_fails_closed(tmp_path, vault):
@@ -288,6 +320,7 @@ def test_a_config_naming_a_folder_that_is_not_there_fails_closed(tmp_path, vault
 
 
 def test_fail_closed_seals_any_vault_data_path(tmp_path, vault):
+    # Fail closed is wider than a parent: every path under the vault's data/ counts.
     res = run(tmp_path, typed_session(3, touch_at=1, touch=bash(2.7, f"cat ../{VAULT}/data/other/a.md")),
               tmp_path / "missing.conf")
     assert res.excluded == 3 and res.touches_by_class == {"fail_closed_vault": 1}

@@ -59,6 +59,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import json
 import os
@@ -236,7 +237,9 @@ def sealed_markers(sealed_config: Path | None = None) -> tuple:
     """(class, lowercased marker) pairs, built only from the guard's names.
 
     sibling: the sealed sibling directory; in_tree: the old in-repo folder's own name;
-    override: the SEAL_READ_OK variable, in any spelling of its value; vault: each folder in the sealed-folders config;
+    override: the SEAL_READ_OK variable, in any spelling of its value; vault_parent: a
+    directory above a sealed folder inside the vault, counted only as a path that ENDS there
+    (the guard's _PARENT_END), never a named file beside the folder; vault: each folder in the sealed-folders config;
     fail_closed_vault: the whole vault data/ when that config is missing, malformed, empty
     or names a folder that is not there (the guard fails closed the same way)."""
     marks = [("sibling", check_sealed_read.SEALED_HOME.lower()),
@@ -254,10 +257,21 @@ def sealed_markers(sealed_config: Path | None = None) -> tuple:
             rels = ()
         root = check_sealed_read._root() / check_sealed_read.PERSONAL
         closed = not rels or not all((root / r).is_dir() for r in rels)
-    marks += [("vault", r) for r in rels]
-    if closed:
-        marks.append(("fail_closed_vault", f"{vault}/data/".lower()))
-    return tuple(marks)
+    if closed:   # first, so the same string as a vault ancestor keeps this class
+        marks.append(("fail_closed_vault", f"{vault}/data".lower()))
+    for r in rels:
+        # The guard also counts a folder by its basename when path-shaped (`<name>/`) and a
+        # read of any directory above it inside the vault (`grep -R x ../<vault>/data`), so
+        # each of those is a marker too (Codex 2026-11-26 F1, P0). Wider, never narrower.
+        parts = r.split("/")
+        marks += [("vault", r), ("vault", parts[-1] + "/")]
+        marks += [("vault_parent", f"{vault}/" + "/".join(parts[:i]).lower()) for i in range(1, len(parts))]
+    seen, out = set(), []
+    for c, m in marks:
+        if m not in seen:
+            seen.add(m)
+            out.append((c, m))
+    return tuple(out)
 
 
 def is_touch(record: dict) -> bool:
@@ -278,6 +292,18 @@ def is_typed(record: dict) -> bool:
             and not record.get("isMeta") and not record.get("isSidechain"))
 
 
+@functools.lru_cache(maxsize=None)
+def _parent_re(marker: str):
+    return re.compile(re.escape(marker) + "/*" + check_sealed_read._PARENT_END)
+
+
+def marker_hits(low: str, markers) -> list:
+    """Classes of the markers in lowercased text, each once, in marker order."""
+    return list(dict.fromkeys(
+        c for c, m in markers
+        if (_parent_re(m).search(low) if c == "vault_parent" else m in low)))
+
+
 @dataclass
 class SealedScan:
     turn_of_line: dict           # 1-based line -> typed-turn index it falls in (0 before the first)
@@ -289,8 +315,23 @@ class SealedScan:
         return self.turn_of_line.get(line, 0) in self.bad_turns
 
 
-def scan_sealed(path: Path, markers=None, window: int = SEALED_WINDOW, typed=is_typed) -> SealedScan:
-    """One pass over a transcript: which typed turns sit inside a sealed window."""
+def _guard_names(d, raw: str) -> bool:
+    """The guard's own matcher (quote stripping, basenames, parents) on every decoded string
+    of a record, or on the raw line when it does not parse. JSON escapes would hide a name
+    from it on the raw line (`\\n<name>` reads as one word), hence the decoded strings."""
+    texts = _strings(d) if isinstance(d, (dict, list)) else (raw,)
+    return any(check_sealed_read._names_sealed(t) for t in texts)
+
+
+def scan_sealed(path: Path, markers=None, window: int = SEALED_WINDOW, typed=is_typed,
+                guard: bool | None = None) -> SealedScan:
+    """One pass over a transcript: which typed turns sit inside a sealed window.
+
+    markers None = the default config's markers. guard: also ask the guard's own matcher,
+    which reads the real config, so it applies only when the default config is in use
+    (None = decide from that)."""
+    if guard is None:
+        guard = markers is None and DEFAULT_SEALED_CONFIG is None
     markers = sealed_markers(DEFAULT_SEALED_CONFIG) if markers is None else markers
     turn_of_line, typed_lines, touched, by_class = {}, [], [], {}
     cur = -1
@@ -308,7 +349,9 @@ def scan_sealed(path: Path, markers=None, window: int = SEALED_WINDOW, typed=is_
             if isinstance(d, dict) and not is_touch(d):
                 continue
             low = raw.lower()
-            hit = [c for c, m in markers if m in low]
+            hit = marker_hits(low, markers)
+            if not hit and guard and _guard_names(d, raw):
+                hit = ["guard"]
             if hit:
                 touched.append(max(cur, 0))
                 for c in hit:
@@ -332,7 +375,8 @@ def nick_messages(path: Path, sealed_config: Path | None = None, window: int = S
     """Nick's typed messages in one transcript, with every sealed-window turn removed.
     `line` is the record's 1-based line in the file. Text of excluded turns is never read
     into the result."""
-    scan = scan_sealed(path, sealed_markers(sealed_config), window, is_typed)
+    scan = scan_sealed(path, sealed_markers(sealed_config), window, is_typed,
+                       guard=sealed_config is None)
     want = {n for n in scan.typed_lines if not scan.sealed(n)}
     kept = []
     with open(path, errors="replace") as f:
@@ -356,7 +400,9 @@ def sealed_text(text: str, meetings_config: dict | None, sealed_config: Path | N
     if cfg is None:
         return True
     low = (text or "").lower()
-    if any(m in low for _, m in sealed_markers(sealed_config)):
+    if marker_hits(low, sealed_markers(sealed_config)):
+        return True
+    if sealed_config is None and check_sealed_read._names_sealed(text or ""):
         return True
     if any(a and a in low for a in cfg.get("attendees", ())):
         return True
@@ -365,12 +411,13 @@ def sealed_text(text: str, meetings_config: dict | None, sealed_config: Path | N
     return meeting_vocab._transcript_names_sealed_contact(text or "", cfg)
 
 
-def load_session(path: Path, start: float, end: float, markers=None) -> Session | None:
+def load_session(path: Path, start: float, end: float, markers=None,
+                 guard: bool | None = None) -> Session | None:
     """One session's activity in [start, end]. Counts include sealed-window turns; their
     TEXT does not: it is None in human, received, sent and hook_errors, and the session's
     sealed_excluded says how many typed turns were dropped."""
     s = Session(session_id=path.stem)
-    scan = scan_sealed(path, markers)
+    scan = scan_sealed(path, markers, guard=guard)
     with open(path, errors="replace") as f:
         for n, line in enumerate(f, 1):
             sealed = scan.sealed(n)
@@ -617,7 +664,7 @@ def build_report(transcripts: Path, repo: Path, start: str, end: str, org_names:
             # Speed guard, not an equivalence: a transcript copied or restored with an old
             # mtime would be skipped (Codex r3 F2, parked; 0 of 395 live files on 2026-11-23).
             continue
-        s = load_session(p, t0, t1, markers)
+        s = load_session(p, t0, t1, markers, guard=DEFAULT_SEALED_CONFIG is None)
         if s:
             sessions.append(s)
     names = resolve_names(sessions)
