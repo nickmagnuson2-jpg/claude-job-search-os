@@ -390,3 +390,97 @@ def test_infrastructure_plus_an_ordinary_script_is_not_excluded():
     """Only an ALL-infrastructure command is skipped; a real script beside it still logs."""
     cmd = "python3 tools/friction_log.py list; python3 tools/pipe_write.py add x"
     assert fs.is_excluded_bash(_bash(cmd)) is False
+
+
+# --- traceback_blame: who raised it, not who was named first (2026-11-25, S6 triage s.3) ---
+
+_PY = "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/lib/python3.14"
+# S6's live shape: pipe_write's usage error goes to stdout as JSON and usage text to stderr;
+# `2>&1` merges them and the CALLER's json.load fails on the merged text.
+S6_COMMAND = ('PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . update Acme --bogus 2>&1 '
+              '| python3 -c "import json,sys; print(json.load(sys.stdin))"')
+S6_OUTPUT = (
+    'usage: pipe_write.py [-h] [--repo-root REPO_ROOT] [--dry-run] {add,update,note,remove,restage} ...\n'
+    'Traceback (most recent call last):\n'
+    '  File "<string>", line 1, in <module>\n'
+    f'  File "{_PY}/json/__init__.py", line 293, in load\n'
+    f'  File "{_PY}/json/decoder.py", line 361, in raw_decode\n'
+    'json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)\n')
+PIPE_WRITE_OWN = (
+    'Traceback (most recent call last):\n'
+    '  File "/Users/someone/repo/tools/pipe_write.py", line 610, in <module>\n'
+    '  File "/Users/someone/repo/tools/pipe_write.py", line 402, in cmd_update\n'
+    'KeyError: \'Stage\'\n')
+PIPE_WRITE_VIA_LIBRARY = (
+    'Traceback (most recent call last):\n'
+    '  File "/Users/someone/repo/tools/pipe_write.py", line 610, in <module>\n'
+    '  File "/Users/someone/repo/tools/md_table.py", line 88, in write_atomic\n'
+    'OSError: [Errno 28] No space left on device\n')
+
+
+def test_s6_live_shape_blames_the_inline_caller_not_pipe_write():
+    assert fs.derive_surface("Bash", S6_COMMAND, S6_OUTPUT) == "inline python3 (with pipe_write.py)"
+
+
+def test_a_traceback_raised_inside_pipe_write_still_blames_pipe_write():
+    cmd = "PYTHONIOENCODING=utf-8 python3 tools/pipe_write.py --repo-root . update Acme Applied"
+    assert fs.derive_surface("Bash", cmd, PIPE_WRITE_OWN) == "pipe_write.py"
+    # piped onward WITHOUT 2>&1, the tool's traceback stays on stderr, which the logger sees
+    # next to the caller's own failure: the tool's frame is visible, so the tool keeps the blame
+    piped = ('python3 tools/pipe_write.py update Acme Applied '
+             '| python3 -c "import json,sys; json.load(sys.stdin)"')
+    both = PIPE_WRITE_OWN + S6_OUTPUT.split("\n", 1)[1]
+    assert fs.derive_surface("Bash", piped, both) == "pipe_write.py"
+
+
+def test_with_2to1_a_tool_crash_is_not_visible_and_the_surface_keeps_the_tool_name():
+    """Codex/Grok s4c F1, org ruling 2026-11-25: with `2>&1 |` the pipe consumes the tool's
+    own traceback, so the logger sees only the caller's frames. A real crash and a usage error
+    look identical there; S6's evidence favours the caller, and the surface still names the
+    tool, so a grep for it finds every such row. Ambiguity pinned on purpose."""
+    caller_only = S6_OUTPUT.split("\n", 1)[1]          # what the logger sees either way
+    assert fs.derive_surface("Bash", S6_COMMAND, caller_only) == "inline python3 (with pipe_write.py)"
+    assert "pipe_write.py" in fs.derive_surface("Bash", S6_COMMAND, caller_only)
+
+
+def test_a_library_frame_under_the_named_tool_blames_the_named_tool():
+    cmd = "python3 tools/pipe_write.py update Acme Applied"
+    assert fs.traceback_blame(["pipe_write.py"], PIPE_WRITE_VIA_LIBRARY) == "pipe_write.py"
+    assert fs.derive_surface("Bash", cmd, PIPE_WRITE_VIA_LIBRARY) == "pipe_write.py"
+
+
+def test_no_traceback_keeps_the_first_named_script():
+    out = '{"status": "error", "message": "no row matches Acme"}'
+    assert fs.traceback_blame(["pipe_write.py", "todo_write.py"], out) == "pipe_write.py"
+    assert fs.traceback_blame(["pipe_write.py"], "") == "pipe_write.py"
+
+
+def test_the_deepest_named_script_wins_when_two_are_named():
+    out = ('Traceback (most recent call last):\n  File "tools/todo_write.py", line 1, in <module>\n'
+           'ValueError: x\n')
+    assert fs.traceback_blame(["pipe_write.py", "todo_write.py"], out) == "todo_write.py"
+
+
+def test_a_tools_module_the_caller_imported_is_blamed_over_the_label():
+    out = ('Traceback (most recent call last):\n  File "<string>", line 1, in <module>\n'
+           '  File "tools/md_table.py", line 40, in read_file\nFileNotFoundError: x\n')
+    assert fs.traceback_blame(["pipe_write.py"], out) == "md_table.py"
+    # an excluded logger frame is never the blame
+    out2 = out.replace("md_table.py", "friction_log.py")
+    assert fs.traceback_blame(["pipe_write.py"], out2) == "inline python3 (with pipe_write.py)"
+    # a module named tools.py outside a tools/ directory is not a tools/ frame
+    out3 = out.replace("tools/md_table.py", "lib/notools/x.py")
+    assert fs.traceback_blame(["pipe_write.py"], out3) == "inline python3 (with pipe_write.py)"
+
+
+def test_no_named_script_returns_empty():
+    assert fs.traceback_blame([], S6_OUTPUT) == ""
+
+
+def test_a_traceback_with_no_frame_lines_keeps_the_named_script():
+    # nothing shows who raised it (truncated output, or only the exception line), so keep the tool
+    out = "Exit code 1\nTraceback (most recent call last):\nRuntimeError: boom\n"
+    assert fs.traceback_blame(["pipe_write.py"], out) == "pipe_write.py"
+    # one <string> frame IS evidence: the caller's code ran and raised
+    out2 = out.replace("RuntimeError", '  File "<string>", line 1, in <module>\nRuntimeError')
+    assert fs.traceback_blame(["pipe_write.py"], out2) == "inline python3 (with pipe_write.py)"

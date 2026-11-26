@@ -34,6 +34,7 @@ everything both end with the ledger being ignored.
 from __future__ import annotations
 
 import json
+import re
 import os
 import subprocess
 import sys
@@ -108,9 +109,16 @@ def run(payload, ledger: Path | None = None, *, raw: str | None = None
                           capture_output=True, text=True, env=env)
 
 
-def bash_failure(command: str, *, stderr: str = "Traceback (most recent call last):\n"
-                 '  File "tools/x.py", line 1, in <module>\nTypeError: bad call',
+def bash_failure(command: str, *, stderr: str | None = None,
                  exit_code: int | None = 1) -> dict:
+    if stderr is None:
+        # A real traceback from a tool carries a frame in that tool. Since 2026-11-25 the
+        # loggers read the frames (friction_surface.traceback_blame), so a frame-less or
+        # foreign-frame default would be filed as the caller's error, not the tool's.
+        named = re.findall(r"tools/([a-z0-9_]+\.py)", command)
+        frame = f"tools/{named[-1]}" if named else "tools/x.py"   # the last one ran last
+        stderr = ("Traceback (most recent call last):\n"
+                  f'  File "{frame}", line 1, in <module>\nTypeError: bad call')
     fd: dict = {"stderr": f"{stderr} {SENTINEL}"}
     if exit_code is not None:
         fd["exit_code"] = exit_code

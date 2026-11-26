@@ -70,6 +70,15 @@ TRACEBACK = (
     'FileNotFoundError: [Errno 2] No such file or directory: \'/tmp/shot.png\'\n'
 )
 
+# A traceback raised inside pipe_write.py itself: its own frame is in the traceback.
+PIPE_WRITE_TRACEBACK = (
+    'Traceback (most recent call last):\n'
+    '  File "/repo/tools/pipe_write.py", line 610, in <module>\n'
+    '    main()\n'
+    '  File "/repo/tools/pipe_write.py", line 402, in cmd_update\n'
+    "KeyError: 'Stage'\n"
+)
+
 SHIM = (
     "#!/bin/sh\n"
     'for a in "$@"; do printf "%s\\n" "$a" >> "$FRICTION_RECORD"; done\n'
@@ -347,7 +356,7 @@ def test_a_traceback_surface_falls_back_to_the_skill_named_in_the_command(hook_r
 def test_a_traceback_surface_prefers_a_tools_script_when_the_command_names_one(hook_run):
     """A tools script that crashes instead of emitting JSON must land on the same ledger
     surface as its JSON-contract failures, or one recurring defect splits into two rows."""
-    r = hook_run("python3 tools/pipe_write.py update acme", stderr=TRACEBACK)
+    r = hook_run("python3 tools/pipe_write.py update acme", stderr=PIPE_WRITE_TRACEBACK)
     assert r.surface == "pipe_write.py"
 
 
@@ -380,7 +389,7 @@ def test_a_real_traceback_beside_an_infrastructure_script_is_still_logged(hook_r
     """Only an ALL-infrastructure command is skipped; a crash of an ordinary script in the
     same command must still reach the ledger."""
     r = hook_run("python3 tools/friction_log.py list; python3 tools/pipe_write.py add x",
-                 stderr=TRACEBACK)
+                 stderr=PIPE_WRITE_TRACEBACK)
     assert r.logged
     assert r.surface == "pipe_write.py", "the crash belongs to the real script, not a frame"
 
@@ -616,3 +625,32 @@ def test_the_hook_is_still_wired_as_a_posttooluse_bash_hook():
              if entry.get("matcher") == "Bash"
              for h in entry.get("hooks", [])]
     assert any("check_script_error_logged.py" in c for c in wired), wired
+
+
+# --- who raised it (2026-11-25, S6 triage section 3) -------------------------
+
+def test_the_callers_json_load_is_not_blamed_on_the_tool_it_read(hook_run):
+    """S6's live shape: pipe_write's usage error, merged by 2>&1, fails the CALLER's
+    json.load. Every frame is the caller's or stdlib's, so pipe_write is not the surface."""
+    tb = ('usage: pipe_write.py [-h] [--repo-root REPO_ROOT] ...\n'
+          'Traceback (most recent call last):\n'
+          '  File "<string>", line 1, in <module>\n'
+          '  File "/opt/homebrew/lib/python3.14/json/__init__.py", line 293, in load\n'
+          '  File "/opt/homebrew/lib/python3.14/json/decoder.py", line 361, in raw_decode\n'
+          'json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)\n')
+    cmd = ('python3 tools/pipe_write.py update acme --bogus 2>&1 '
+           '| python3 -c "import json,sys; json.load(sys.stdin)" || true')
+    r = hook_run(cmd, stdout=tb)
+    assert r.logged
+    assert r.surface == "inline python3 (with pipe_write.py)"
+
+
+def test_a_crash_inside_the_tool_is_still_blamed_on_the_tool_when_piped(hook_run):
+    """Without 2>&1 the tool's traceback stays on stderr, visible beside the caller's failure."""
+    cmd = ('python3 tools/pipe_write.py update acme '
+           '| python3 -c "import json,sys; json.load(sys.stdin)" || true')
+    caller = ('Traceback (most recent call last):\n'
+              '  File "<string>", line 1, in <module>\n'
+              'json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)\n')
+    r = hook_run(cmd, stdout=caller, stderr=PIPE_WRITE_TRACEBACK)
+    assert r.surface == "pipe_write.py"

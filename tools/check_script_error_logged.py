@@ -46,7 +46,7 @@ SCRIPT_RE = re.compile(
 # Scripts that should never trigger logging themselves. Shared with the other two
 # capture paths; a local two-item copy here missed log_tool_failure.py, so smoke tests
 # of that logger were filed as 32 "crashes" of it.
-from friction_surface import EXCLUDE_SCRIPTS  # noqa: E402
+from friction_surface import EXCLUDE_SCRIPTS, traceback_blame  # noqa: E402
 
 ERROR_MARKER_RE = re.compile(r'"status"\s*:\s*"error"')
 # JSON message field (best-effort extraction; non-greedy)
@@ -111,12 +111,14 @@ def extract_nature(combined: str, surface: str) -> str:
 
 def derive_traceback_surface(command: str, combined: str) -> str:
     """Best-effort surface name for a Python traceback that isn't a tools/*.py
-    JSON-contract call. Priority: tools script in command > skill name in command
+    JSON-contract call. Priority: tools script in command (but only the one the
+    traceback's frames show raised it; else the caller label, via the shared
+    friction_surface.traceback_blame, 2026-11-25) > skill name in command
     > deepest real .py frame in the traceback > generic inline label."""
-    for m in SCRIPT_RE.finditer(command):
-        name = m.group(1).lower() + ".py"
-        if name not in EXCLUDE_SCRIPTS:
-            return name
+    named = [m.group(1).lower() + ".py" for m in SCRIPT_RE.finditer(command)]
+    named = [n for n in named if n not in EXCLUDE_SCRIPTS]
+    if named:
+        return traceback_blame(named, combined)
     sm = SKILL_PATH_RE.search(command)
     if sm:
         return f"{sm.group(1).lower()} skill (inline)"
