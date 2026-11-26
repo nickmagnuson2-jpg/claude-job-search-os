@@ -715,14 +715,18 @@ def _ssh_host_candidates(args: list[str]) -> list[str]:
     """Every token of an ssh argv that could name the host ssh connects to, lowercased
     (host names are case-insensitive). Covers the destination as [user@]host[:path] or
     ssh://[user@]host[:port]/path, the user from -l or -oUser, and the host from
-    -o HostName=, -oHostName= or the ps-joined `-o HostName <host>` (Codex 11-26 s5c F1 and
-    narrow F1; dc 14:11 ruling). -p, -oPort and -oUser values are not hosts. Erring toward
-    busy is the safe direction: a false busy only delays a landing, so every bare token is a
-    candidate rather than only the parsed destination.
+    `-o HostName=<host>` or `-oHostName=<host>` (Codex 11-26 s5c F1 and narrow F1; dc 14:11
+    ruling). -p, -oPort and -oUser values are not hosts. Erring toward busy is the safe
+    direction: a false busy only delays a landing, so every bare token is a candidate
+    rather than only the parsed destination. That fallback is also what catches the
+    ps-joined `-o HostName <host>`: ps splits it into separate tokens, so the option parse
+    sees `HostName` with no value and the host arrives as a bare token (Fable 6.F2).
 
-    Known limit: a host that only ssh_config supplies (`ssh gh` where `Host gh` sets
-    HostName github.com), a ProxyJump/ProxyCommand hop, or an IP address for GitHub is not
-    recognised. ps output does not carry ssh_config, so those cannot be read from argv."""
+    Known limits: a host that only ssh_config supplies (`ssh gh` where `Host gh` sets
+    HostName github.com), a ProxyJump/ProxyCommand hop, an IP address for GitHub, or a
+    HostName given inside clustered short flags (`ssh -vo HostName=github.com gh`, Fable
+    6.F1) is not recognised. ps output does not carry ssh_config, so the first three cannot
+    be read from argv; git does not produce the fourth."""
     out = []
     prev = ""
     for t in args:
