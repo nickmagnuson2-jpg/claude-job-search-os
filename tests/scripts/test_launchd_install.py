@@ -44,8 +44,10 @@ def _sh(tmp_path, *args):
     src, agents, calls, fake = (tmp_path / "repo" / "tools" / "launchd",
                                 tmp_path / "LaunchAgents",
                                 tmp_path / "launchctl.calls", tmp_path / "launchctl")
+    # LAUNCHD_LOGS_DIR too: install clears stale logs in the main checkout's log folder by
+    # default, and a test must never touch the real one (S1, 2026-11-25).
     env = {**os.environ, "LAUNCHD_SOURCE_DIR": str(src), "LAUNCHD_TARGET_DIR": str(agents),
-           "LAUNCHCTL": str(fake)}
+           "LAUNCHCTL": str(fake), "LAUNCHD_LOGS_DIR": str(src / "logs")}
     r = subprocess.run(["bash", str(SCRIPT), *args], capture_output=True, text=True, env=env)
     log = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
     return r, log

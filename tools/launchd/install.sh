@@ -49,6 +49,11 @@ RENDER_SLUG="$(basename "$RENDER_PROJECT")"
 [ -n "$RENDER_REPO" ] && [ -n "$RENDER_PROJECT" ] && [ -n "$RENDER_SLUG" ] || {
     echo "install.sh: could not resolve the repo root and Claude project folder" >&2; exit 1; }
 
+# The rendered plists log to the main checkout's tools/launchd/logs, so that is where stale
+# logs are cleared, even when install runs from a worktree (Grok s1c r2 F1). Overridable for
+# tests and scratch renders, which must never touch the real log folder.
+LOGS_DIR="${LAUNCHD_LOGS_DIR:-$RENDER_REPO/tools/launchd/logs}"
+
 # render <template> <dest>: the plist with its three placeholders filled in.
 render() {
     sed -e "s#__CLAUDE_PROJECT_DIR__#$RENDER_PROJECT#g" -e "s#__CLAUDE_PROJECT_SLUG__#$RENDER_SLUG#g" \
@@ -67,7 +72,7 @@ install_one() {
     # Origin 2026-06-15 (all 8 jobs dead ~2wks). See memory
     # feedback_watchdog_must_live_outside_what_it_watches; health is surfaced
     # by tools/check_automation_health.py in /standup.
-    rm -f "$SOURCE_DIR/logs/$short.log" "$SOURCE_DIR/logs/$short.err"
+    rm -f "$LOGS_DIR/$short.log" "$LOGS_DIR/$short.err"
     "$LAUNCHCTL" unload "$TARGET_DIR/$label.plist" 2>/dev/null || true
     "$LAUNCHCTL" load "$TARGET_DIR/$label.plist"
 }
@@ -136,7 +141,7 @@ case "${1:-install}" in
             install_one "$label"
         done
         echo ""
-        echo "Done. Logs will appear in $SOURCE_DIR/logs/"
+        echo "Done. Logs will appear in $LOGS_DIR/"
         echo "Run: launchctl list | grep nickmagnuson  -- to verify"
         ;;
     uninstall)

@@ -731,7 +731,8 @@ def summarize(events: list[Event], reconfirms: Callable[[int], bool]) -> dict[st
 # applies it to the observed entries and writes the result.
 
 import sys  # noqa: E402
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# tools/ is already sys.path[0] when this runs as a script, and every importer has it on the
+# path to import this module, so no insert (mutation, 2026-11-25: dropping one was equivalent).
 from hook_runtime import claude_project_dir  # noqa: E402
 from vault_paths import main_checkout  # noqa: E402
 
