@@ -416,3 +416,32 @@ def test_load_session_outside_any_window_is_unchanged(tmp_path, conf, monkeypatc
     s = rm.load_session(tmp_path / "s1.jsonl", *map(rm.parse_ts, WINDOW))
     assert s.sealed_excluded == 0
     assert [x["catcher_class"] for x in rm.failures(s, names={}, org_names=set())] == ["nick"]
+
+
+# Codex 2026-11-26 round 3 F1 (P0): a supplied config turned the guard off, so the round-2
+# walk from the vault root was again invisible. The guard is asked whatever the config;
+# a supplied config only ADDS markers.
+@pytest.mark.parametrize("record_of", [
+    lambda: tool(2.7, "Bash", {"command": f"cd {csr.PERSONAL} && grep -r needle ."}),
+    lambda: tool(2.7, "Grep", {"pattern": "needle", "path": csr.PERSONAL}),
+])
+def test_a_walk_from_the_vault_root_is_a_touch_with_a_supplied_config(tmp_path, conf, record_of):
+    res = run(tmp_path, typed_session(3, touch_at=1, touch=record_of()), conf)
+    assert res.excluded == 3 and res.touches_by_class == {"guard": 1}
+
+
+def test_the_report_drops_a_vault_root_walk_window_with_a_supplied_config(tmp_path, conf, monkeypatch, repo):
+    monkeypatch.setattr(rm, "DEFAULT_SEALED_CONFIG", conf, raising=False)
+    tx = tmp_path / "tx"
+    tx.mkdir()
+    write_session(tx, "s1", [assistant(0), human(1, "that is wrong: PRIVATE WINDOW TEXT"),
+                             tool(1.5, "Bash", {"command": f"cd {csr.PERSONAL} && grep -r needle ."})])
+    rep = rm.build_report(tx, repo, WINDOW[0], WINDOW[1], {"proj-org"}, "r", "main")
+    assert "PRIVATE WINDOW TEXT" not in json.dumps(rep)
+    assert rep["sealed_excluded_total"] == 1
+
+
+def test_sealed_text_asks_the_guard_with_a_supplied_config(conf, monkeypatch):
+    monkeypatch.setattr(csr, "_names_sealed", lambda text: "MARK-Z" in text)
+    assert rm.sealed_text("see MARK-Z/notes", WISPR_CFG, conf) is True
+    assert rm.sealed_text("draft the follow-up to the recruiter", WISPR_CFG, conf) is False

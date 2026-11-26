@@ -351,15 +351,12 @@ def _guard_tool_reads(d: dict) -> bool:
     return False
 
 
-def scan_sealed(path: Path, markers=None, window: int = SEALED_WINDOW, typed=is_typed,
-                guard: bool | None = None) -> SealedScan:
+def scan_sealed(path: Path, markers=None, window: int = SEALED_WINDOW, typed=is_typed) -> SealedScan:
     """One pass over a transcript: which typed turns sit inside a sealed window.
 
-    markers None = the default config's markers. guard: also ask the guard's own matcher,
-    which reads the real config, so it applies only when the default config is in use
-    (None = decide from that)."""
-    if guard is None:
-        guard = markers is None and DEFAULT_SEALED_CONFIG is None
+    markers None = the default config's markers. The guard's own matcher is asked whatever
+    the config: a supplied config only ADDS markers, so a walk from the vault root, which only
+    the guard sees, stays a touch (Codex 2026-11-26 round 3 F1, P0)."""
     markers = sealed_markers(DEFAULT_SEALED_CONFIG) if markers is None else markers
     turn_of_line, typed_lines, touched, by_class = {}, [], [], {}
     cur = -1
@@ -378,7 +375,7 @@ def scan_sealed(path: Path, markers=None, window: int = SEALED_WINDOW, typed=is_
                 continue
             low = raw.lower()
             hit = marker_hits(low, markers)
-            if not hit and guard and _guard_names(d, raw):
+            if not hit and _guard_names(d, raw):
                 hit = ["guard"]
             if hit:
                 touched.append(max(cur, 0))
@@ -403,8 +400,7 @@ def nick_messages(path: Path, sealed_config: Path | None = None, window: int = S
     """Nick's typed messages in one transcript, with every sealed-window turn removed.
     `line` is the record's 1-based line in the file. Text of excluded turns is never read
     into the result."""
-    scan = scan_sealed(path, sealed_markers(sealed_config), window, is_typed,
-                       guard=sealed_config is None)
+    scan = scan_sealed(path, sealed_markers(sealed_config), window, is_typed)
     want = {n for n in scan.typed_lines if not scan.sealed(n)}
     kept = []
     with open(path, errors="replace") as f:
@@ -430,7 +426,7 @@ def sealed_text(text: str, meetings_config: dict | None, sealed_config: Path | N
     low = (text or "").lower()
     if marker_hits(low, sealed_markers(sealed_config)):
         return True
-    if sealed_config is None and check_sealed_read._names_sealed(text or ""):
+    if check_sealed_read._names_sealed(text or ""):
         return True
     if any(a and a in low for a in cfg.get("attendees", ())):
         return True
@@ -439,13 +435,12 @@ def sealed_text(text: str, meetings_config: dict | None, sealed_config: Path | N
     return meeting_vocab._transcript_names_sealed_contact(text or "", cfg)
 
 
-def load_session(path: Path, start: float, end: float, markers=None,
-                 guard: bool | None = None) -> Session | None:
+def load_session(path: Path, start: float, end: float, markers=None) -> Session | None:
     """One session's activity in [start, end]. Counts include sealed-window turns; their
     TEXT does not: it is None in human, received, sent and hook_errors, and the session's
     sealed_excluded says how many typed turns were dropped."""
     s = Session(session_id=path.stem)
-    scan = scan_sealed(path, markers, guard=guard)
+    scan = scan_sealed(path, markers)
     with open(path, errors="replace") as f:
         for n, line in enumerate(f, 1):
             sealed = scan.sealed(n)
@@ -692,7 +687,7 @@ def build_report(transcripts: Path, repo: Path, start: str, end: str, org_names:
             # Speed guard, not an equivalence: a transcript copied or restored with an old
             # mtime would be skipped (Codex r3 F2, parked; 0 of 395 live files on 2026-11-23).
             continue
-        s = load_session(p, t0, t1, markers, guard=DEFAULT_SEALED_CONFIG is None)
+        s = load_session(p, t0, t1, markers)
         if s:
             sessions.append(s)
     names = resolve_names(sessions)
