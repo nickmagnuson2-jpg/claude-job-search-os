@@ -1143,7 +1143,9 @@ def test_remove_archives_the_row_with_its_cells(tmp_path):
     days |= _s6c_today_window()
     assert code == 0, out
     cols = _s6c_row(tmp_path, "Acme Corp")
-    assert cols[:4] == ["Acme Corp", "Director", "Withdrawn", "2026-01-01"]
+    assert cols[:3] == ["Acme Corp", "Director", "Withdrawn"]
+    # Date Updated becomes the close date on archive (Nick, 2026-11-25), not the old 2026-01-01.
+    assert cols[3] in days
     assert cols[4:6] == ["Call Jane", "cv-acme.pdf"]
     assert cols[6] in {f"warm lead - Withdrawn {d}" for d in days}
     assert cols[7] == "https://acme.example/jobs/1"
