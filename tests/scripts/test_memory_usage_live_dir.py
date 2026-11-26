@@ -35,13 +35,19 @@ def _fake_worktree(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def _load(path: Path):
+    """Execute a copy of the module, then undo everything the execution added: its own
+    sys.path insert and any module it imported from the temp tree (Codex s1c 10.F2)."""
     spec = importlib.util.spec_from_file_location("memory_usage_live_dir_probe", path)
     mod = importlib.util.module_from_spec(spec)
+    path_before = list(sys.path)
+    modules_before = set(sys.modules)
     sys.modules[spec.name] = mod
     try:
         spec.loader.exec_module(mod)
     finally:
-        sys.modules.pop(spec.name, None)
+        sys.path[:] = path_before
+        for name in set(sys.modules) - modules_before:
+            del sys.modules[name]
     return mod
 
 
@@ -53,3 +59,17 @@ def test_live_memory_dir_is_the_main_checkouts_tier_from_a_worktree(tmp_path, mo
     mod = _load(wt / "tools" / "memory_usage.py")
     expected = config / "projects" / str(main).replace("/", "-") / "memory"
     assert mod.LIVE_MEMORY_DIR == expected
+
+
+def test_loading_the_copy_leaves_no_trace(tmp_path, monkeypatch):
+    """Codex s1c 10.F2: the copy's own sys.path insert and the siblings it imports from the
+    temp tree must not outlive the test, or a later test reads a deleted folder."""
+    tmp_path = tmp_path.resolve()
+    _main, wt = _fake_worktree(tmp_path)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
+    path_before = list(sys.path)
+    _load(wt / "tools" / "memory_usage.py")
+    assert sys.path == path_before
+    from_tmp = sorted(name for name, m in list(sys.modules.items())
+                      if str(getattr(m, "__file__", None) or "").startswith(str(tmp_path)))
+    assert from_tmp == []
