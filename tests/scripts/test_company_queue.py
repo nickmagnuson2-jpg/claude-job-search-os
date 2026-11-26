@@ -765,3 +765,82 @@ def test_cli_add_refuses_input_that_is_not_a_json_list(tmp_path, monkeypatch, ca
     rc, out = _cli_stdin(monkeypatch, capsys, tmp_path, ["add", "--preset", "lane-a"], stdin=stdin)
     assert rc == 1 and out["status"] == "error"
     assert not cq.queue_path(tmp_path).exists()
+
+
+# --- load() fails closed on a queue path that is not a regular file -----------------------
+# Codex row 1359 P1 (l1b-funnel-fixes-1124, parked): load() used is_file(), so a directory or
+# a broken symlink at the queue path read as an empty queue, and agent_discover's exclusions
+# (which go through load) failed open. Only a path that does not exist at all is empty.
+
+def _queue_at(root):
+    q = cq.queue_path(root)
+    q.parent.mkdir(parents=True, exist_ok=True)
+    return q
+
+
+def test_load_refuses_a_directory_at_the_queue_path(tmp_path):
+    _queue_at(tmp_path).mkdir()
+    with pytest.raises(ValueError, match="not a regular file"):
+        cq.load(tmp_path)
+
+
+def test_load_refuses_a_broken_symlink_at_the_queue_path(tmp_path):
+    _queue_at(tmp_path).symlink_to(tmp_path / "gone.json")
+    with pytest.raises(ValueError, match="not a regular file"):
+        cq.load(tmp_path)
+
+
+def test_load_follows_a_symlink_to_a_real_queue(tmp_path):
+    real = tmp_path / "real.json"
+    real.write_text(json.dumps({"pending": [{"name": "Acme"}], "decided": []}), encoding="utf-8")
+    _queue_at(tmp_path).symlink_to(real)
+    assert cq.load(tmp_path)["pending"] == [{"name": "Acme"}]
+
+
+def test_load_of_a_missing_queue_is_empty(tmp_path):
+    assert cq.load(tmp_path) == {"pending": [], "decided": []}
+
+
+# --- old-code mutation survivors (S5 r1, 2026-11-25) ---------------------------------------
+_REPO = Path(__file__).resolve().parents[2]
+
+
+def _isolated(code: str):
+    import subprocess
+    import sys
+    return subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True,
+                          cwd=str(_REPO.parent), timeout=60)
+
+
+def test_importing_as_a_package_puts_tools_on_the_path():
+    """company_queue.py:41. With only the repo root on sys.path, `import inbox_lock` needs it."""
+    p = _isolated(f"import sys; sys.path[:0] = [{str(_REPO)!r}]; import tools.company_queue; print('OK')")
+    assert p.stdout.strip() == "OK", p.stderr
+
+
+def test_running_from_tools_puts_the_repo_root_on_the_path():
+    """company_queue.py:42. With only tools/ on sys.path (a bare-script run), the board
+    fetchers are imported as tools.career_scanner.*."""
+    p = _isolated(f"import sys; sys.path[:0] = [{str(_REPO / 'tools')!r}]; import company_queue; "
+                  "print(sorted(company_queue._default_fetchers()))")
+    assert p.stdout.strip() == "['ashby', 'greenhouse', 'lever']", p.stderr
+
+
+def test_a_fetcher_that_raises_makes_the_board_check_indeterminate():
+    """company_queue.py:492-493: the exception is recorded and the next probe runs."""
+    def boom(slug, errors=None):
+        raise RuntimeError("connection reset")
+    with pytest.raises(cq.BoardCheckIndeterminate, match="ashby/acme: connection reset"):
+        cq.detect_board("Acme", {"ashby": boom})
+    calls = []
+
+    def found_second(slug, errors=None):
+        calls.append(slug)
+        return [{"title": "x"}]
+    assert cq.detect_board("Acme", {"ashby": boom, "greenhouse": found_second}) == \
+        {"ats": "greenhouse", "slug": "acme", "n_roles": 1}
+
+
+def test_a_fetcher_with_no_readable_signature_has_no_error_channel():
+    """company_queue.py:519: a builtin inspect cannot read answers False, the declared bool."""
+    assert cq._takes_errors(iter) is False

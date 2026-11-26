@@ -102,8 +102,18 @@ def _dump(data: dict) -> str:
 
 
 def load(repo_root: Path) -> dict:
+    """The queue, or an empty one when NO path exists. Anything else at the path that is not
+    a regular file (a directory, a broken symlink) raises ValueError, never reads as empty:
+    agent_discover excludes queued companies through this, so an empty read would let paid
+    discovery find them again (Codex row 1359 P1, 2026-11-24). Callers: agent_discover
+    refuses before the paid run; decide() refuses with the error and writes nothing."""
     p = queue_path(repo_root)
-    return _load_text(p.read_text(encoding="utf-8")) if p.is_file() else _empty()
+    if p.is_file():
+        return _load_text(p.read_text(encoding="utf-8"))
+    if p.exists() or p.is_symlink():
+        raise ValueError(f"company queue at {p} is not a regular file "
+                         "(a directory or a broken symlink)")
+    return _empty()
 
 
 def add(repo_root: Path, preset: str, entity: str, candidates: list[dict],

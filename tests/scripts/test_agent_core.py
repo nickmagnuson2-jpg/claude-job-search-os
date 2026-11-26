@@ -149,3 +149,26 @@ def test_main_refuses_an_unreadable_queue_before_the_paid_run(tmp_path, monkeypa
     assert e.value.code == 1
     assert calls == []          # no agent run was paid for
     assert "company queue unreadable" in _json.loads(capsys.readouterr().out)["error"]
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("shape", ["directory", "broken symlink"])
+def test_main_refuses_a_queue_path_that_is_not_a_file_before_the_paid_run(
+        tmp_path, monkeypatch, capsys, shape):
+    """Codex row 1359 P1: a directory or broken symlink used to read as an empty queue."""
+    import json as _json
+    q = tmp_path / "tools" / ".company-queue.json"
+    q.parent.mkdir(parents=True)
+    if shape == "directory":
+        q.mkdir()
+    else:
+        q.symlink_to(tmp_path / "gone.json")
+    ad, calls = _run_main(monkeypatch, tmp_path, ["--query", "q", "--entity", "company"],
+                          {"companies": [{"name": "Newco"}]})
+    with pytest.raises(SystemExit) as e:
+        ad.main()
+    assert e.value.code == 1
+    assert calls == []
+    assert "company queue unreadable" in _json.loads(capsys.readouterr().out)["error"]
