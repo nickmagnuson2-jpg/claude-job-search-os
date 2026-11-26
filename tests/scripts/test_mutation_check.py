@@ -1363,38 +1363,58 @@ def _runnable_tiny_repo(tmp_path):
     return tool
 
 
-def test_a_mutant_whose_tests_time_out_is_not_scored_as_killed(tmp_path):
+def _run_in_process_where_mutants_stall(tool, tmp_path, monkeypatch, capsys, timeout=3):
+    """main() in this process with the pytest runner replaced: the real source passes at
+    once and ANY mutant times out. No wall clock is involved, so machine load cannot turn
+    the baseline into a timeout (11-25 18:38: four concurrent mutation runs pushed the
+    baseline past a real 3 s limit and the test read an error result; 11-26 S4)."""
+    original = tool.read_text(encoding="utf-8")
+
+    class _Passed:
+        returncode, stdout, stderr = 0, "", ""
+
+    def fake_run(cmd, env=None, timeout=None, cwd=None):
+        if tool.read_text(encoding="utf-8") == original:
+            return _Passed()
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
+
+    monkeypatch.setattr(mc, "_run_reaping_descendants", fake_run)
+    monkeypatch.setattr(mc, "REPO_ROOT", tmp_path)
+    monkeypatch.setenv("MUTATION_BACKUP_DIR", str(tmp_path / "store"))
+    test_file = tmp_path / "tests" / "scripts" / "test_sample_tool.py"
+    monkeypatch.setattr(mc.sys, "argv", ["mutation_check.py", str(tool), "--tests",
+                                         str(test_file), "--json", "--timeout", str(timeout)])
+    capsys.readouterr()
+    try:
+        mc.main()
+    except SystemExit:
+        pass
+    finally:
+        mc.release_run_lock()     # in-process: main() keeps the tree lock until exit
+    assert tool.read_text(encoding="utf-8") == original, "the source was not restored"
+    return json.loads(capsys.readouterr().out)
+
+
+def test_a_mutant_whose_tests_time_out_is_not_scored_as_killed(tmp_path, monkeypatch, capsys):
     """The limit is shared by the baseline and every mutant, and a night run measures
     about twice as slow as a day run. Scoring a timeout as a kill certified that a suite
     protects behaviour it never checked, on the nights the machine was merely slow."""
-    tool = _runnable_tiny_repo(tmp_path)
-    # Passes at once on the real source. On any mutant that changes f(2) it does not
-    # fail, it stalls, which is what a slow suite looks like from outside.
-    (tmp_path / "tests" / "scripts" / "test_sample_tool.py").write_text(
-        "import time\nimport sample_tool\n\n\ndef test_f():\n"
-        "    if sample_tool.f(2) is not True:\n        time.sleep(40)\n"
-        "    assert sample_tool.f(2) is True\n", encoding="utf-8")
-    r = _run([str(tool), "--json", "--timeout", "3"], cwd=tmp_path)
-    d = json.loads(r.stdout)
+    tool = _tiny_repo(tmp_path)
+    catalog = {m["op"] for m in json.loads(_run([str(tool), "--list"], cwd=tmp_path).stdout)["catalog"]}
+    d = _run_in_process_where_mutants_stall(tool, tmp_path, monkeypatch, capsys)
     assert d["timed_out"] >= 1, "no mutant stalled; the fixture proves nothing"
     assert d["killed"] == 0, "a stalled run was counted as a kill"
     assert d["weak_kill_count"] == 0, "a stalled run was counted as a crash-only kill"
     assert len(d["timed_out_mutants"]) == d["timed_out"]
-    assert {m["op"] for m in d["timed_out_mutants"]} <= {m["op"] for m in
-            json.loads(_run([str(tool), "--list"], cwd=tmp_path).stdout)["catalog"]}
+    assert {m["op"] for m in d["timed_out_mutants"]} <= catalog
     assert d["timeout"] == 3, "the limit that was hit is not on the record"
 
 
-def test_timeouts_without_survivors_are_not_a_clean_status(tmp_path):
+def test_timeouts_without_survivors_are_not_a_clean_status(tmp_path, monkeypatch, capsys):
     """`ok` says every mutant got a verdict."""
-    tool = _runnable_tiny_repo(tmp_path)
+    tool = _tiny_repo(tmp_path)
     tool.write_text("def f(x):\n    return not x\n", encoding="utf-8")
-    (tmp_path / "tests" / "scripts" / "test_sample_tool.py").write_text(
-        "import time\nimport sample_tool\n\n\ndef test_f():\n"
-        "    if sample_tool.f(0) is not True:\n        time.sleep(40)\n"
-        "    assert sample_tool.f(0) is True\n", encoding="utf-8")
-    r = _run([str(tool), "--json", "--timeout", "3"], cwd=tmp_path)
-    d = json.loads(r.stdout)
+    d = _run_in_process_where_mutants_stall(tool, tmp_path, monkeypatch, capsys)
     assert d["survived"] == 0 and d["timed_out"] >= 1, d
     assert d["status"] == "mutants_timed_out"
 
