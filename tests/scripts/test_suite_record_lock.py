@@ -12,6 +12,7 @@ redirected to tmp_path so no test touches ~/.cache.
 import importlib
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -385,7 +386,8 @@ def test_the_holder_record_carries_pytest_pid_while_pytest_runs(sr, repo, lockdi
     real_wait = subprocess.Popen.wait
 
     def spy(self, timeout=None):
-        if timeout is not None:       # pytest's wait; git's subprocess.run waits without one
+        # pytest's wait, picked by its argv: the gate's git calls also wait with a timeout
+        if timeout is not None and "pytest" in " ".join(map(str, self.args)):
             seen.setdefault("holder", sr.read_holder(repo / LEDGER))
             seen.setdefault("child", self.pid)
         return real_wait(self, timeout=timeout)
@@ -417,6 +419,10 @@ def test_an_interrupt_during_the_suite_kills_pytest(sr, tmp_path):
             time.sleep(0.05)
         _thread.interrupt_main()
 
+    # Python's own SIGINT handler, so interrupt_main() raises KeyboardInterrupt here: an
+    # earlier test module (test_mutation_check) leaves mutation_check._on_signal installed
+    # in this process, which turns SIGINT into SystemExit(130). Reported to the org.
+    prev = signal.signal(signal.SIGINT, signal.default_int_handler)
     threading.Thread(target=interrupt_when_started, daemon=True).start()
     try:
         with pytest.raises(KeyboardInterrupt):
@@ -427,6 +433,7 @@ def test_an_interrupt_during_the_suite_kills_pytest(sr, tmp_path):
             time.sleep(0.05)
         assert not sr._alive(pid), "pytest kept running after the interrupt"
     finally:
+        signal.signal(signal.SIGINT, prev)
         if pidfile.exists():
             try:
                 os.kill(int(pidfile.read_text()), 9)

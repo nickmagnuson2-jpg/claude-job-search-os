@@ -54,6 +54,7 @@ the temp worktree. It is a linked worktree, so tests marked live_data skip there
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import math
 import os
@@ -431,6 +432,71 @@ def cmd_status(root: Path) -> int:
     return _out({"status": "free"}, 0)
 
 
+GATE_CHAIN_SKIP = "skipped: tip is a verified merge chain; land_branch judges it"
+
+
+def gate_verdict(main: Path, base_sha: str, tip_sha: str,
+                 merged_commit: str) -> tuple[str | None, str]:
+    """Would the push gate refuse this branch? (None, note) when it would not, else
+    (fail code, message). S5, 2026-11-26: a stacked branch passed its suite and then
+    failed the gate on its parent's paths 3 times on 11-25, about 16 minutes each.
+
+    merged_commit is the commit run builds (parents base_sha, tip_sha; git's merge
+    tree), which is a one-merge chain, so the gate's own merge-push function judges it:
+    paths changed against base need rows keyed to the branch tip's tree, plus the open-P0
+    check. No gate logic is copied here.
+
+    One case is skipped, and only when computed: a tip that already IS a verified merge
+    chain (land_branch --merge-push --suite) was judged by land_branch's preview_gate,
+    with backfilled rows that exist only in memory during --dry-run. There is no option
+    to turn this check off (org ruling, 2026-11-26).
+
+    Fails closed: a gate that cannot answer refuses, as the push gate does.
+    """
+    import cross_model_gate
+    import merge_chain
+    with _no_git_env():
+        return _gate_verdict(cross_model_gate, merge_chain, main, base_sha, tip_sha,
+                             merged_commit)
+
+
+@contextlib.contextmanager
+def _no_git_env():
+    """GIT_* dropped while the gate runs, the rule _git above follows: merge_chain._git
+    and cross_model_gate pass os.environ to git, so a GIT_DIR exported by a hook would
+    point them at another repository than `main` (test_a_stray_git_dir_does_not_redirect
+    _the_run). The source fix belongs in those modules; reported to the org 2026-11-26."""
+    saved = {k: v for k, v in os.environ.items() if k.startswith("GIT_")}
+    for k in saved:
+        del os.environ[k]
+    try:
+        yield
+    finally:
+        os.environ.update(saved)
+
+
+def _gate_verdict(cross_model_gate, merge_chain, main: Path, base_sha: str, tip_sha: str,
+                  merged_commit: str) -> tuple[str | None, str]:
+    try:
+        merge_chain.walk(main, base_sha, tip_sha)
+        return None, GATE_CHAIN_SKIP
+    except merge_chain.ChainError:
+        pass
+    except merge_chain.GitError as e:
+        return "gate_unreadable", f"could not read {tip_sha[:8]} as a merge chain: {e}"
+    try:
+        v = cross_model_gate.check_chain(main, base_sha, merged_commit)
+    except Exception as e:  # any failure inside the gate: refuse, never run unjudged
+        return "gate_unreadable", f"the push gate failed: {type(e).__name__}: {e}"
+    if v is None:
+        return "gate_unreadable", ("the push gate did not judge the merged commit "
+                                   f"{merged_commit[:8]} as a merge")
+    if v.blocked:
+        return "gate_would_refuse", ("the push gate would refuse this branch, so the "
+                                     "suite was not started.\n" + v.message)
+    return None, v.message
+
+
 def _run_locked(root: Path, common_git: Path, ledger: Path, branch: str, base: str,
                 timeout: int) -> int:
     base_sha = resolve_commit(root, base)
@@ -459,6 +525,9 @@ def _run_locked(root: Path, common_git: Path, ledger: Path, branch: str, base: s
     merged_commit = ct.stdout.strip()
     ids = {"tree": tree, "branch": branch, "base": base, "base_sha": base_sha,
            "branch_tip": tip_sha, "merged_commit": merged_commit}
+    refuse, gate = gate_verdict(common_git.parent, base_sha, tip_sha, merged_commit)
+    if refuse:
+        return _fail(refuse, gate, **ids)
 
     tmp = Path(tempfile.mkdtemp(prefix="suite-record-"))
     wt = tmp / "wt"
@@ -507,7 +576,7 @@ def _run_locked(root: Path, common_git: Path, ledger: Path, branch: str, base: s
         with ledger.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
         return _out({"status": "ok", "action": "run", **row, "recorded": True,
-                     "ledger": str(ledger)}, 0)
+                     "ledger": str(ledger), "gate": gate}, 0)
     finally:
         # Only this run's worktree is cleaned up: its directory, then git's record of it.
         # A repository-wide `git worktree prune` would also drop the record of any other

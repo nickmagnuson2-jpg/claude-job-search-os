@@ -651,3 +651,153 @@ def test_junit_cases_reasons_failing_and_unreadable(sr, tmp_path):
     assert sr.junit_cases(tmp_path / "missing.xml") == empty
     (tmp_path / "bad.xml").write_text("<nope", encoding="utf-8")
     assert sr.junit_cases(tmp_path / "bad.xml") == empty
+
+
+# --- The push gate's verdict before the suite (S5, 2026-11-26) --------------------------
+# 11-25: a stacked branch passed its suite and then failed the push gate on its parent's
+# paths 3 times (s2b, s6c, s4e), about 16 minutes of suite each. run now asks
+# cross_model_gate.check_chain about the merged commit it builds before starting pytest.
+
+_BIG = "".join(f"x{i} = {i}\n" for i in range(200))
+
+
+def _gate_mod(name):
+    sys.path.insert(0, str(ROOT / "tools"))
+    try:
+        return importlib.import_module(name)
+    finally:
+        sys.path.remove(str(ROOT / "tools"))
+
+
+def _tree(repo, ref):
+    return _git(repo, "rev-parse", f"{ref}^{{tree}}").stdout.strip()
+
+
+def _review(repo, tree, paths, findings=()):
+    """Rows from two families outside the author's, so any tier is covered."""
+    p = repo / "tools" / ".cross-model-ledger.jsonl"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("a", encoding="utf-8") as fh:
+        for fam, model in (("openai", "codex"), ("xai", "grok")):
+            fh.write(json.dumps({
+                "recorded": "2026-11-26T10:00:00+00:00", "target": "t", "model": model,
+                "family": fam, "report": "output/analysis/r.md", "paths": list(paths),
+                "tree": tree, "verified": True, "waived": False,
+                "findings": list(findings) if fam == "openai" else []}) + "\n")
+
+
+def _stacked(repo):
+    """s6c's shape: parent P changes tools/x.py and was reviewed only at P's tree; child
+    C, stacked on P, was reviewed only for its own path at C's tree."""
+    _git(repo, "checkout", "-q", "-b", "parent", "main")
+    p = _commit(repo, {"tools/x.py": _BIG, "tests/test_x.py": PASSING}, "parent")
+    _git(repo, "checkout", "-q", "-b", "child")
+    c = _commit(repo, {"tools/y.py": _BIG, "tests/test_y.py": PASSING}, "child")
+    _git(repo, "checkout", "-q", "main")
+    _review(repo, _tree(repo, p), ["tools/x.py"])
+    _review(repo, _tree(repo, c), ["tools/y.py"])
+    return p, c
+
+
+def test_a_stacked_branch_the_gate_would_refuse_never_starts(sr, repo, tmp_parent, capsys):
+    _p, _c = _stacked(repo)
+    code, out = _run(sr, repo, capsys, "child", "--base", "main")
+    assert code == 1, out
+    assert out["code"] == "gate_would_refuse"
+    assert "tools/x.py" in out["message"]
+    assert _ledger_rows(repo) == []
+    assert len(_worktrees(repo)) == 1          # no temp worktree was ever added
+    assert list(tmp_parent.iterdir()) == []
+
+
+def test_a_branch_reviewed_at_its_tip_runs_and_says_the_gate_cleared(sr, repo, tmp_parent,
+                                                                    capsys):
+    _p, c = _stacked(repo)
+    _review(repo, _tree(repo, c), ["tools/x.py", "tools/y.py"])
+    code, out = _run(sr, repo, capsys, "child", "--base", "main")
+    assert code == 0, out
+    assert out["recorded"] is True
+    assert out["gate"].startswith("cleared")
+    assert "gate" not in _ledger_rows(repo)[0]     # the ledger row keeps its schema
+
+
+def test_a_small_branch_runs_with_no_review(sr, repo, tmp_parent, capsys):
+    _branch(repo, "feat", {"tests/test_feat.py": PASSING})
+    code, out = _run(sr, repo, capsys, "feat", "--base", "main")
+    assert code == 0, out
+    assert "gate" in out
+
+
+def test_an_open_p0_on_a_pushed_path_refuses(sr, repo, tmp_parent, capsys):
+    _p, c = _stacked(repo)
+    p0 = {"id": "F1", "severity": "P0", "summary": "broken", "disposition": None}
+    _review(repo, _tree(repo, c), ["tools/x.py", "tools/y.py"], findings=[p0])
+    code, out = _run(sr, repo, capsys, "child", "--base", "main")
+    assert code == 1, out
+    assert out["code"] == "gate_would_refuse"
+    assert "P0" in out["message"]
+    assert _ledger_rows(repo) == []
+
+
+def test_a_verified_merge_chain_tip_is_skipped_for_land_branch(sr, repo, tmp_parent, capsys):
+    """land_branch --merge-push judges the chain itself (with backfilled rows held in
+    memory during --dry-run), then runs the suite on the chain tip. Judging it again here
+    would refuse every dry run, so a tip that IS a verified chain is skipped, computed,
+    never by an option."""
+    mc = _gate_mod("merge_chain")
+    base = _git(repo, "rev-parse", "main").stdout.strip()
+    t1 = _branch(repo, "one", {"tools/x.py": _BIG, "tests/test_x.py": PASSING})
+    m1 = mc.build(repo, base, t1, "one")
+    _git(repo, "branch", "chain", m1)
+    code, out = _run(sr, repo, capsys, "chain", "--base", "main")
+    assert code == 0, out
+    assert out["gate"].startswith("skipped: tip is a verified merge chain")
+
+
+def test_a_branch_that_merged_main_into_itself_is_still_judged(sr, repo, tmp_parent, capsys):
+    """Org ruling 2026-11-26: an ordinary branch whose newest commit is a merge does not
+    verify as a chain (its own commit has one parent), so it is judged, not skipped."""
+    _git(repo, "checkout", "-q", "-b", "feat", "main")
+    _commit(repo, {"tools/x.py": _BIG, "tests/test_x.py": PASSING}, "feat")
+    _git(repo, "checkout", "-q", "main")
+    _commit(repo, {"README": "moved on\n"}, "main moves")
+    _git(repo, "checkout", "-q", "feat")
+    _git(repo, "merge", "-q", "--no-edit", "main")
+    _git(repo, "checkout", "-q", "main")
+    code, out = _run(sr, repo, capsys, "feat", "--base", "main")
+    assert code == 1, out
+    assert out["code"] == "gate_would_refuse"
+    assert "tools/x.py" in out["message"]
+
+
+def test_a_gate_that_cannot_answer_refuses(sr, repo, tmp_parent, capsys, monkeypatch):
+    g = _gate_mod("cross_model_gate")
+    _branch(repo, "feat", {"tests/test_feat.py": PASSING})
+    monkeypatch.setattr(g, "check_chain", lambda *a, **k: None)
+    code, out = _run(sr, repo, capsys, "feat", "--base", "main")
+    assert code == 1 and out["code"] == "gate_unreadable", out
+    assert _ledger_rows(repo) == []
+
+
+def test_a_gate_that_raises_refuses(sr, repo, tmp_parent, capsys, monkeypatch):
+    g = _gate_mod("cross_model_gate")
+    _branch(repo, "feat", {"tests/test_feat.py": PASSING})
+
+    def boom(*a, **k):
+        raise RuntimeError("ledger exploded")
+    monkeypatch.setattr(g, "check_chain", boom)
+    code, out = _run(sr, repo, capsys, "feat", "--base", "main")
+    assert code == 1 and out["code"] == "gate_unreadable", out
+    assert "ledger exploded" in out["message"]
+
+
+def test_a_git_failure_reading_the_chain_refuses(sr, repo, tmp_parent, capsys, monkeypatch):
+    mc = _gate_mod("merge_chain")
+    _branch(repo, "feat", {"tests/test_feat.py": PASSING})
+
+    def boom(*a, **k):
+        raise mc.GitError("rev-list failed")
+    monkeypatch.setattr(mc, "walk", boom)
+    code, out = _run(sr, repo, capsys, "feat", "--base", "main")
+    assert code == 1 and out["code"] == "gate_unreadable", out
+    assert "rev-list failed" in out["message"]
