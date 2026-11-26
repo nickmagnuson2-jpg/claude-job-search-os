@@ -313,6 +313,25 @@ def _atomic_write(path: Path, text: str) -> None:
         raise
 
 
+def _refuse_a_fire_with_no_threshold(path: Path, fields: dict, n: int) -> None:
+    """WriteRefused when the fire would bring an open rule to learning_state.CANDIDATE_MIN
+    (2) or more fires while `reopen_at` is absent: the state learning_state calls no_number,
+    never due. An event check: it stops the next fire on a no-number rule and names the
+    command that sets the number; it repairs no existing rule. A closed or terminal rule is
+    out of the backlog and is never refused (learning_state decides)."""
+    import learning_state  # same folder; imported here so neither module loads the other at import
+    if n < learning_state.CANDIDATE_MIN or fields.get("reopen_at") not in (None, ""):
+        return
+    d = learning_state.disposition(fields.get("promoted"), memory_dir=Path(path).parent)
+    if not learning_state.in_backlog(d) or learning_state.is_terminal(fields):
+        return
+    raise WriteRefused([
+        f"reopen_at is missing: this fire would bring {Path(path).name} to {n} fires, and a "
+        f"rule at {learning_state.CANDIDATE_MIN} or more with no reopen_at is never due. Set the number "
+        f"its own reopen_gate names first: PYTHONIOENCODING=utf-8 python3 tools/memory_write.py "
+        f"set {path} reopen_at=<n>, then record the fire again"])
+
+
 def record_fire(path: Path, evidence: str, *, today: _dt.date | None = None,
                 expect_sha256: str | None = None) -> int:
     """Record one witnessed fire: occurrences + 1, with its evidence. Returns the new count.
@@ -324,7 +343,10 @@ def record_fire(path: Path, evidence: str, *, today: _dt.date | None = None,
     Refuses (WriteRefused, file untouched) when: CLAUDECODE is not "1" in the environment
     (a tripwire against cron and scripts, not a security boundary: headless Claude jobs
     carry it too); `evidence` is blank or carries no YYYY-MM-DD date; the frontmatter has a
-    defect; `occurrences` is missing or not a non-negative int. On success it rewrites only
+    defect; `occurrences` is missing or not a non-negative int; the fire would bring an open
+    rule (in the backlog, not terminal) to 2 or more with no `reopen_at` (Nick, 2026-11-25,
+    "refuse at 2": such a rule is no_number and never due, so the fire would be counted
+    where no scanner can see it). On success it rewrites only
     the occurrences line and appends one dated line to the end of the body:
     "- Fire <n> recorded <today>: <evidence>". With expect_sha256, it also refuses when the
     file's bytes no longer hash to it.
@@ -343,6 +365,7 @@ def record_fire(path: Path, evidence: str, *, today: _dt.date | None = None,
     if type(occ) is not int or occ < 0:
         raise WriteRefused([f"occurrences: {occ!r} is not a non-negative integer to add one to"])
     n = occ + 1
+    _refuse_a_fire_with_no_threshold(path, fields, n)
     new_text = _set_keys(text, {"occurrences": n})
     _refuse_unless_consistent(fields, new_text, {"occurrences": n})
     if not new_text.endswith("\n"):

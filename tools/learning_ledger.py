@@ -41,6 +41,8 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import learning_state as ls  # noqa: E402  the one definition of due (Nick, 2026-11-22)
 
 DISPOSITION_OPEN = "open"
 DISPOSITION_DONE = "promoted"
@@ -79,24 +81,34 @@ def _disposition(value: str) -> str:
 
 
 def read_memory(memory_dir: Path) -> list[dict]:
+    """Every memory record, from learning_state.iter_records (the population the scanner
+    reads too), judged by learning_state.memory_state. A record whose frontmatter does not
+    parse stays open and is never due; its defect is the evidence."""
     out = []
-    for path in sorted(memory_dir.glob("feedback_*.md")):
-        text = path.read_text(encoding="utf-8", errors="replace")[:6000]
-        def fm(key, default=""):
-            m = re.search(rf"^\s*{key}:\s*(.+)$", text, re.M)
-            return m.group(1).strip().strip("\"'") if m else default
-        terminal = fm("terminal").lower() == "true"
-        promoted = fm("promoted", "no")
-        disp = (DISPOSITION_TERMINAL if terminal
-                else DISPOSITION_DONE if promoted.lower().startswith("yes")
-                else DISPOSITION_OPEN)
-        out.append({
-            "lane": "memory", "ref": path.name,
-            "what": fm("description") or path.stem,
-            "when": fm("last_cited"), "occurrences": _int(fm("occurrences"), 0),
-            "disposition": disp, "evidence": fm("reopen_gate"),
-        })
+    for rec in ls.iter_records(memory_dir):
+        if rec.fields is None:
+            out.append({"lane": "memory", "ref": rec.path.name, "what": rec.path.stem,
+                        "when": "", "occurrences": 0, "disposition": DISPOSITION_OPEN,
+                        "due": False, "evidence": f"frontmatter defect: {rec.defect.code}"})
+        else:
+            out.append(_memory_record(rec.path, rec.fields, memory_dir))
     return out
+
+
+def _memory_record(path: Path, fields: dict, memory_dir: Path) -> dict:
+    st = ls.memory_state(fields, memory_dir=memory_dir)
+    disp = (DISPOSITION_TERMINAL if st.terminal
+            else DISPOSITION_OPEN if ls.in_backlog(st.disposition)
+            else DISPOSITION_DONE)
+    occ = ls._count(fields.get("occurrences"))
+    return {
+        "lane": "memory", "ref": path.name,
+        "what": str(fields.get("description") or path.stem),
+        "when": str(fields.get("last_cited") or ""),
+        "occurrences": occ if occ is not None else 0,
+        "disposition": disp, "due": st.due == "due",
+        "evidence": str(fields.get("reopen_gate") or ""),
+    }
 
 
 def read_lessons(path: Path) -> list[dict]:
@@ -115,6 +127,24 @@ def read_lessons(path: Path) -> list[dict]:
             continue
         if section is None:
             continue
+        if section == 2:
+            # learning_state.parse_lessons_row is the one Section 2 row reader (Grok s1 F4:
+            # _row_cells' strip("|") turned "...|| " into five cells and a due row). A row it
+            # cannot read is a record with that defect, never due, never dropped.
+            row, defect = ls.parse_lessons_row(line)
+            if row is not None:
+                out.append({"lane": "lessons-2", "ref": f"lessons.md:{row[4]}",
+                            "what": row[0][:200], "when": row[4],
+                            "occurrences": _int(row[2]),
+                            "disposition": _disposition(row[3]),
+                            "due": ls.lessons_state(row)[1] == "due",
+                            "evidence": row[1][:200]})
+            elif defect is not None:
+                out.append({"lane": "lessons-2", "ref": f"lessons.md:{line.strip()[:40]}",
+                            "what": line.strip()[:200], "when": "", "occurrences": 0,
+                            "disposition": DISPOSITION_OPEN, "due": False,
+                            "evidence": f"row defect: {defect}"})
+            continue
         cells = _row_cells(line)
         if not cells:
             continue
@@ -123,15 +153,8 @@ def read_lessons(path: Path) -> list[dict]:
                 continue
             out.append({"lane": "lessons-1", "ref": f"lessons.md#{cells[0]}",
                         "what": cells[1], "when": cells[3], "occurrences": 1,
-                        "disposition": DISPOSITION_OPEN,
+                        "disposition": DISPOSITION_OPEN, "due": False,
                         "evidence": "Section 1 has no occurrence column"})
-        elif section == 2 and len(cells) >= 5:
-            if cells[0].lower() == "pattern":
-                continue
-            out.append({"lane": "lessons-2", "ref": f"lessons.md:{cells[4]}",
-                        "what": cells[0][:200], "when": cells[4],
-                        "occurrences": _int(cells[2]),
-                        "disposition": _disposition(cells[3]), "evidence": cells[1][:200]})
     return out
 
 
@@ -149,13 +172,19 @@ def read_friction(path: Path) -> list[dict]:
         # So a rung is a DEMAND, and this lane has no field anywhere recording whether the
         # demand was met -- 79 rows say a script patch is mandatory and not one of them can
         # say whether it was written. The lane closes its detection loop and not its drain.
+        # Due is learning_state.friction_state on the Kind, Fix and Occurrences cells (the
+        # RESOLVED marker closes a row; a block-as-designed or harness kind never counts),
+        # not the rung: on 2026-11-25 the rung read 413 due where friction_state read 300.
         rung = cells[5].strip()
-        demanded = bool(rung) and rung not in {"-", "--", "\u2014", "\u2013"}
+        kind = cells[6] if len(cells) > 6 else ""
+        state = ls.friction_state(kind, cells[3], cells[4])
+        disp = {"resolved": "resolved", "not_counting": "no-action-needed"}.get(
+            state, DISPOSITION_OPEN)
         out.append({"lane": "friction", "ref": f"{cells[1]}:{cells[0]}",
                     "what": cells[2][:200], "when": cells[0],
                     "occurrences": _int(cells[4]),
-                    "disposition": DISPOSITION_OPEN if demanded else "no-action-needed",
-                    "evidence": f"rung: {rung or '-'}"})
+                    "disposition": disp, "due": state == "due",
+                    "evidence": f"state: {state}; rung: {rung or '-'}"})
     return out
 
 
@@ -175,7 +204,7 @@ def read_antipatterns(path: Path) -> list[dict]:
             out.append({"lane": "anti-pattern", "ref": current[:80], "what": current[:200],
                         "when": "", "occurrences": 1,
                         "disposition": DISPOSITION_DONE if resolved else DISPOSITION_OPEN,
-                        "evidence": "no occurrence column in this lane"})
+                        "due": False, "evidence": "no occurrence column in this lane"})
         elif current and line.startswith("**Status:**") and out:
             out[-1]["evidence"] = line.replace("**Status:**", "").strip()[:200]
     return out
@@ -192,8 +221,8 @@ def collect(repo_root: Path, memory_dir: Path) -> dict:
                                          "terminal": 0})
         s["records"] += 1
         s[r["disposition"]] = s.get(r["disposition"], 0) + 1
-        # "due" = the ladder has demanded something and nothing records it being done.
-        if r["disposition"] == DISPOSITION_OPEN and r["occurrences"] >= 2:
+        # "due" is each lane reader's learning_state verdict; nothing is re-derived here.
+        if r["due"]:
             s["due"] += 1
     return {"total": len(records), "lanes": lanes, "records": records,
             "due_total": sum(v["due"] for v in lanes.values())}
@@ -204,7 +233,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--memory-dir", required=True, type=Path)
     ap.add_argument("--repo-root", type=Path, default=REPO_ROOT)
     ap.add_argument("--json", action="store_true")
-    ap.add_argument("--due", action="store_true", help="list only records at 2+ and still open")
+    ap.add_argument("--due", action="store_true", help="list only the records learning_state calls due")
     ap.add_argument("--summary", action="store_true",
                     help="with --json: the per-lane counts and due_total only, no records "
                          "(what standup_collect reads)")
@@ -221,7 +250,7 @@ def main(argv: list[str]) -> int:
         print(json.dumps(report, indent=2))
     elif args.due:
         for r in report["records"]:
-            if r["disposition"] == DISPOSITION_OPEN and r["occurrences"] >= 2:
+            if r["due"]:
                 print(f"{r['occurrences']:>3}  {r['lane']:<12} {r['ref'][:44]:<46} {r['what'][:60]}")
     else:
         print(f"{'lane':<14}{'records':>9}{'open':>7}{'due':>6}{'promoted':>10}{'terminal':>10}")

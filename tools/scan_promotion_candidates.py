@@ -43,6 +43,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from promotion_schema import reads_as_unpromoted as _ps_reads_as_unpromoted  # noqa: E402
+import learning_state as ls  # noqa: E402  the one definition of due (Nick, 2026-11-22)
+import memory_frontmatter as mf  # noqa: E402  the one frontmatter reader
 
 FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
 KV_RE = re.compile(r"^(\s*)([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$")
@@ -445,13 +447,16 @@ _GATE_TRIPPED_RE = re.compile(r"\b(TRIPPED|OWED|REOPENED)\b")
 _GATE_NUMBER_RE = re.compile(
     r"\b(\d+)(?:st|nd|rd|th)\b\s+(?:dated\s+)?(?:fire|occurrence|time|repeat|instance)",
     re.IGNORECASE)
-GATE_STATES = ("due", "not_due", "no_number")
+GATE_STATES = ("due", "not_due", "no_number", "defect")
 MIN_COVERAGE_DEFAULT = 95.0
 LOW_COVERAGE_EXIT = 3
 
 
 def gate_state(reopen_gate: str, occurrences: int) -> str:
-    """due | not_due | no_number, for a rule that has fired at least twice.
+    """LEGACY prose reader, NOT used by this scanner since 2026-11-25 (ruled_state is). Kept only
+    because tools/learning_cutover.py prints it as the pre-cutover "before" column.
+
+    due | not_due | no_number, for a rule that has fired at least twice.
 
     due        the gate says in capitals that it TRIPPED, is OWED or was REOPENED; or it
                names an ordinal fire ("3rd fire") and the rule has fired that many times.
@@ -466,6 +471,45 @@ def gate_state(reopen_gate: str, occurrences: int) -> str:
     if not m:
         return "no_number"
     return "due" if occurrences >= int(m.group(1)) else "not_due"
+
+
+def candidates_of(memory_dir: Path) -> list[dict]:
+    """The promotion candidates, from learning_state alone: the population is
+    learning_state.iter_records (the one the ledger reads) and the state is
+    learning_state.memory_state. None of this scanner's own parsing, name filter, or
+    promoted / terminal / occurrence predicates decides it (Codex s1 r1-r2 F1, Grok s1 F1;
+    parity: tests/scripts/test_due_reader_parity.py).
+
+    A candidate is a record in learning_state's backlog, not terminal, at CANDIDATE_MIN or
+    more fires or due (a rule whose own reopen_at is 1 is due at 1 fire). gate_state is
+    due | not_due | no_number | defect: a bad reopen_at or occurrences is a defect, and so
+    is a record whose frontmatter does not parse (listed, never due)."""
+    out = []
+    for rec in ls.iter_records(memory_dir):
+        if rec.fields is None:
+            out.append({"file": rec.path.name, "occurrences": 0, "partial": False,
+                        "gate_state": "defect", "promoted_value": "", "reopen_gate": "",
+                        "description": f"frontmatter defect: {rec.defect.code}"})
+            continue
+        f = rec.fields
+        st = ls.memory_state(f, memory_dir=memory_dir)
+        due = st.due if st.due in ("due", "not_due", "no_number") else "defect"
+        occ = ls._count(f.get("occurrences"))
+        if not (ls.in_backlog(st.disposition) and not st.terminal
+                and (due == "due" or (occ is not None and occ >= ls.CANDIDATE_MIN))):
+            continue
+        out.append({
+            "file": rec.path.name,
+            "occurrences": occ if occ is not None else 0,
+            # `partial` rules are half-landed, not unstarted: flagged so the backlog can be
+            # triaged (finish the half-built one vs start a new one).
+            "partial": st.disposition.state == "partial",
+            "gate_state": due,
+            "promoted_value": str(f.get("promoted", "no")),
+            "reopen_gate": str(f.get("reopen_gate") or ""),
+            "description": str(f.get("description") or ""),
+        })
+    return out
 
 
 REFRESH_PREFIX = "Memory refresh:"
@@ -511,7 +555,6 @@ def main(argv: list[str]) -> None:
     repo_root = Path(args.repo_root).resolve()
     today = date.today()
 
-    promotion_candidates = []
     demotion_candidates = []
     # Post-backfill (2026-08-13) the corpus deliberately carries NO seeded `last_cited`:
     # seeding today would fake freshness, seeding mtime would fake staleness. The
@@ -522,6 +565,8 @@ def main(argv: list[str]) -> None:
     never_cited = []
     terminal_rules = []
     needs_review = 0
+
+    promotion_candidates = candidates_of(memory_dir)
 
     for path, fm in load_memory_files(memory_dir):
         try:
@@ -535,20 +580,6 @@ def main(argv: list[str]) -> None:
                 "file": path.name,
                 "occurrences": occurrences,
                 "terminal_reason": fm.get("terminal_reason", ""),
-                "description": fm.get("description", ""),
-            })
-
-        if occurrences >= 2 and not is_promoted(fm) and not terminal:
-            promotion_candidates.append({
-                "file": path.name,
-                "occurrences": occurrences,
-                # `partial` rules are half-landed, not unstarted. Surfaced in the same
-                # list because the remaining gap is real work, but flagged so the
-                # backlog can be triaged (finish the half-built one vs start a new one).
-                "partial": is_partially_promoted(fm),
-                "gate_state": gate_state(fm.get("reopen_gate", ""), occurrences),
-                "promoted_value": str(fm.get("promoted", "no")),
-                "reopen_gate": fm.get("reopen_gate", ""),
                 "description": fm.get("description", ""),
             })
 
@@ -625,6 +656,7 @@ def main(argv: list[str]) -> None:
     report["due_count"] = len(by_gate["due"])
     report["not_due_count"] = len(by_gate["not_due"])
     report["gate_no_number_count"] = len(by_gate["no_number"])
+    report["gate_defect_count"] = len(by_gate["defect"])
 
     # A scan that cannot see most of the rules returns a short list that reads as an
     # all-clear (2026-08-13: 1 candidate at 3.5% coverage). Below the floor the result is
@@ -657,8 +689,9 @@ def main(argv: list[str]) -> None:
     if low_coverage:
         lines += [f"**LOW COVERAGE: {report['reason']}. The lists below are incomplete.**", ""]
     sections = (
-        ("due", "## Due for promotion (fired at least as often as the rule's own gate says)"),
-        ("no_number", "## Gate needs a number (the gate names no fire count, so it cannot be judged)"),
+        ("due", "## Due for promotion (occurrences reached the rule's own reopen_at)"),
+        ("no_number", "## Gate needs a number (no reopen_at, so it cannot be judged; set it with memory_write.py set)"),
+        ("defect", "## Frontmatter defect (unreadable, or reopen_at / occurrences not a number)"),
         ("not_due", "## Not due yet (fired twice or more, fewer times than its own gate)"),
     )
     for state, heading in sections:
@@ -762,7 +795,8 @@ def main(argv: list[str]) -> None:
 
     # Crossing families and registry defects are ACTIONABLE and must reach the todo,
     # or the aggregation is a number in a file nobody opens.
-    new_total = (len(by_gate["due"]) + len(by_gate["no_number"]) + len(demotion_candidates)
+    new_total = (len(by_gate["due"]) + len(by_gate["no_number"]) + len(by_gate["defect"])
+                 + len(demotion_candidates)
                  + len(crossing) + len(registry_defects))
     if new_total and not args.dry_run:
         todo_script = repo_root / "tools" / "todo_write.py"
@@ -770,8 +804,9 @@ def main(argv: list[str]) -> None:
             subprocess.run(
                 ["python3", str(todo_script), "--repo-root", str(repo_root), "add",
                  (f"{REFRESH_PREFIX} {len(by_gate['due'])} rules due for promotion + "
-                  f"{len(by_gate['no_number'])} with a gate that names no number + "
-                  f"{len(demotion_candidates)} demotion candidates"
+                  f"{len(by_gate['no_number'])} with no reopen_at + "
+                  + (f"{len(by_gate['defect'])} with a frontmatter defect + " if by_gate["defect"] else "")
+                  + f"{len(demotion_candidates)} demotion candidates"
                   + (f" + {len(crossing)} rule FAMILY crossing its threshold" if crossing else "")
                   + (f" + {len(registry_defects)} family registry defect(s)" if registry_defects else "")
                   + " -- see memory/promotion-backlog.md"),
