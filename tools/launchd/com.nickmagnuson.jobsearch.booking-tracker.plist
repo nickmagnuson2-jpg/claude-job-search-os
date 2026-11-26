@@ -14,14 +14,14 @@
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/homebrew/bin/python3</string>
-		<string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/booking_tracker.py</string>
+		<string>__REPO_ROOT__/tools/booking_tracker.py</string>
 	</array>
 	<key>RunAtLoad</key>
 	<false/>
 	<key>StandardErrorPath</key>
-	<string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/booking-tracker.err</string>
+	<string>__REPO_ROOT__/tools/launchd/logs/booking-tracker.err</string>
 	<key>StandardOutPath</key>
-	<string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/booking-tracker.log</string>
+	<string>__REPO_ROOT__/tools/launchd/logs/booking-tracker.log</string>
 	<key>StartCalendarInterval</key>
 	<array>
 		<dict>
@@ -230,6 +230,6 @@
 		</dict>
 	</array>
 	<key>WorkingDirectory</key>
-	<string>/Users/mag/Documents/Obsidian/30-projects/job-search</string>
+	<string>__REPO_ROOT__</string>
 </dict>
 </plist>

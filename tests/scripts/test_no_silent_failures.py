@@ -505,6 +505,8 @@ def _resolve_script_ref(ref, repo, main_root):
     the main checkout's absolute path; that path is read relative to `repo`, so a branch
     that adds a plist and its script is checked against its own tree, not against main.
     Any other absolute path is checked as is; a relative one is relative to `repo`."""
+    if ref.startswith("__REPO_ROOT__/"):   # a templated plist (S1, 2026-11-25): install.sh
+        return Path(repo) / ref[len("__REPO_ROOT__/"):]   # renders it to the main checkout
     candidate = Path(ref)
     if not candidate.is_absolute():
         return Path(repo) / ref

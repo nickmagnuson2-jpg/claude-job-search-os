@@ -11,9 +11,9 @@
     <key>ProgramArguments</key>
     <array>
         <string>/opt/homebrew/bin/python3</string>
-        <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/memory_usage.py</string>
+        <string>__REPO_ROOT__/tools/memory_usage.py</string>
         <string>--project-dir</string>
-        <string>/Users/mag/.claude/projects/-Users-mag-Documents-Obsidian-30-projects-job-search</string>
+        <string>__CLAUDE_PROJECT_DIR__</string>
     </array>
 
     <key>EnvironmentVariables</key>
@@ -25,7 +25,7 @@
     </dict>
 
     <key>WorkingDirectory</key>
-    <string>/Users/mag/Documents/Obsidian/30-projects/job-search</string>
+    <string>__REPO_ROOT__</string>
 
     <key>StartCalendarInterval</key>
     <dict>
@@ -39,8 +39,8 @@
     <false/>
 
     <key>StandardOutPath</key>
-    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/memory-usage.log</string>
+    <string>__REPO_ROOT__/tools/launchd/logs/memory-usage.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/memory-usage.err</string>
+    <string>__REPO_ROOT__/tools/launchd/logs/memory-usage.err</string>
 </dict>
 </plist>

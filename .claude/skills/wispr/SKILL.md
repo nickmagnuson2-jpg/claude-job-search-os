@@ -176,7 +176,7 @@ writer, never a raw Write/Edit** — one call per dictation chunk:
 
 ```bash
 PYTHONIOENCODING=utf-8 python3 \
-  ~/Documents/Obsidian/30-projects/job-search/tools/inbox_lock.py prepend \
+  tools/inbox_lock.py prepend \
   --inbox data/inbox.md --stdin <<'BLOCK'
 <the entry below>
 BLOCK

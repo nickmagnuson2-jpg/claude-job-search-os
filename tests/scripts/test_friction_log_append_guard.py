@@ -39,7 +39,7 @@ _spec.loader.exec_module(friction_log)
     "[auto] ...............                                          [100%]",
     '[auto] """Shared pytest configuration for preprocessing script tests."""',
     "[auto] ?? tests/scripts/test_my_world_synthesis.py",
-    "[auto] 151 /Users/mag/.claude/skills/ss/SKILL.md",
+    f"[auto] 151 {os.path.expanduser('~')}/.claude/skills/ss/SKILL.md",
     "0",
     "[auto] <tool_use_error>Cancelled: parallel tool call Bash(git commit -m)",
     "[auto] test_route (unittest.loader._FailedTest.test_route) collection error",

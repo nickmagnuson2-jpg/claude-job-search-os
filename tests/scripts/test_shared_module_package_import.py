@@ -89,6 +89,7 @@ TOOLS = (
     "inbox_extract",
     "lessons_write",
     "living_log_append",
+    "memory_usage",
     "memory_write",
     "my_world_synthesis",
     "networking_followup",
