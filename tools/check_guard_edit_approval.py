@@ -618,7 +618,10 @@ class _PyWrites:
         ast = self.ast
         loops = (ast.For, ast.AsyncFor, ast.While, ast.FunctionDef, ast.AsyncFunctionDef,
                  ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
-        funcs = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+        # A comprehension or generator runs when it is evaluated or consumed, not
+        # necessarily where it is written (Grok s2c 3.F1): its writes keep the union.
+        funcs = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ListComp,
+                 ast.SetComp, ast.DictComp, ast.GeneratorExp)
         t = self.target_nodes[i] if i < len(self.target_nodes) else None
         out = [cwd]
         for d, c in zip(self.chdirs, self.chdir_nodes):
