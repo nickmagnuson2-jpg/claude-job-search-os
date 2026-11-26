@@ -254,3 +254,139 @@ def test_a_scratch_source_without_a_logs_override_never_clears_the_repo_logs(tmp
     assert r.returncode == 0, r.stderr
     assert (live / "gmail-fetch.log").read_text(encoding="utf-8") == "live"
     assert not (src / "logs" / "gmail-fetch.log").exists(), "the scratch tree's own stale log stays"
+
+
+# ------------------------------------------------- 1498.F1-F3 (Codex s1c r3, fixed 2026-11-26)
+def _install_env(tmp_path, repo, project, logs=None):
+    """A scratch install's environment; LAUNCHD_LOGS_DIR only when `logs` is given."""
+    src, agents, calls, fake = _tree(tmp_path, standing=(), disarmed=())
+    _real_templates(src)
+    env = {k: v for k, v in os.environ.items() if k != "LAUNCHD_LOGS_DIR"}
+    env.update({"LAUNCHD_SOURCE_DIR": str(src), "LAUNCHD_TARGET_DIR": str(agents),
+                "LAUNCHCTL": str(fake), "LAUNCHD_REPO_ROOT": repo,
+                "LAUNCHD_CLAUDE_PROJECT_DIR": project})
+    if logs is not None:
+        env["LAUNCHD_LOGS_DIR"] = logs
+    return src, agents, calls, env
+
+
+def _run(env):
+    return subprocess.run(["bash", str(SCRIPT), "install"], capture_output=True, text=True,
+                          env=env)
+
+
+@pytest.mark.parametrize("ch", ["\r", "\t", "\x01", "\x7f"])
+def test_a_control_character_in_any_value_is_refused_before_anything_loads(tmp_path, ch):
+    # 1498.F1: a CR passed the refusal, and XML parsing turns CR into LF, so launchd ran a
+    # path that was not the checkout. Every control character is refused, in each value.
+    for i, (repo, project) in enumerate([(f"/private/tmp/re{ch}po", "/private/tmp/proj"),
+                                         ("/private/tmp/repo", f"/private/tmp/pr{ch}oj/p"),
+                                         ("/private/tmp/repo", f"/private/tmp/p/pr{ch}oj")]):
+        sub = tmp_path / str(i)
+        sub.mkdir()
+        _, agents, calls, env = _install_env(sub, repo, project)
+        r = _run(env)
+        assert r.returncode != 0, (repo, project)
+        assert "control character" in r.stderr, r.stderr
+        assert list(agents.iterdir()) == []
+        assert not calls.exists() or "load " not in calls.read_text(encoding="utf-8")
+
+
+def test_every_rendered_value_survives_the_plist_parse_unchanged(tmp_path):
+    # 1498.F1, read the way launchd reads it: parse the installed plist, compare to the input.
+    repo, project = "/private/tmp/s3 q&a <x> #1", "/private/tmp/s3 p&q/<slug>"
+    src, agents, _, env = _install_env(tmp_path, repo, project)
+    r = _run(env)
+    assert r.returncode == 0, r.stderr
+    values = {"__REPO_ROOT__": repo, "__CLAUDE_PROJECT_DIR__": project,
+              "__CLAUDE_PROJECT_SLUG__": os.path.basename(project)}
+
+    def fill(v):
+        if isinstance(v, str):
+            for k, x in values.items():
+                v = v.replace(k, x)
+            return v
+        if isinstance(v, list):
+            return [fill(x) for x in v]
+        if isinstance(v, dict):
+            return {k: fill(x) for k, x in v.items()}
+        return v
+    names = sorted(p.name for p in src.glob(f"{PREFIX}*.plist"))
+    assert names
+    for name in names:
+        assert plistlib.loads((agents / name).read_bytes()) == fill(
+            plistlib.loads((src / name).read_bytes())), name
+
+
+def test_a_shell_character_in_a_parent_of_the_project_dir_is_allowed(tmp_path):
+    # 1498.F2: only the project folder's NAME reaches a shell command; the full path is a
+    # plain plist string, so '$' or '"' in a parent directory is safe and was refused.
+    for i, parent in enumerate(["par$cash", 'par"q', "par`b", "par\\s"]):
+        sub = tmp_path / str(i)
+        sub.mkdir()
+        project = f"/private/tmp/{parent}/project"
+        _, agents, _, env = _install_env(sub, "/private/tmp/repo", project)
+        r = _run(env)
+        assert r.returncode == 0, (parent, r.stderr)
+        assert any(project in s for p in agents.iterdir()
+                   for s in _strings(plistlib.loads(p.read_bytes()))), parent
+
+
+def _strings(v):
+    if isinstance(v, str):
+        yield v
+    elif isinstance(v, list):
+        for x in v:
+            yield from _strings(x)
+    elif isinstance(v, dict):
+        for x in v.values():
+            yield from _strings(x)
+
+
+def test_a_shell_character_in_the_project_name_is_still_refused(tmp_path):
+    _, agents, _, env = _install_env(tmp_path, "/private/tmp/repo", "/private/tmp/p/pro$j")
+    r = _run(env)
+    assert r.returncode != 0
+    assert "cannot be quoted" in r.stderr, r.stderr
+    assert list(agents.iterdir()) == []
+
+
+def test_a_symlinked_scratch_logs_dir_is_refused_and_deletes_nothing(tmp_path):
+    # 1498.F3: the scratch default SOURCE_DIR/logs was lexical, and rm follows a symlinked
+    # directory, so a logs/ link to another tree deleted that tree's live log.
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    src, agents, calls, env = _install_env(tmp_path, str(tmp_path / "fake-main"),
+                                           str(tmp_path / "proj"))
+    names = sorted(p.name for p in src.glob(f"{PREFIX}*.plist"))
+    for name in names:
+        short = name[len(PREFIX):-len(".plist")]
+        (outside / f"{short}.log").write_text("live", encoding="utf-8")
+    (src / "logs").symlink_to(outside, target_is_directory=True)
+    r = _run(env)
+    assert r.returncode != 0
+    assert "outside the scratch source" in r.stderr, r.stderr
+    assert all((outside / f"{n[len(PREFIX):-len('.plist')]}.log").exists() for n in names)
+    assert list(agents.iterdir()) == []
+
+
+def test_an_explicit_scratch_logs_dir_outside_the_source_is_refused(tmp_path):
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    (outside / "keep.log").write_text("live", encoding="utf-8")
+    src, agents, _, env = _install_env(tmp_path, str(tmp_path / "fake-main"),
+                                       str(tmp_path / "proj"), logs=str(outside))
+    r = _run(env)
+    assert r.returncode != 0
+    assert "outside the scratch source" in r.stderr, r.stderr
+    assert list(agents.iterdir()) == []
+
+
+def test_a_scratch_logs_dir_inside_the_source_still_installs(tmp_path):
+    src, agents, _, env = _install_env(tmp_path, str(tmp_path / "fake-main"),
+                                       str(tmp_path / "proj"))
+    (src / "logs").mkdir()
+    r = _run(env)
+    assert r.returncode == 0, r.stderr
+    assert sorted(p.name for p in agents.iterdir()) == sorted(
+        p.name for p in src.glob(f"{PREFIX}*.plist"))

@@ -55,22 +55,52 @@ RENDER_SLUG="$(basename "$RENDER_PROJECT")"
 # A scratch source tree (LAUNCHD_SOURCE_DIR set) clears its own logs/ by default, never the
 # main checkout's: before 2026-11-26 a scratch install without LAUNCHD_LOGS_DIR deleted the
 # live jobs' logs (s1c parked P1 1475.F2).
+# The check is on the RESOLVED paths: rm follows a symlinked directory, so a lexical
+# SOURCE_DIR/logs that links elsewhere deleted that tree's logs (Codex s1c 1498.F3). A scratch
+# install's logs folder, default or LAUNCHD_LOGS_DIR, must resolve inside the resolved source.
 if [ -n "${LAUNCHD_SOURCE_DIR:-}" ]; then
     LOGS_DIR="${LAUNCHD_LOGS_DIR:-$SOURCE_DIR/logs}"
+    python3 - "$SOURCE_DIR" "$LOGS_DIR" <<'PY' || exit 1
+import os
+import sys
+src, logs = (os.path.realpath(p) for p in sys.argv[1:3])
+if os.path.commonpath([src, logs]) != src:
+    sys.exit(f"install.sh: the logs folder {sys.argv[2]} resolves to {logs}, outside the "
+             f"scratch source {src}; refusing before anything is deleted or loaded")
+PY
 else
     LOGS_DIR="${LAUNCHD_LOGS_DIR:-$RENDER_REPO/tools/launchd/logs}"
 fi
 
+# Every value must reach launchd exactly as given. launchd reads the plist as XML, and XML
+# cannot carry most control characters and turns CR into LF, so a value holding a control
+# character named a different path (Codex s1c 1498.F1). Refused, with a parse check that
+# each value survives the same escape and plist parse render() uses, before anything is
+# rendered or loaded.
+python3 - "$RENDER_REPO" "$RENDER_PROJECT" "$RENDER_SLUG" <<'PY' || exit 1
+import plistlib
+import sys
+import unicodedata
+from xml.sax.saxutils import escape
+HEAD = ('<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><string>')
+for v in sys.argv[1:]:
+    bad = [c for c in v if unicodedata.category(c) == "Cc"]
+    if bad or plistlib.loads((HEAD + escape(v) + "</string></plist>").encode()) != v:
+        sys.exit(f"install.sh: this path holds a control character that launchd cannot "
+                 f"carry ({bad!r}): {v!r}")
+PY
+
 # Every shell-command use of a placeholder in the templates sits inside double quotes
 # ("__REPO_ROOT__/tools/x.py"), so a path with a space stays one word. Inside double quotes
-# the shell still expands " $ ` and \, and a newline cannot be carried at all, so a path
-# holding one is refused here, before anything is rendered or loaded (s1c parked P1s
-# 1470.F2 / 1473.F1 / 1475.F1, fixed 2026-11-26).
-for _v in "$RENDER_REPO" "$RENDER_PROJECT" "$RENDER_SLUG"; do
+# the shell still expands " $ ` and \, so a value holding one is refused (s1c parked P1s
+# 1470.F2 / 1473.F1 / 1475.F1, fixed 2026-11-26). Only the repo root and the project
+# folder's NAME reach a shell command; the full project path is a plain plist string, so a
+# shell character in one of its parent folders is safe (Codex s1c 1498.F2).
+for _v in "$RENDER_REPO" "$RENDER_SLUG"; do
     case "$_v" in
-        *[\"\$\`\\]* | *$'\n'*)
+        *[\"\$\`\\]*)
             echo "install.sh: this path cannot be quoted safely in a launchd shell command" \
-                 "(it holds \" \$ \` \\ or a newline): $_v" >&2
+                 "(it holds \" \$ \` or \\): $_v" >&2
             exit 1 ;;
     esac
 done
