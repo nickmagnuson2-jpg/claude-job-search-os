@@ -166,6 +166,28 @@ def test_the_prompt_carries_the_sections_workarounds_line(run_dir):
     assert f"Workarounds: {brief.sections[0].workarounds}" in prompt
 
 
+def test_the_prompt_routes_logging_to_the_writer_not_cat(run_dir):
+    """Router fix (Nick via org dc, 2026-11-27; red team E row 1): this prompt reached every
+    section and said "append only, with cat >>", so sessions hand-wrote 1,953 workstream
+    sections in 30 days while tools/workstream_write.py add-section existed. The prompt must
+    name the writer command for the section's own log file and never offer cat >>."""
+    p = write_brief(run_dir, filled_template())
+    brief = ls.parse_brief(p.read_text())
+    sec = brief.sections[0]
+    prompt = ls.section_prompt(sec, org="proj-org", brief_rel="output/overnight-010126/brief.md")
+    assert f"tools/workstream_write.py add-section {sec.log_file}" in prompt
+    assert f'--title "{sec.id}: <what>" --body-file -' in prompt
+    assert "cat >>" not in prompt
+
+
+def test_the_template_logging_rule_routes_to_the_writer_not_cat():
+    """The same router in the brief template's rule 12, which every brief copies."""
+    rule12 = next(l for l in TEMPLATE.read_text(encoding="utf-8").splitlines()
+                  if l.startswith("12. **Logging:**"))
+    assert "tools/workstream_write.py add-section" in rule12
+    assert "cat >>" not in rule12
+
+
 # ---------------------------------------------------------------- structure
 
 def test_backlog_must_come_before_sections(run_dir):
