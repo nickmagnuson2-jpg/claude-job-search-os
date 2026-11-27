@@ -24,7 +24,7 @@
     <array>
         <string>/bin/bash</string>
         <string>-lc</string>
-        <string>cd "$HOME/Documents/Obsidian/30-projects/job-search" &amp;&amp; PYTHONIOENCODING=utf-8 /opt/homebrew/bin/python3 tools/sent_artifact_check.py --repo-root . --json</string>
+        <string>cd "__REPO_ROOT__" &amp;&amp; PYTHONIOENCODING=utf-8 /opt/homebrew/bin/python3 tools/sent_artifact_check.py --repo-root . --json</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
@@ -32,9 +32,9 @@
         <key>Minute</key><integer>40</integer>
     </dict>
     <key>StandardOutPath</key>
-    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/sent-artifact-check.log</string>
+    <string>__REPO_ROOT__/tools/launchd/logs/sent-artifact-check.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/sent-artifact-check.err</string>
+    <string>__REPO_ROOT__/tools/launchd/logs/sent-artifact-check.err</string>
     <key>RunAtLoad</key>
     <false/>
 </dict>

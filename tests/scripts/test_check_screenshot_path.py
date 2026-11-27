@@ -7,6 +7,7 @@ uses U+202F there). Stays clean (exit 0) for the correct U+202F filename and
 for unrelated commands.
 """
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -14,6 +15,7 @@ from pathlib import Path
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[2] / "tools" / "check_screenshot_path.py"
+HOME = os.path.expanduser("~")   # this machine's home; never one owner's literal path
 
 NNBSP = " "  # narrow no-break space — the real macOS filename separator
 
@@ -28,7 +30,7 @@ def _run(command: str):
 # --- should BLOCK (exit 2): hand-typed path with a regular space -----------
 
 @pytest.mark.parametrize("command", [
-    'cp "/Users/mag/Documents/screenshots/Screenshot 2026-06-15 at 1.28.08 PM.png" dest/',
+    f'cp "{HOME}/Documents/screenshots/Screenshot 2026-06-15 at 1.28.08 PM.png" dest/',
     'mv ~/Documents/screenshots/"Screenshot 2026-01-02 at 9.40.21 AM.png" archive/',
     'python3 -c "import shutil; shutil.move(\'Screenshot 2026-06-15 at 1.28.08 PM.png\', \'x\')"',
     "ls -la 'Screenshot 2026-12-31 at 11.59.59 PM.png'",
@@ -56,7 +58,7 @@ def test_real_file_op_still_blocks_alongside_a_later_git_call():
 # --- should stay CLEAN (exit 0) ---------------------------------------------
 
 @pytest.mark.parametrize("command", [
-    f'cp "/Users/mag/Documents/screenshots/Screenshot 2026-06-15 at 1.28.08{NNBSP}PM.png" dest/',
+    f'cp "{HOME}/Documents/screenshots/Screenshot 2026-06-15 at 1.28.08{NNBSP}PM.png" dest/',
     "ls -t ~/Documents/screenshots/*.png | head -1",
     "git status",
     "echo 'no screenshot here'",

@@ -98,7 +98,7 @@
     <array>
         <string>/bin/bash</string>
         <string>-lc</string>
-        <string>export PATH="/opt/homebrew/bin:$PATH" &amp;&amp; cd "$HOME/Documents/Obsidian/30-projects/job-search" &amp;&amp; PYTHONIOENCODING=utf-8 /usr/bin/caffeinate -is /opt/homebrew/bin/python3 tools/mutation_sweep.py</string>
+        <string>export PATH="/opt/homebrew/bin:$PATH" &amp;&amp; cd "__REPO_ROOT__" &amp;&amp; PYTHONIOENCODING=utf-8 /usr/bin/caffeinate -is /opt/homebrew/bin/python3 tools/mutation_sweep.py</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
@@ -106,9 +106,9 @@
         <key>Minute</key><integer>0</integer>
     </dict>
     <key>StandardOutPath</key>
-    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/mutation-sweep.log</string>
+    <string>__REPO_ROOT__/tools/launchd/logs/mutation-sweep.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/mag/Documents/Obsidian/30-projects/job-search/tools/launchd/logs/mutation-sweep.err</string>
+    <string>__REPO_ROOT__/tools/launchd/logs/mutation-sweep.err</string>
     <key>RunAtLoad</key>
     <false/>
 </dict>

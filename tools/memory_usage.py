@@ -730,7 +730,13 @@ def summarize(events: list[Event], reconfirms: Callable[[int], bool]) -> dict[st
 # Every rule below (kind, half-life, breadth, state) is learning_state's; this layer only
 # applies it to the observed entries and writes the result.
 
-LIVE_MEMORY_DIR = Path.home() / ".claude" / "projects" / "-Users-mag-Documents-Obsidian-30-projects-job-search" / "memory"
+# tools/ is on sys.path from the insert at the top of this module (S2b), so the sibling
+# imports below resolve both as a script and as tools.memory_usage.
+from hook_runtime import claude_project_dir  # noqa: E402
+from vault_paths import main_checkout  # noqa: E402
+
+# Derived, never one machine's folder name (S1, 2026-11-25): the main checkout's live tier.
+LIVE_MEMORY_DIR = claude_project_dir(main_checkout(Path(__file__).resolve().parents[1])) / "memory"
 USAGE_FILE = "memory-usage.jsonl"
 CLASS_MAP_FILE = "memory-classes.jsonl"
 KIND_ORDER = ("MACHINERY", "FACT", "LESSON")
