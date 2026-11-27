@@ -439,3 +439,61 @@ def test_an_interrupt_during_the_suite_kills_pytest(sr, tmp_path):
                 os.kill(int(pidfile.read_text()), 9)
             except (ProcessLookupError, ValueError):
                 pass
+
+
+# ---------------------------------------------------------------- mutation survivors, 11-27
+# Three changed-lines mutants of dc936278 survived (output/analysis/
+# 112626-S5-mutation-suite-dc936278-changed-lines.json); each test below kills one.
+
+def test_an_interrupt_kills_pytests_process_group_before_it_propagates(sr, tmp_path,
+                                                                        monkeypatch):
+    """suite_record.py:271. The existing interrupt test cannot see this line: with the
+    killpg dropped, proc.wait() still returns once its 60 s sleep ends, and the pid is dead
+    by then. Here the interrupt arrives on the first wait and killpg is recorded."""
+    killed = []
+
+    class FakeProc:
+        pid = 424242
+
+        def __init__(self, *a, **k):
+            self.waits = 0
+
+        def wait(self, timeout=None):
+            self.waits += 1
+            if self.waits == 1:
+                raise KeyboardInterrupt
+            return 0
+
+    monkeypatch.setattr(sr.subprocess, "Popen", FakeProc)
+    monkeypatch.setattr(sr.os, "killpg", lambda pid, sig: killed.append((pid, sig)))
+    with pytest.raises(KeyboardInterrupt):
+        sr._run_pytest(tmp_path, tmp_path / "j.xml", tmp_path / "log", timeout=5)
+    assert killed == [(424242, signal.SIGKILL)]
+
+
+def test_note_pytest_pid_leaves_another_runs_holder_record_alone(sr, tmp_path):
+    """suite_record.py:330. Only the run named in the holder record may add pytest's pid;
+    a record naming another process stays exactly as it was (control: our own record
+    does get the pid)."""
+    ledger = tmp_path / LEDGER
+    hp = sr.holder_path(ledger)
+    hp.parent.mkdir(parents=True, exist_ok=True)
+    other = {"pid": os.getpid() + 1, "branch": "someone-else", "pytest_pid": None}
+    hp.write_text(json.dumps(other), encoding="utf-8")
+    sr._note_pytest_pid(ledger, 777)
+    assert sr.read_holder(ledger) == other
+
+    own = {"pid": os.getpid(), "branch": "mine", "pytest_pid": None}
+    hp.write_text(json.dumps(own), encoding="utf-8")
+    sr._note_pytest_pid(ledger, 777)
+    assert sr.read_holder(ledger) == {**own, "pytest_pid": 777}
+
+
+def test_no_git_env_puts_the_git_variables_back(sr, monkeypatch):
+    """suite_record.py:477. GIT_* is dropped only while the gate runs, then restored."""
+    monkeypatch.setenv("GIT_DIR", "/elsewhere/.git")
+    monkeypatch.setenv("GIT_INDEX_FILE", "/elsewhere/index")
+    with sr._no_git_env():
+        assert not [k for k in os.environ if k.startswith("GIT_")]
+    assert os.environ["GIT_DIR"] == "/elsewhere/.git"
+    assert os.environ["GIT_INDEX_FILE"] == "/elsewhere/index"
