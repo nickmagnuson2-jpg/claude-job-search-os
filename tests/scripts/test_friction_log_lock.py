@@ -80,6 +80,8 @@ def test_append_keeps_the_ledger_mode(tmp_path):
 
 
 def test_read_only_commands_take_no_lock(tmp_path):
+    """Preservation test, not a regression test: it passes before the fix too (the old
+    code took no lock at all). It pins that list and query stay lock-free (Codex r1 F3)."""
     led = tmp_path / "friction-log.md"
     led.write_text(HEADER, encoding="utf-8")
     with file_lock(led, timeout=5):

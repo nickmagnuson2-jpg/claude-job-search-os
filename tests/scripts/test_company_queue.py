@@ -869,3 +869,29 @@ def test_import_inbox_keeps_each_entrys_note_in_the_queue(tmp_path):
     notes = {e["name"]: e.get("inbox_note") for e in cq.load(tmp_path)["pending"]}
     assert notes["Beacon"] == "[location unverified] [possible match: Beacon AI in pipeline]"
     assert notes["Acme"] is None
+
+
+def test_remove_keeps_the_note_of_a_company_already_queued_without_one(tmp_path):
+    """Codex r1 F1 (P0), the live case: an earlier import without --remove queued these
+    entries with no note (20 of the 22 noted inbox entries on 2026-11-27). Dedup then
+    skips them, so KEPT_KEYS alone never stores the note, and --remove deleted the inbox
+    line anyway. A skipped duplicate must carry its note onto the existing entry."""
+    cq.add(tmp_path, "lane-a", "company", [{"name": "Beacon", "score": 5}], "2026-11-16")
+    inbox = tmp_path / "inbox.md"
+    inbox.write_text(INBOX, encoding="utf-8")
+    out = cq.import_inbox(tmp_path, inbox, remove=True)
+    assert out["blocks_removed"] == 2 and "Beacon" not in inbox.read_text(encoding="utf-8")
+    [beacon] = [e for e in cq.load(tmp_path)["pending"] if e["name"] == "Beacon"]
+    assert beacon["inbox_note"] == "[location unverified] [possible match: Beacon AI in pipeline]"
+    assert out["notes_merged"] == 1
+
+
+def test_a_skipped_duplicate_never_overwrites_an_existing_note(tmp_path):
+    cq.add(tmp_path, "lane-a", "company",
+           [{"name": "Beacon", "score": 5, "inbox_note": "first note"}], "2026-11-16")
+    cq.add(tmp_path, "lane-a", "company",
+           [{"name": "Beacon", "score": 5, "inbox_note": "first note"}], "2026-11-17")
+    cq.add(tmp_path, "lane-a", "company",
+           [{"name": "BEACON", "score": 5, "inbox_note": "second note"}], "2026-11-18")
+    [beacon] = cq.load(tmp_path)["pending"]
+    assert beacon["inbox_note"] == "first note | second note"

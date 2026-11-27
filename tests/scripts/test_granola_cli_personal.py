@@ -60,6 +60,9 @@ def test_cli_pull_routes_a_personal_call_to_its_project_vault(pull):
 
 
 def test_cli_pull_still_files_a_job_search_call_as_networking(pull):
+    """Preservation test, not a regression test: it passes before the fix too. It pins
+    that the personal config does not pull a job-search call away from networking
+    (Codex r1 F3)."""
     rc, call = pull([{"name": "Pat Recruiter", "email": "pat@northwind.example"}])
     assert rc == 0
     assert call == {"type": "networking", "project": None, "vault_root": None}
