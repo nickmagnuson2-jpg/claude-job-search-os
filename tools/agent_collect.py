@@ -144,7 +144,6 @@ def main():
     import yaml
     data = yaml.safe_load(Path(args.presets_file).read_text(encoding="utf-8")) or {}
     seen = read_seen(); summary = {}
-    weights = data.get("scoring_weights")
     known = load_known_names([str(_REPO_ROOT / "data" / "scan-targets.yaml"),
                               str(_REPO_ROOT / "data" / "job-pipeline.md")])
     for name, preset in (data.get("presets") or {}).items():
@@ -157,6 +156,10 @@ def main():
             summary[name] = {"status": res["status"]}; continue
         cands = filter_known(struct_to_candidates(res["structured"], entity), known)
         if entity == "company":
+            # Per-preset weights: load_preset merges the preset's own scoring_weights
+            # over the global block. Reading only the global block scored Lane B with
+            # stage 0.5, the axis the 2026-08-06 decision retired (P0 363.F2).
+            _, weights = load_preset(args.presets_file, name)
             cands = reconcile_candidates(cands, PIPELINE)
             cands = score_company_candidates(cands, weights, preset.get("keywords"))
         fresh, updated = diff_unseen(cands, set(seen.get(name, [])))
