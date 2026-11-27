@@ -806,10 +806,8 @@ def test_a_missing_home_is_named_in_the_error(tmp_path):
         facts.home_paths(root)
 
 
-def test_owner_name_is_empty_string_when_the_profile_cannot_be_decoded(tmp_path):
-    root = make_repo(tmp_path / "repo")
-    (root / "data/profile.md").write_bytes(b"- **Name:** Pat \xff\xfe Example\n")
-    assert facts.owner_name(root) == ""
+# test_owner_name_is_empty_string_when_the_profile_cannot_be_decoded pinned the defect
+# Codex 1641 F1 named; replaced by test_owner_name_raises_on_an_unreadable_profile (S2).
 
 
 def test_facts_loads_by_file_path_from_an_unrelated_directory(tmp_path):
@@ -918,3 +916,113 @@ def test_the_sealed_rules_are_read_once_per_root_per_process(tmp_path, monkeypat
     first = facts.sealed_roots(root)
     monkeypatch.setenv(vault_paths.ENV_VAR, str(root.parent / "another-vault"))
     assert facts.sealed_roots(root) == first
+
+
+# ---------------------------------------------------------------- S2 kb-sweep-1128 (overnight 11-28)
+# Fable 1654 F1/F2/F5 and Codex 1641 F1: guardrail and negation rules excused real stale
+# hits on live material (the Monday prep's primary-proof and cheat lines), the copy scope
+# skipped the record homes, and an unreadable profile silently emptied the owner's name.
+
+def _acme_pair():
+    title = facts.parse_record('role_title.acme | as_of: 2026-11-26 | source: nick "x" | '
+                               'forms: cv=Chief of Widgets | supersedes: "Aide to the CWO" '
+                               'until 2026-11-26, source nick')
+    boss = facts.parse_record('reports_to.acme | as_of: 2026-11-26 | source: nick "x" | '
+                              'forms: name=Chief Widget Officer; abbr=CWO')
+    espn = facts.parse_record('role_title.zeta | as_of: 2026-01-01 | source: nick "x" | '
+                              'forms: cv=Analyst | banned: "Gizmo" generic')
+    return {r.key: r for r in (title, boss, espn)}
+
+
+KW = dict(path="output/x/112726-x-prep.md", audience="prose", as_at=date(2026, 11, 27),
+          owner="Pat Example")
+
+
+def test_naming_the_principal_the_stale_form_already_names_does_not_excuse_it():
+    # Fable 1654 F1, live shape (prep :18): the stale title contains the boss's abbreviation,
+    # and naming that boss again later on the line is the same principal, not a correction.
+    hits = facts.judge_text("Acme, Aide to the CWO (2025-2026): worked with the CWO on goals.",
+                            _acme_pair(), **KW)
+    assert [(h["key"], h["held"]) for h in hits] == [("role_title.acme", None)]
+
+
+def test_a_related_form_the_stale_form_does_not_contain_still_documents_the_fix():
+    # The hook-parity case stays held: the line names the boss the stale form leaves out.
+    title = facts.parse_record('role_title.acme | as_of: 2026-11-26 | source: nick "x" | '
+                               'forms: cv=Chief of Widgets | banned: "Aide to the Widget Lead"')
+    boss = facts.parse_record('reports_to.acme | as_of: 2026-11-26 | source: nick "x" | '
+                              'forms: abbr=CWO')
+    hits = facts.judge_text("Aide to the Widget Lead: it was the CWO.",
+                            {r.key: r for r in (title, boss)}, **KW)
+    assert [h["held"] for h in hits] == ["guardrail"]
+
+
+def test_a_negation_in_the_previous_sentence_does_not_excuse_the_next():
+    # Fable 1654 F5, live shape (prep :252): 'never "X." Acme = <stale>' - the never governs
+    # the previous sentence. The banned generic form in that sentence stays held.
+    line = 'Zeta = Analyst; never "Gizmo." Acme = Aide to the CWO; full title if asked.'
+    hits = {h["key"]: h["held"] for h in facts.judge_text(line, _acme_pair(), **KW)}
+    assert hits == {"role_title.zeta": "guardrail", "role_title.acme": None}
+
+
+def test_a_negation_in_the_same_sentence_still_excuses():
+    hits = facts.judge_text("Do not say Aide to the CWO.", _acme_pair(), **KW)
+    assert [h["held"] for h in hits] == ["guardrail"]
+
+
+def test_a_negation_before_a_quoted_form_still_excuses():
+    # The sentence end INSIDE the quote after the form must not cut the window before it.
+    hits = facts.judge_text('Never say "Aide to the CWO." Say the full title.', _acme_pair(), **KW)
+    assert [h["held"] for h in hits] == ["guardrail"]
+
+
+def test_the_copy_scope_includes_the_project_homes(tmp_path):
+    # Fable 1654 F2: data/projects/*.md is where /generate-cv reads bullets from.
+    root = make_repo(tmp_path / "repo")
+    (root / "data/projects/beta.md").write_text("# Beta\n\nPat was Widget Intern at Acme.\n")
+    rels = [os.path.relpath(p, root) for p in facts.copy_scope(root)]
+    assert "data/projects/beta.md" in rels and "data/projects/acme.md" in rels
+
+
+def test_a_record_comment_is_not_judged_as_prose():
+    # The home line that holds the record names its banned and superseded forms; that is
+    # the record, not a stale copy. Prose on the same line is still judged.
+    recs = _acme_pair()
+    rec_line = ('<!-- fact: role_title.acme | as_of: 2026-11-26 | source: nick "x" | '
+                'forms: cv=Chief of Widgets | supersedes: "Aide to the CWO" until 2026-11-26 -->')
+    assert facts.judge_text(rec_line, recs, **KW) == []
+    hits = facts.judge_text("Pat, Aide to the CWO " + rec_line, recs, **KW)
+    assert [h["held"] for h in hits] == [None]
+
+
+def test_sweep_lists_a_stale_line_in_a_project_home(tmp_path):
+    root = make_sweep_repo(tmp_path)
+    (root / "data/projects/beta.md").write_text("# Beta\n\nPat Example, Widget Intern.\n")
+    rep = facts.sweep(root, date(2026, 11, 27))
+    assert ("data/projects/beta.md", 3) in {(h["path"], h["line"])
+                                            for h in rep["scopes"]["copies"]["hits"]}
+
+
+@pytest.mark.parametrize("bad", [b"- **Name:** Pat \xff\xfe Example\n", None])
+def test_owner_name_raises_on_an_unreadable_profile(tmp_path, bad):
+    # Codex 1641 F1: '' silently dropped surname-matched CVs from the artifact scope.
+    root = make_repo(tmp_path / "repo")
+    if bad is None:
+        (root / "data/profile.md").unlink()
+    else:
+        (root / "data/profile.md").write_bytes(bad)
+    with pytest.raises(facts.Unreadable, match="profile"):
+        facts.owner_name(root)
+
+
+def test_sweep_with_records_fails_closed_on_an_unreadable_profile(tmp_path):
+    root = make_sweep_repo(tmp_path)
+    rf = tmp_path / "records.md"
+    rf.write_text(f"```\n{TITLE}\n```\n")
+    # A profile that cannot be decoded already fails the copy scope; a MISSING one is
+    # dropped by the copy glob, so owner_name was the only reader left to notice.
+    (root / "data/profile.md").unlink()
+    with pytest.raises(facts.Unreadable, match="profile"):
+        facts.sweep(root, date(2026, 11, 27), records_file=rf)
+    r = run(root, "--records", str(rf), "sweep", "--today", "2026-11-27")
+    assert r.returncode == 2 and "profile" in r.stderr

@@ -71,6 +71,7 @@ DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 AUD_SPLIT = re.compile(r";\s*(?=[A-Za-z_]+\s*=)")
 QUOTED_ITEM = re.compile(r'"([^"]+)"([^"]*)')
 OVERRIDE_RE = re.compile(r"<!--\s*fact-ok\s*:\s*(.*?)\s*-->", re.I)
+FACT_COMMENT_RE = re.compile(r"<!--\s*fact\s*:.*?-->", re.I)
 
 
 class Unreadable(Exception):
@@ -316,10 +317,18 @@ def entity(key: str) -> str:
 
 
 GUARDRAIL_WINDOW = 4   # words before the stale form that a negation must sit in
+# The window stops at the last sentence end before the form: 'never "X." Acme = <stale>'
+# is a ban on X, not on the stale form (Fable 1654 F5, the Monday prep's cheat line).
+SENTENCE_END = re.compile(r"[.!?;][\"'\u201d\u2019*_)\]]*\s")
+
+
+def _window(text_before: str) -> str:
+    tail = SENTENCE_END.split(text_before)[-1]
+    return " ".join(tail.split()[-GUARDRAIL_WINDOW:])
 
 
 def is_guardrail(line: str, rec: Record, related: list | None = None,
-                 before: str | None = None) -> bool:
+                 before: str | None = None, stale: str | None = None) -> bool:
     """A line naming a wrong form in order to ban it, or that also states a current form of
     this record or of a record about the same entity (it is documenting the correction, as
     check_zuora_principal_title.py's self-correcting exception does).
@@ -329,10 +338,17 @@ def is_guardrail(line: str, rec: Record, related: list | None = None,
     stale form: a negation counts only there ("don't say X", "not the X", "instead of X"),
     never elsewhere on the line, where "did not see" in a first-person answer would excuse
     a stale title (red team C F1, P0). None judges the whole line (callers outside the
-    judge)."""
+    judge).
+
+    `stale` is the stale form itself: a related record's form that it already contains
+    does not excuse the line. "Aide to the CWO ... worked with the CWO" names the same
+    principal twice; it corrects nothing (Fable 1654 F1, the Monday prep's primary-proof
+    line). The record's own current forms still excuse."""
     if GUARDRAIL.search(line if before is None else before):
         return True
-    forms = [v for r in [rec, *(related or [])] for v in r.forms.values()]
+    forms = list(rec.forms.values())
+    forms += [v for r in (related or []) for v in r.forms.values()
+              if stale is None or not _form_re(v).search(stale)]
     return any(_form_re(v).search(line) for v in forms)
 
 
@@ -365,6 +381,9 @@ def judge_text(text: str, records: dict, *, path: str, audience: str, as_at: dat
     related = {r.key: [o for o in live if o is not r and entity(o.key) == entity(r.key)]
                for r in live}
     for i, line in enumerate((text or "").splitlines(), 1):
+        # A fact record names its own banned and superseded forms; that is the record, not
+        # a stale copy (data/projects/*.md is in the copy scope, Fable 1654 F2).
+        line = FACT_COMMENT_RE.sub(" ", line)
         for rec in live:
             checks = [(t, "banned", g) for t, g in rec.banned]
             checks += [(s.text, "superseded", False) for s in rec.supersedes
@@ -377,9 +396,9 @@ def judge_text(text: str, records: dict, *, path: str, audience: str, as_at: dat
                 if ov is not None:
                     held = "override" if ov.group(1).strip() else None
                 m = _form_re(form).search(line)
-                before = " ".join(line[:m.start()].split()[-GUARDRAIL_WINDOW:])
+                before = _window(line[:m.start()])
                 if held is None and is_guardrail(_form_re(form).sub(" ", line), rec,
-                                                 related[rec.key], before=before):
+                                                 related[rec.key], before=before, stale=form):
                     held = "guardrail"
                 if held is None and generic and not anchored(line, path, owner):
                     held = "unanchored-generic"
@@ -395,15 +414,18 @@ def judge_text(text: str, records: dict, *, path: str, audience: str, as_at: dat
 
 
 def owner_name(root: Path) -> str:
-    """The owner's name from data/profile.md's Name line ('' when absent). Raises
-    Unreadable when the profile resolves under a sealed tree: it is read in --records mode
+    """The owner's name from data/profile.md's Name line ('' when the line is absent). Raises
+    Unreadable when the profile is missing or cannot be decoded, and
+    when the profile resolves under a sealed tree: it is read in --records mode
     too, where the homes are not loaded and guarded (Codex follow-up F1, P0)."""
     path = Path(root) / "data/profile.md"
     _guard_sealed([path], Path(root))
     try:
         text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
-        return ""
+    except (OSError, UnicodeError) as e:
+        # '' here silently dropped surname-matched CVs from the artifact scope and weakened
+        # generic-form anchoring (Codex 1641 F1): an unread profile fails the run instead.
+        raise Unreadable(f"data/profile.md could not be read for the owner's name: {e}") from e
     m = re.search(r"^\s*-\s*\*\*Name:\*\*\s*(.+?)\s*$", text, re.M)
     return m.group(1) if m else ""
 
@@ -411,7 +433,10 @@ def owner_name(root: Path) -> str:
 # ---------------------------------------------------------------- sweep (build 2)
 
 # Coached answers are judged once, in the artifact scope (Fable F7).
-COPY_SCOPE = ("data/profile.md", "data/project-index.md", "data/company-notes/*.md")
+# data/projects/*.md: the record homes, and the prose /generate-cv reads CV bullets from
+# (Fable 1654 F2). The record comments in them are not judged as prose (judge_text).
+COPY_SCOPE = ("data/profile.md", "data/project-index.md", "data/company-notes/*.md",
+              "data/projects/*.md")
 # "*cheatsheet*": /generate-cv names cheat sheets MMDDYY-[role]-cheatsheet.md, no hyphen
 # (Fable staged-hook review F1, P0: 60 real files were outside the scope).
 # "*application-answers*": /apply's employer-facing answers (Fable F2, folded in by org ruling).
