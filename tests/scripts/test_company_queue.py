@@ -857,3 +857,15 @@ def test_load_refuses_a_queue_whose_parent_cannot_be_traversed(tmp_path):
             cq.load(tmp_path)
     finally:
         q.parent.chmod(0o755)
+
+
+def test_import_inbox_keeps_each_entrys_note_in_the_queue(tmp_path):
+    """MERGED item 6: parse_inbox_blocks reads the text after "(score N)" as inbox_note,
+    but add() dropped it, so import-inbox --remove deleted the note with no copy. The
+    queue entry must carry it; an entry with no note carries none."""
+    inbox = tmp_path / "inbox.md"
+    inbox.write_text(INBOX, encoding="utf-8")
+    cq.import_inbox(tmp_path, inbox, remove=True)
+    notes = {e["name"]: e.get("inbox_note") for e in cq.load(tmp_path)["pending"]}
+    assert notes["Beacon"] == "[location unverified] [possible match: Beacon AI in pipeline]"
+    assert notes["Acme"] is None

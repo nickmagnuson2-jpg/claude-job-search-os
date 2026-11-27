@@ -53,7 +53,10 @@ QUEUE_NAME = "tools/.company-queue.json"
 KEPT_KEYS = ("description", "score", "geo_band", "geo_flag", "possible_match",
              "possible_duplicate", "url", "role", "company", "location",
              "stage_text", "slug_guess", "lane", "fit", "bench", "bench_note",
-             "recommendation", "pipeline_note")
+             "recommendation", "pipeline_note",
+             # The inbox line's tail after "(score N)": flags and any hand-added note.
+             # Dropped before 2026-11-27, so import-inbox --remove lost it (MERGED item 6).
+             "inbox_note")
 # What read() shows per company, so /standup can render the skill's whole proposal row.
 READ_KEYS = ("name", "description", "score", "geo_band", "geo_flag", "possible_match",
              "possible_duplicate", "preset", "first_seen", "url", "stage_text",
