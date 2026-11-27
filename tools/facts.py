@@ -319,12 +319,21 @@ def entity(key: str) -> str:
 GUARDRAIL_WINDOW = 4   # words before the stale form that a negation must sit in
 # The window stops at the last sentence end before the form: 'never "X." Acme = <stale>'
 # is a ban on X, not on the stale form (Fable 1654 F5, the Monday prep's cheat line).
-SENTENCE_END = re.compile(r"[.!?;][\"'\u201d\u2019*_)\]]*\s")
+# A semicolon joins clauses of one sentence, and an abbreviation's period ends none
+# ("Do not use this title; X", "Do not describe Dr. Smith as X" still ban X; Codex 1669 F1).
+SENTENCE_END = re.compile(r"(\S*)([.!?])[\"'\u201d\u2019*_)\]]*\s")
+ABBREVIATIONS = {"dr", "mr", "mrs", "ms", "st", "jr", "sr", "vs", "etc", "e.g", "i.e",
+                 "no", "inc", "co", "ltd", "prof", "cf", "approx"}
 
 
 def _window(text_before: str) -> str:
-    tail = SENTENCE_END.split(text_before)[-1]
-    return " ".join(tail.split()[-GUARDRAIL_WINDOW:])
+    start = 0
+    for m in SENTENCE_END.finditer(text_before):
+        word = m.group(1).lstrip("\"'\u201c\u2018*_([").lower()
+        if m.group(2) == "." and word in ABBREVIATIONS:
+            continue
+        start = m.end()
+    return " ".join(text_before[start:].split()[-GUARDRAIL_WINDOW:])
 
 
 def is_guardrail(line: str, rec: Record, related: list | None = None,

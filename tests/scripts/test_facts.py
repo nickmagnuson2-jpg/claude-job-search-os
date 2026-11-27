@@ -1026,3 +1026,16 @@ def test_sweep_with_records_fails_closed_on_an_unreadable_profile(tmp_path):
         facts.sweep(root, date(2026, 11, 27), records_file=rf)
     r = run(root, "--records", str(rf), "sweep", "--today", "2026-11-27")
     assert r.returncode == 2 and "profile" in r.stderr
+
+
+@pytest.mark.parametrize("line", [
+    "Do not use this title; Aide to the CWO.",          # a semicolon does not end the sentence
+    "Never call Dr. Smith Aide to the CWO.",            # nor does an abbreviation's period
+    # (Codex's own "Do not describe Dr. Smith as X" puts "not" 5 words back, outside the
+    # 4-word window on main as well: the parked 1612 F1 / 1654 F5 positional class.)
+    "Never say e.g. Aide to the CWO.",
+])
+def test_a_same_sentence_ban_across_a_semicolon_or_abbreviation_still_excuses(line):
+    # Codex 1669 F1 (P0): the sentence-end rule must not cut a same-sentence negation.
+    hits = facts.judge_text(line, _acme_pair(), **KW)
+    assert [h["held"] for h in hits] == ["guardrail"]
