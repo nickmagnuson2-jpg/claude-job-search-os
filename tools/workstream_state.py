@@ -78,6 +78,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from check_guard_edit_approval import is_guarded  # noqa: E402  (read-only import)
+from inbox_lock import file_lock  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REGISTRY = REPO_ROOT / "data" / "workstreams"
@@ -252,11 +253,16 @@ def _splice(text: str, block: str) -> str:
     return head + block + tail
 
 
+RENDER_LOCK_TIMEOUT_S = 30.0   # workstream_write's LOCK_TIMEOUT_S
+
+
 def _atomic_write(path: Path, text: str) -> None:
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
+        if path.exists():   # mkstemp makes 0600; a render must not change the file's mode
+            os.chmod(tmp, path.stat().st_mode & 0o7777)
         os.replace(tmp, path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
@@ -266,8 +272,13 @@ def _atomic_write(path: Path, text: str) -> None:
 def render(ws_path: Path, *, repo_root: Path = REPO_ROOT, **kw) -> dict:
     """Evaluate one workstream and write its STATE-BLOCK. Does NOT advance the ack."""
     row = evaluate(ws_path, repo_root=repo_root, **kw)
-    text = ws_path.read_text(encoding="utf-8")
-    _atomic_write(ws_path, _splice(text, state_block(row)))
+    # Read and write under the file's own lock, the one workstream_write takes on the same
+    # path (workstream_write.py:147; file_lock keys on the path, inbox_lock.py:287). Without
+    # it a render that read before an add-section and wrote after it erased that section,
+    # which had already returned ok (MERGED item 7).
+    with file_lock(ws_path, timeout=RENDER_LOCK_TIMEOUT_S):
+        text = ws_path.read_text(encoding="utf-8")
+        _atomic_write(ws_path, _splice(text, state_block(row)))
     return row
 
 

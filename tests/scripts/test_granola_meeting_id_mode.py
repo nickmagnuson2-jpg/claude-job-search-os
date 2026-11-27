@@ -366,7 +366,10 @@ def _cli_pull_unknown(monkeypatch, capsys, config):
                                                              "transcript": "Me: hi"})
     monkeypatch.setattr(cli, "extract_summary_and_notes", lambda note: ("", ""))
     monkeypatch.setattr(cli, "load_sealed_meetings_config", lambda: config)
-    monkeypatch.setattr(cli, "classify_meeting", lambda m, c: "unknown")
+    # The CLI passes the personal-projects config too since MERGED item 8; stub its loader
+    # so the test never reads the real gitignored config.
+    monkeypatch.setattr(cli, "load_personal_projects_config", lambda: {"rules": []})
+    monkeypatch.setattr(cli, "classify_meeting", lambda m, c, p=None: "unknown")
     monkeypatch.setattr(cli, "unclassified_reason", lambda: REASON)
     rc = cli.cmd_pull(argparse.Namespace(ref="1", type=None, no_persist=False))
     return rc, capsys.readouterr().err

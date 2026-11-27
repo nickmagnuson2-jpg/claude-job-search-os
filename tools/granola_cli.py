@@ -70,11 +70,14 @@ from tools.granola_fetch import (  # noqa: E402
 from tools.meeting_vocab import (  # noqa: E402
     _speaker_label,
     classify_meeting,
+    load_personal_projects_config,
     load_sealed_meetings_config,
+    match_personal_project,
     unclassified_reason,
 )
 from tools.granola_auto_debrief import (  # noqa: E402
     persist_via_granola_save,
+    vault_for_project,
 )
 
 LIST_CACHE = SCRIPT_DIR / ".cache" / "granola_last_list.json"
@@ -205,7 +208,14 @@ def cmd_pull(args) -> int:
 
     # Classify (override allowed). Falls back to fail-closed 'unknown'.
     config = load_sealed_meetings_config()
-    type_ = args.type or classify_meeting(meeting, config)
+    # The personal-projects config too, as granola_auto_debrief does (:737). Without it a
+    # personal-project call classified `networking` and landed in the job-search voice
+    # corpus (MERGED item 8). A personal call routes to its project's vault, the same
+    # resolution as the auto-debrief's --meeting-id path (:447-450).
+    pconfig = load_personal_projects_config()
+    type_ = args.type or classify_meeting(meeting, config, pconfig)
+    project = match_personal_project(meeting, pconfig) if type_ == "personal" else None
+    vault_root = vault_for_project(project, pconfig) if type_ == "personal" else None
 
     if args.no_persist:
         print(f"# {title}\n")
@@ -229,7 +239,7 @@ def cmd_pull(args) -> int:
         return 2
 
     # Persist via granola_save.py (type already resolved — passed explicitly).
-    result = persist_via_granola_save(meeting, summary, "", type_)
+    result = persist_via_granola_save(meeting, summary, "", type_, project, vault_root)
 
     # Compact stdout — Claude reads this, full content is on disk
     print(f"# {title}\n")

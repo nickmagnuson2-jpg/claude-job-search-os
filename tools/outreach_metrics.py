@@ -35,6 +35,7 @@ from outreach_pending import (  # noqa: E402
     read_file,
 )
 from pipe_read import parse_all_rows  # noqa: E402
+from outreach_status import UNRESOLVED_READ_STATUSES  # noqa: E402
 from outreach_read import parse_rows  # noqa: E402,F401  (the outreach-log reader; company_dim imports it from here)
 
 COLD_SKILLS = {"cold-outreach"}
@@ -65,7 +66,7 @@ def replied(row: dict, interactions: dict) -> bool:
     # "No reply" is a judgement already made and is never overridden — this matches
     # outreach_pending.py exactly, and test_outreach_tool_parity.py fails if it stops
     # matching. Dropping this condition moves the live rate from 58% to 64%.
-    if status not in ("sent", "drafted", "pending"):
+    if status not in UNRESOLVED_READ_STATUSES:
         return False
     try:
         sent = datetime.strptime(row["date"], "%Y-%m-%d").date()

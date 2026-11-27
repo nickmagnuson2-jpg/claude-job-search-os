@@ -58,12 +58,21 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import friction_surface as fs  # shared surface/nature derivation (single source of truth)
+from inbox_lock import LockTimeout, file_lock  # noqa: E402
 import learning_state as ls  # the closed set of event kinds (single source of truth)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LEDGER = Path(os.environ.get(
     "FRICTION_LEDGER", str(REPO_ROOT / "memory" / "friction-log.md")))
 ENTRIES_MARKER = "## Entries"
+# Every writing command is a read-modify-write of LEDGER, run by two auto-logging hooks
+# as well as by hand, so concurrent runs used to lose rows while each printed ok (MERGED
+# item 7; 20 parallel appends kept 18, 14 and 15 rows on 2026-11-27). The lock is
+# inbox_lock.file_lock keyed on the ledger's own path. Its timeout stays under the 10 s
+# subprocess timeout log_tool_failure.py gives this script, so a held lock ends in a clean
+# error rather than a killed process.
+LEDGER_LOCK_TIMEOUT_S = 5.0
+WRITING_COMMANDS = {"append", "resolve", "dedup", "migrate-kinds", "close-stale"}
 
 # A "row" is a markdown table row.
 # Schema:
@@ -151,6 +160,8 @@ def atomic_write(path: Path, content: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
             f.write(content)
+        if path.exists():   # mkstemp makes 0600; keep the ledger's own mode
+            os.chmod(tmp, path.stat().st_mode & 0o7777)
         os.replace(tmp, path)
     except Exception:
         try:
@@ -1019,7 +1030,15 @@ def main(argv: list[str]) -> None:
     ps.set_defaults(func=cmd_close_stale)
 
     args = p.parse_args(argv)
-    args.func(args)
+    if args.cmd not in WRITING_COMMANDS:
+        args.func(args)
+        return
+    try:
+        with file_lock(LEDGER, timeout=LEDGER_LOCK_TIMEOUT_S):
+            args.func(args)
+    except LockTimeout:
+        fail(f"ledger is locked by another writer (waited {LEDGER_LOCK_TIMEOUT_S:g} s); "
+             "nothing written, re-run the command")
 
 
 if __name__ == "__main__":

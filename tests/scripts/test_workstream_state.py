@@ -467,3 +467,41 @@ def test_a_probe_whose_field_is_not_a_name_is_typed_not_a_crash(tmp_path, field)
                                                "field": field})
     row = ws.evaluate(p, repo_root=tmp_path)
     assert (row["state"], row["surfaces"]) == ("typed", True)
+
+
+# ---------- MERGED item 7: render takes the file's own lock and keeps its mode ----------
+
+def test_render_waits_for_the_files_lock_and_writes_nothing_on_timeout(tmp_path, monkeypatch):
+    """workstream_write takes file_lock on the workstream file; a render must take the same
+    lock, or it can erase an add-section that returned ok in between its read and write."""
+    import threading
+    from inbox_lock import LockTimeout, file_lock
+
+    p = write_ws(tmp_path, "lck", probe=probe_emitting(tmp_path, '{"value": 3}'))
+    before = p.read_text(encoding="utf-8")
+    monkeypatch.setattr(ws, "RENDER_LOCK_TIMEOUT_S", 0.3)
+    held, release = threading.Event(), threading.Event()
+
+    def holder():
+        with file_lock(p, timeout=5):
+            held.set()
+            release.wait(30)
+
+    t = threading.Thread(target=holder)
+    t.start()
+    try:
+        assert held.wait(5)
+        with pytest.raises(LockTimeout):
+            ws.render(p, repo_root=tmp_path)
+    finally:
+        release.set()
+        t.join()
+    assert p.read_text(encoding="utf-8") == before
+
+
+def test_render_keeps_the_files_mode(tmp_path):
+    p = write_ws(tmp_path, "mode", probe=probe_emitting(tmp_path, '{"value": 4}'))
+    p.chmod(0o644)
+    ws.render(p, repo_root=tmp_path)
+    assert ws.BEGIN in p.read_text(encoding="utf-8")
+    assert p.stat().st_mode & 0o777 == 0o644

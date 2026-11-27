@@ -304,3 +304,55 @@ def test_the_script_imports_and_runs_main_only_as_a_script(tmp_path):
     as_script = subprocess.run([sys.executable, str(script), "--no-such-flag"],
                                cwd=str(tmp_path), capture_output=True, text=True)
     assert as_script.returncode != 0, "run as a script, main() must parse its arguments"
+
+
+def test_collect_main_applies_each_presets_own_weight_override(tmp_path, monkeypatch):
+    """A preset's scoring_weights override reaches the scorer (MERGED item 9, P0 363.F2).
+
+    Lane B's override retires stage as a criterion (2026-08-06 decision). The collector
+    used to pass only the global block, so Lane B was scored with stage 0.5 every week.
+    A preset with no override must still get the global weights unchanged.
+    """
+    import tools.agent_collect as ac
+
+    presets = tmp_path / "presets.yaml"
+    presets.write_text(
+        "scoring_weights: {stage: 0.5, sector: 0.3, keyword: 0.2}\n"
+        "presets:\n"
+        "  lane-plain:\n"
+        "    entity_type: company\n"
+        "    query: q1\n"
+        "    monitor: {cadence: weekly}\n"
+        "  lane-override:\n"
+        "    entity_type: company\n"
+        "    query: q2\n"
+        "    monitor: {cadence: weekly}\n"
+        "    scoring_weights: {stage: 0.0, sector: 0.55, keyword: 0.45}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ac, "SEEN_PATH", tmp_path / ".agent_seen.json")
+    monkeypatch.setattr(ac, "INBOX", tmp_path / "inbox.md")
+    monkeypatch.setattr(ac, "QUEUE_ROOT", tmp_path)
+    monkeypatch.setattr(ac, "PIPELINE", tmp_path / "no-pipeline.md")
+    monkeypatch.setattr(ac, "load_dotenv", lambda: None)
+    monkeypatch.setattr(ac, "make_client", lambda: object())
+    monkeypatch.setattr(ac, "load_known_names", lambda paths: set())
+    monkeypatch.setattr(ac, "run_agent", lambda client, query, *a, **k: {
+        "status": "completed",
+        "structured": {"companies": [{"name": f"Co-{query}", "hq": "San Francisco",
+                                      "funding_stage": "Seed", "description": "d"}]}})
+    seen_weights = {}
+
+    def fake_score(cands, weights, keywords):
+        seen_weights[cands[0]["name"]] = dict(weights)
+        return [{**c, "score": 1} for c in cands]
+
+    monkeypatch.setattr(ac, "score_company_candidates", fake_score)
+    monkeypatch.setattr("sys.argv", ["agent_collect.py", "--today", "2026-11-27",
+                                     "--presets-file", str(presets)])
+    ac.main()
+
+    assert seen_weights == {
+        "Co-q1": {"stage": 0.5, "sector": 0.3, "keyword": 0.2},
+        "Co-q2": {"stage": 0.0, "sector": 0.55, "keyword": 0.45},
+    }

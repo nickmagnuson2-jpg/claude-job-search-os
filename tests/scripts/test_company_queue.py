@@ -857,3 +857,109 @@ def test_load_refuses_a_queue_whose_parent_cannot_be_traversed(tmp_path):
             cq.load(tmp_path)
     finally:
         q.parent.chmod(0o755)
+
+
+def test_import_inbox_keeps_each_entrys_note_in_the_queue(tmp_path):
+    """MERGED item 6: parse_inbox_blocks reads the text after "(score N)" as inbox_note,
+    but add() dropped it, so import-inbox --remove deleted the note with no copy. The
+    queue entry must carry it; an entry with no note carries none."""
+    inbox = tmp_path / "inbox.md"
+    inbox.write_text(INBOX, encoding="utf-8")
+    cq.import_inbox(tmp_path, inbox, remove=True)
+    notes = {e["name"]: e.get("inbox_note") for e in cq.load(tmp_path)["pending"]}
+    assert notes["Beacon"] == "[location unverified] [possible match: Beacon AI in pipeline]"
+    assert notes["Acme"] is None
+
+
+def test_remove_keeps_the_note_of_a_company_already_queued_without_one(tmp_path):
+    """Codex r1 F1 (P0), the live case: an earlier import without --remove queued these
+    entries with no note (20 of the 22 noted inbox entries on 2026-11-27). Dedup then
+    skips them, so KEPT_KEYS alone never stores the note, and --remove deleted the inbox
+    line anyway. A skipped duplicate must carry its note onto the existing entry."""
+    cq.add(tmp_path, "lane-a", "company", [{"name": "Beacon", "score": 5}], "2026-11-16")
+    inbox = tmp_path / "inbox.md"
+    inbox.write_text(INBOX, encoding="utf-8")
+    out = cq.import_inbox(tmp_path, inbox, remove=True)
+    assert out["blocks_removed"] == 2 and "Beacon" not in inbox.read_text(encoding="utf-8")
+    [beacon] = [e for e in cq.load(tmp_path)["pending"] if e["name"] == "Beacon"]
+    assert beacon["inbox_note"] == "[location unverified] [possible match: Beacon AI in pipeline]"
+    assert out["notes_merged"] == 1
+
+
+def test_a_skipped_duplicate_never_overwrites_an_existing_note(tmp_path):
+    cq.add(tmp_path, "lane-a", "company",
+           [{"name": "Beacon", "score": 5, "inbox_note": "first note"}], "2026-11-16")
+    cq.add(tmp_path, "lane-a", "company",
+           [{"name": "Beacon", "score": 5, "inbox_note": "first note"}], "2026-11-17")
+    cq.add(tmp_path, "lane-a", "company",
+           [{"name": "BEACON", "score": 5, "inbox_note": "second note"}], "2026-11-18")
+    [beacon] = cq.load(tmp_path)["pending"]
+    assert beacon["inbox_note"] == "first note | second note"
+
+
+def test_remove_never_deletes_a_block_that_arrived_after_the_import_read(tmp_path, monkeypatch):
+    """Codex r2 F1 (P0): import read the inbox, queued what it read, then its removal
+    transform reparsed the CURRENT inbox and dropped every drip block it found there,
+    including one a writer added in between. That block was never queued, so it was lost.
+    Removal must touch only blocks whose text is exactly what was imported."""
+    inbox = tmp_path / "inbox.md"
+    inbox.write_text(INBOX, encoding="utf-8")
+    late = ("## 2026-11-17 | Agent drip: lane-a (company)\n"
+            "<!-- review-gated: accept via /act or /networking -->\n"
+            "- **Newco** - arrived during the import (score 6) [Peninsula]\n\n")
+    real_add = cq.add
+    fired = []
+
+    def add_then_a_writer_prepends(*a, **k):
+        out = real_add(*a, **k)
+        if not fired:
+            fired.append(1)
+            text = inbox.read_text(encoding="utf-8")
+            head, rest = text.split("\n", 1)
+            inbox.write_text(head + "\n\n" + late + rest, encoding="utf-8")
+        return out
+
+    monkeypatch.setattr(cq, "add", add_then_a_writer_prepends)
+    out = cq.import_inbox(tmp_path, inbox, remove=True)
+    left = inbox.read_text(encoding="utf-8")
+    assert "Newco" in left and "arrived during the import" in left
+    assert "Acme" not in left and "Casey Doe" not in left
+    assert out["blocks_removed"] == 2
+    assert "Newco" not in {e["name"] for e in cq.load(tmp_path)["pending"]}
+
+
+# --- _merge_note branches (mutation run 1 survivors, org 67 ruling 2026-11-27 14:00) --------
+
+def test_a_duplicate_without_a_note_leaves_the_existing_note_alone(tmp_path):
+    """Kills _merge_note L138 IF_FALSE: without the empty-note guard, a skipped duplicate
+    carrying no note appended " | " to the queued entry's note."""
+    cq.add(tmp_path, "lane-a", "company", [{"name": "Beacon", "inbox_note": "[Peninsula]"}], "2026-11-16")
+    cq.add(tmp_path, "lane-a", "company", [{"name": "Beacon", "inbox_note": None}], "2026-11-17")
+    [beacon] = cq.load(tmp_path)["pending"]
+    assert beacon["inbox_note"] == "[Peninsula]"
+
+
+def test_a_person_duplicates_note_lands_on_that_person(tmp_path):
+    """Kills _merge_note L140 IF_FALSE and both L141 NEGATE_CMP: a person is matched by its
+    stored key, not by the company-name rule, so its note reaches its own entry."""
+    person = {"name": "Casey Doe", "company": "Northwind", "location": "San Francisco"}
+    cq.add(tmp_path, "deployment-leads", "person", [person], "2026-11-16")
+    cq.add(tmp_path, "deployment-leads", "person", [{**person, "inbox_note": "met at a meetup"}],
+           "2026-11-17")
+    [casey] = cq.load(tmp_path)["pending"]
+    assert casey["inbox_note"] == "met at a meetup"
+
+
+def test_a_note_prefers_the_entry_in_the_same_preset(tmp_path):
+    """Kills _merge_note L147 NEGATE_CMP. add() never queues one name twice, but a queue
+    written before that dedup can hold the same company under two presets; the note goes
+    to the entry in the duplicate's own preset."""
+    cq.add(tmp_path, "lane-a", "company", [{"name": "Beacon"}], "2026-11-16")
+    path = cq.queue_path(tmp_path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["pending"].append({**data["pending"][0], "preset": "lane-b"})
+    path.write_text(json.dumps(data), encoding="utf-8")
+    cq.add(tmp_path, "lane-b", "company", [{"name": "Beacon", "inbox_note": "[Bay, not SF]"}],
+           "2026-11-17")
+    by_preset = {e["preset"]: e.get("inbox_note") for e in cq.load(tmp_path)["pending"]}
+    assert by_preset == {"lane-a": None, "lane-b": "[Bay, not SF]"}

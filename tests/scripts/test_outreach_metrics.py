@@ -340,3 +340,13 @@ def test_main_prints_to_stdout_when_no_out_file(tmp_path, capsys):
     (d / "job-pipeline.md").write_text("", encoding="utf-8")
     assert om.main(["--repo-root", str(tmp_path)]) == 0
     assert json.loads(capsys.readouterr().out)["totals"]["touches"] == 1
+
+
+def test_delivered_row_with_a_later_interaction_counts_as_replied():
+    """Delivered is unresolved, like Sent: a later networking interaction upgrades it,
+    and outreach_pending does the same (MERGED item 4; one vocabulary in outreach_status)."""
+    row = {"status": "Delivered", "date": "2026-04-07",
+           "recipient": "Sam Carter", "company": "Harbor Bikes"}
+    key = om.reconcile_key("Sam Carter", "Harbor Bikes")
+    assert om.replied(row, {key: date(2026, 4, 14)}) is True
+    assert om.replied(row, {key: date(2026, 4, 1)}) is False

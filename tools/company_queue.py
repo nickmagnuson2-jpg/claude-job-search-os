@@ -53,7 +53,10 @@ QUEUE_NAME = "tools/.company-queue.json"
 KEPT_KEYS = ("description", "score", "geo_band", "geo_flag", "possible_match",
              "possible_duplicate", "url", "role", "company", "location",
              "stage_text", "slug_guess", "lane", "fit", "bench", "bench_note",
-             "recommendation", "pipeline_note")
+             "recommendation", "pipeline_note",
+             # The inbox line's tail after "(score N)": flags and any hand-added note.
+             # Dropped before 2026-11-27, so import-inbox --remove lost it (MERGED item 6).
+             "inbox_note")
 # What read() shows per company, so /standup can render the skill's whole proposal row.
 READ_KEYS = ("name", "description", "score", "geo_band", "geo_flag", "possible_match",
              "possible_duplicate", "preset", "first_seen", "url", "stage_text",
@@ -122,12 +125,39 @@ def load(repo_root: Path) -> dict:
                      f"(a directory or a broken symlink; mode {st.st_mode:o})")
 
 
+def _merge_note(data: dict, entity: str, row: dict) -> bool:
+    """Carry a skipped duplicate's inbox_note onto the entry it duplicates.
+
+    import-inbox --remove deletes every parsed inbox line, including the ones dedup
+    skipped, so a note on a skipped line must reach the queue or it is lost (Codex r1 F1,
+    P0: 20 of the 22 noted inbox entries were already queued without a note). Fill a
+    missing note; append a different one; never overwrite. The same-preset entry is
+    preferred, then pending before decided.
+    """
+    note = (row.get("inbox_note") or "").strip()
+    if not note:
+        return False
+    if entity == "person":
+        same = lambda e: e.get("entity") == "person" and e.get("key") == row["key"]
+    else:
+        same = lambda e: e.get("entity") != "person" and exact_company(e.get("name"), row["name"])
+    matches = [e for e in data["pending"] + data["decided"] if isinstance(e, dict) and same(e)]
+    if not matches:
+        return False
+    target = next((e for e in matches if e.get("preset") == row.get("preset")), matches[0])
+    old = (target.get("inbox_note") or "").strip()
+    if note == old or note in old.split(" | "):
+        return False
+    target["inbox_note"] = f"{old} | {note}" if old else note
+    return True
+
+
 def add(repo_root: Path, preset: str, entity: str, candidates: list[dict],
         today: str) -> dict:
     """Queue candidates. A key already pending or already decided is skipped, so a
     company Nick rejected here is never queued twice even if the collector's own seen
     set is reset."""
-    counts = {"added": 0, "skipped": 0}
+    counts = {"added": 0, "skipped": 0, "notes_merged": 0}
 
     def transform(text: str) -> str:
         data = _load_text(text)
@@ -143,7 +173,7 @@ def add(repo_root: Path, preset: str, entity: str, candidates: list[dict],
         # never skipped: this is a discovery path (company-key-1121 ruling).
         companies = KeyIndex([e.get("name") for e in data["pending"] + data["decided"]
                               if isinstance(e, dict) and e.get("entity") != "person"])
-        counts["added"] = counts["skipped"] = 0
+        counts["added"] = counts["skipped"] = counts["notes_merged"] = 0
         for c in candidates:
             if not isinstance(c, dict) or not c.get("name"):
                 continue
@@ -154,6 +184,8 @@ def add(repo_root: Path, preset: str, entity: str, candidates: list[dict],
             # decides, whatever the stored keys say (Codex r1 F1 and r2 F1).
             if (row["key"] in known if entity == "person" else companies.exact(row["name"])):
                 counts["skipped"] += 1
+                if _merge_note(data, entity, row):
+                    counts["notes_merged"] += 1
                 continue
             known.add(row["key"])
             if entity != "person":
@@ -170,7 +202,9 @@ def add(repo_root: Path, preset: str, entity: str, candidates: list[dict],
 
     queue_path(repo_root).parent.mkdir(parents=True, exist_ok=True)
     inbox_lock.atomic_update(queue_path(repo_root), transform)
-    return dict(counts)
+    # notes_merged appears only when a note was merged, so the shape /discover-companies
+    # documents ({added, skipped}) is unchanged for discovery, whose rows carry no note.
+    return {k: v for k, v in counts.items() if k != "notes_merged" or v}
 
 
 def read(repo_root: Path, top: int = 4) -> dict:
@@ -679,32 +713,43 @@ def import_inbox(repo_root: Path, inbox: Path, remove: bool = False) -> dict:
     by = {}
     for e in entries:
         by.setdefault((e["preset"], e["entity"], e["first_seen"]), []).append(e)
-    added = skipped = 0
+    added = skipped = merged = 0
     for (preset, entity, day), group in sorted(by.items(), key=lambda kv: kv[0][2]):
         r = add(repo_root, preset, entity, group, day)
         added += r["added"]
         skipped += r["skipped"]
+        merged += r.get("notes_merged", 0)
     removed = 0
     if remove and spans:
+        # Remove only what was imported: the exact text of each block read above. The
+        # transform runs on the inbox as it is NOW, and a drip block written after the
+        # read was never queued, so dropping every block found now lost it (Codex r2 F1).
+        read_lines = text.splitlines(keepends=True)
+        imported = {"".join(read_lines[a:b]) for a, b in spans}
+        dropped = [0]
+
         def transform(t: str) -> str:
             _, sp = parse_inbox_blocks(t)
             ls = t.splitlines(keepends=True)
             drop = set()
+            dropped[0] = 0
             # Only the lines this parser understood: the header, the review-gated marker,
             # the entry lines it imported, and blank lines. Anything else in a span stays
             # (review 2026-11-17, Codex/Grok F3).
             for a, b in sp:
+                if "".join(ls[a:b]) not in imported:
+                    continue
+                dropped[0] += 1
                 for k in range(a, b):
                     line = ls[k].rstrip("\n")
                     if (k == a or not line.strip() or line.startswith("<!-- review-gated")
                             or _COMPANY_LINE.match(line) or _PERSON_LINE.match(line)):
                         drop.add(k)
             return "".join(l for k, l in enumerate(ls) if k not in drop)
-        before = len(spans)
         inbox_lock.atomic_update(inbox, transform)
-        removed = before
+        removed = dropped[0]
     return {"blocks": len(spans), "entries": len(entries), "added": added,
-            "skipped": skipped, "blocks_removed": removed}
+            "skipped": skipped, "notes_merged": merged, "blocks_removed": removed}
 
 
 def main(argv=None) -> int:
