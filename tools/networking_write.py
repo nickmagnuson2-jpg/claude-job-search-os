@@ -873,10 +873,15 @@ def main() -> None:
     # Every subcommand takes a positional name.
     args.name = sanitize_cell(args.name)
 
+    # Every command that reads networking.md and replaces it whole holds the lock from the
+    # read to the save (Codex 11-27 1655.F1: add, update and remove ran without it, so a
+    # concurrent writer's save in between was erased while both reported success).
     if args.command == "add":
-        cmd_add(args, networking_path, args.dry_run)
+        with networking_lock(networking_path, args.dry_run):
+            cmd_add(args, networking_path, args.dry_run)
     elif args.command == "update":
-        cmd_update(args, networking_path, args.dry_run)
+        with networking_lock(networking_path, args.dry_run):
+            cmd_update(args, networking_path, args.dry_run)
     elif args.command == "log":
         with networking_lock(networking_path, args.dry_run):
             cmd_log(args, networking_path, repo_root, args.dry_run)
@@ -884,7 +889,8 @@ def main() -> None:
         with networking_lock(networking_path, args.dry_run):
             cmd_mark_sent(args, networking_path, args.dry_run)
     elif args.command == "remove":
-        cmd_remove(args, networking_path, args.dry_run)
+        with networking_lock(networking_path, args.dry_run):
+            cmd_remove(args, networking_path, args.dry_run)
     else:
         out_error(f"Unknown command: {args.command}")
 

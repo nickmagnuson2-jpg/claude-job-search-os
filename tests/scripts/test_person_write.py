@@ -377,3 +377,52 @@ def test_a_real_add_entry_reports_the_appended_bullet_not_a_preview(tmp_path):
     assert rc == 0 and "dry_run" not in res, res
     assert res["summary"] == "Appended to owed: - 2026-11-26 — lunch", res
     assert res["entry"] == "- 2026-11-26 — lunch", res
+
+
+# ---------------------------------------------------------------------------
+# the dossier lock (Codex 11-27 1655.F2)
+# ---------------------------------------------------------------------------
+
+def _hold_dossier_lock(tmp_path, monkeypatch):
+    monkeypatch.setenv("JOBSEARCH_LOCK_DIR", str(tmp_path / "locks"))
+    monkeypatch.setenv("PERSON_LOCK_TIMEOUT", "0.2")
+    sys.path.insert(0, str(TOOLS_DIR))
+    import inbox_lock
+    return inbox_lock
+
+
+def test_add_entry_waits_for_the_dossier_lock(tmp_path, monkeypatch):
+    """1655.F2 (P0): add-entry read the dossier, inserted a bullet and replaced the file with
+    no lock, so two concurrent add-entry calls could each save over the other and lose an
+    entry while both reported success. It now holds inbox_lock.file_lock on the dossier from
+    the read to the save; while another writer holds it, it refuses and writes nothing."""
+    inbox_lock = _hold_dossier_lock(tmp_path, monkeypatch)
+    run_pw("create", "Sam Carter", repo_root=tmp_path)
+    path = people_dir(tmp_path) / "sam-carter.md"
+    before = path.read_text(encoding="utf-8")
+    with inbox_lock.file_lock(path):
+        res, rc = run_pw("add-entry", "sam-carter", "--section", "owed",
+                         "--text", "Send the deck", repo_root=tmp_path)
+    assert rc != 0 and res.get("code") == "locked", res
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_create_waits_for_the_dossier_lock(tmp_path, monkeypatch):
+    """create checks that the dossier does not exist and then writes it; under the lock a
+    second create sees the first one's file and does not clobber it."""
+    inbox_lock = _hold_dossier_lock(tmp_path, monkeypatch)
+    path = people_dir(tmp_path) / "sam-carter.md"
+    with inbox_lock.file_lock(path):
+        res, rc = run_pw("create", "Sam Carter", repo_root=tmp_path)
+    assert rc != 0 and res.get("code") == "locked", res
+    assert not path.exists()
+
+
+def test_a_dry_run_add_entry_takes_no_lock(tmp_path, monkeypatch):
+    inbox_lock = _hold_dossier_lock(tmp_path, monkeypatch)
+    run_pw("create", "Sam Carter", repo_root=tmp_path)
+    path = people_dir(tmp_path) / "sam-carter.md"
+    with inbox_lock.file_lock(path):
+        res, rc = run_pw("add-entry", "sam-carter", "--section", "owed",
+                         "--text", "Send the deck", repo_root=tmp_path, dry_run=True)
+    assert rc == 0 and res.get("dry_run") is True, res
