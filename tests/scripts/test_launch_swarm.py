@@ -176,7 +176,7 @@ def test_the_prompt_routes_logging_to_the_writer_not_cat(run_dir):
     sec = brief.sections[0]
     prompt = ls.section_prompt(sec, org="proj-org", brief_rel="output/overnight-010126/brief.md")
     assert f"tools/workstream_write.py add-section {sec.log_file}" in prompt
-    assert f'--title "{sec.id}: <what>" --body-file -' in prompt
+    assert f"--title '{sec.id}: <what>' --body-file -" in prompt
     assert "cat >>" not in prompt
 
 
@@ -186,6 +186,13 @@ def test_the_template_logging_rule_routes_to_the_writer_not_cat():
                   if l.startswith("12. **Logging:**"))
     assert "tools/workstream_write.py add-section" in rule12
     assert "cat >>" not in rule12
+
+
+# Fable 11-27 F1/F4/F5: a double-quoted --body or --title let the shell expand $ and
+# backticks, and the writer recorded the altered text with exit 0. Real entries carry both
+# (Exa spend "$0.40", `date`), so the execution tests type them.
+TITLE = "probe $HOME `echo x`"
+ENTRY = "spent $0.40, see `date` and $(echo y)"
 
 
 def _run_logged(cmd: str, tmp_path, log_rel: str) -> str:
@@ -209,20 +216,22 @@ def test_the_prompts_logging_command_runs_as_written(run_dir, tmp_path):
     lines = ls.section_prompt(sec, org="proj-org", brief_rel="b").splitlines()
     start = next(i for i, l in enumerate(lines) if l.startswith("PYTHONIOENCODING=utf-8 python3 tools/workstream_write.py"))
     end = lines.index("EOF", start)
-    block = "\n".join(lines[start:end + 1]).replace("<what>", "probe").replace("<entry lines>", "entry body")
+    block = "\n".join(lines[start:end + 1]).replace("<what>", TITLE).replace("<entry lines>", ENTRY)
     text = _run_logged(block, tmp_path, sec.log_file)
-    assert re.search(rf"^## \d{{4}}-\d\d-\d\d \d\d:\d\d by `date` \| {sec.id}: probe$", text, re.M), text
-    assert "entry body" in text
+    assert re.search(rf"^## \d{{4}}-\d\d-\d\d \d\d:\d\d by `date` \| {re.escape(sec.id + ': ' + TITLE)}$",
+                     text, re.M), text
+    assert ENTRY in text, "the entry must land exactly as typed, $ and backticks included"
 
 
 def test_the_templates_logging_command_runs_as_written(tmp_path):
     rule12 = next(l for l in TEMPLATE.read_text(encoding="utf-8").splitlines()
                   if l.startswith("12. **Logging:**"))
     cmd = re.search(r"`(PYTHONIOENCODING=utf-8 python3 tools/workstream_write\.py [^`]+)`", rule12).group(1)
-    cmd = cmd.replace("<X>: <what>", "L9: probe").replace("<entry>", "entry body")
+    cmd = cmd.replace("<X>: <what>", "L9: " + TITLE) + "\n" + ENTRY + "\nEOF"
     text = _run_logged(cmd, tmp_path, "<log file>")
-    assert re.search(r"^## \d{4}-\d\d-\d\d \d\d:\d\d by `date` \| L9: probe$", text, re.M), text
-    assert "entry body" in text
+    assert re.search(rf"^## \d{{4}}-\d\d-\d\d \d\d:\d\d by `date` \| {re.escape('L9: ' + TITLE)}$",
+                     text, re.M), text
+    assert ENTRY in text, "the entry must land exactly as typed, $ and backticks included"
 
 
 # ---------------------------------------------------------------- structure
