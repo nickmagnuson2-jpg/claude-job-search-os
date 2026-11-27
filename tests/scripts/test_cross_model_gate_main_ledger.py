@@ -103,7 +103,7 @@ def test_the_worktree_copy_wins_over_main_on_the_same_run(repos):
 def test_another_models_p0_in_main_with_the_same_report_and_second_still_blocks(repos):
     """Codex 11-26 F1 (P0): open_p0_against treated (report, recorded) as a run's
     identity, so a worktree Codex row suppressed main's Grok P0 that shared both. The
-    run identity is the gate's own _row_key, which includes the model."""
+    run identity is codex_verify.row_identity, which includes the model."""
     main, wt = repos
     shared = {"report": "output/analysis/shared.md"}
     _row(wt, **shared)                                                       # codex, covers
@@ -111,6 +111,29 @@ def test_another_models_p0_in_main_with_the_same_report_and_second_still_blocks(
     _row(main, **shared, model="grok", findings=_open_p0())                  # same report+second
     assert len(g.open_p0_against(wt, {PATH})) == 1
     assert g.check(wt, CHANGE, since=0).blocked is True
+
+
+def test_a_distinct_main_run_in_the_same_second_keeps_its_p0(repos):
+    """Codex 11-27 1656.F1 (P0): the gate keyed a run as (report, model, recorded) only.
+    `recorded` has whole seconds, so a worktree row and a DISTINCT main-ledger run that
+    reuse one report path in one second collided: main's row was dropped from the merge
+    and its open P0 with it, and the push passed. The run identity is
+    codex_verify.row_identity, which adds the findings signature."""
+    main, wt = repos
+    _row(wt)                                                     # covers, no findings
+    _row(main, findings=_open_p0())                              # same report/model/second
+    assert len(g.open_p0_against(wt, {PATH})) == 1
+    assert g.check(wt, CHANGE, since=0).blocked is True
+
+
+def test_a_distinct_main_run_in_the_same_second_is_merged(repos):
+    """The read_gate_ledger half of 1656.F1: the distinct main run is merged, not
+    dropped as if it were this worktree's own row."""
+    main, wt = repos
+    _row(wt)
+    _row(main, findings=_open_p0())
+    rows, corrupt, _ = g.read_gate_ledger(wt)
+    assert corrupt == 0 and len(rows) == 2
 
 
 def test_a_malformed_main_line_does_not_unmatch_the_runs_after_it(repos):
