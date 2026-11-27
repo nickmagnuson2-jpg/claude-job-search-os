@@ -692,7 +692,9 @@ def write_queue_payload(repo_root: Path, payload: dict) -> Path:
 
     path = role_queue_path(repo_root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    # The temp file carries the queue's name so an interrupted write leaves a file that
+    # .gitignore's tools/.*-queue* covers: it holds the full queue (Fable s4f F3).
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f"{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, default=str)
