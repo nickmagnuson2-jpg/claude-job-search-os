@@ -16,10 +16,16 @@ For each branch:
      sha exactly; `commit-tree` then gives an unreferenced commit with main's exact content.
      Otherwise the check falls back to local origin/main and says so. Each branch is then
      merge-tree'd against that main, and every pair of branches against each other.
-  5. The push gate dry run: the pre-push hook git would run (`git rev-parse --git-path hooks`),
-     called from the branch's worktree with the refs line and push URL git would hand it.
-     That hook runs the BRANCH'S OWN tools/cross_model_gate.py, exactly as a real push does,
-     so this step is as trustworthy as the push itself and no more.
+  5. The push gate, judged with the BASE's gate (Nick, 2026-11-27): the main checkout's
+     tools/hooks/pre-push and tools/cross_model_gate.py, run by preview_gate in a throwaway
+     worktree, from where the branch left main (merge-base, three-dot), with the main
+     checkout's gate data plus the branch worktree's review and audit rows main lacks (as
+     merge-push's backfill adds them). That is what judges the merge-push that lands it. The
+     report's `judged_with` names the checkers' path and commit. The branch's own gate (the
+     installed hook from its worktree, which runs the BRANCH'S copy of the gate) still runs,
+     as `own_gate`; it decides nothing, and a note says when it would block a per-branch
+     push that main's gate allows. Before this, a branch cut before a gate change was refused
+     by its own old gate, and a branch that edits the gate judged itself.
   6. `tools/audit_pii_record.py check --tip <sha>`, pointed at the worktree. The check reads
      the MAIN checkout's audit ledger (2026-11-22): a record held only by the worktree's copy
      is refused, and the refusal carries the tool's message naming the command to fix it.
@@ -27,8 +33,8 @@ For each branch:
   8. Optional (--suite): `tools/suite_record.py check --tip <sha>` when that tool exists;
      skipped with a notice when it does not.
 
-Steps 6 to 8 run the MAIN CHECKOUT's copies of those tools, never the branch's: a branch that
-edits its own audit or PII scanner must not get to judge itself (Codex r1 F1, P0). Those
+Steps 5 to 8 run the MAIN CHECKOUT's copies of those tools, never the branch's: a branch that
+edits its own gate, audit or PII scanner must not get to judge itself (Codex r1 F1, P0). Those
 copies are whatever the main checkout has checked out, so the report prints that commit and
 warns when it is not GitHub main, and the PR text says which copies ran.
 
@@ -279,9 +285,34 @@ def merge_check(root: Path, a: str, b: str) -> dict:
 
 
 # ---------------------------------------------------------------- per-branch steps
+def base_gate(root: Path, wt: Path, branch: str, tip: str, main_ref: str | None,
+              remote_url: str) -> dict:
+    """The verdict step 5 uses: the MAIN CHECKOUT's pre-push hook and gate, never the
+    branch's (Nick, 2026-11-27). Run through preview_gate, the mechanism merge-push trusts for
+    the final push, from where the branch left main (three-dot), with the branch worktree's
+    review and audit rows that main lacks, as merge-push's backfill would add them."""
+    tools = trusted_tools(root)
+    if tools is None:
+        return {"rc": None, "ok": False, "reason": NO_TRUSTED, "judged_with": None}
+    main = tools.parent
+    rc, head, _ = git(["rev-parse", "HEAD"], main)
+    judged = {"path": str(tools), "commit": head.strip() if rc == 0 else None}
+    rc, base, err = git(["merge-base", tip, main_ref or "origin/main"], root)
+    if rc != 0 or not base.strip():
+        return {"rc": None, "ok": False, "judged_with": judged,
+                "reason": f"no merge base with main: {err.strip()[:200]}"}
+    base = base.strip()
+    cross, audit = collect_backfill(main, [{"worktree": str(wt)}])
+    g = preview_gate(root, main, tools, base, tip, remote_url, cross, audit,
+                     line=f"refs/heads/{branch} {tip} refs/heads/{branch} {base}\n")
+    return {**g, "judged_with": judged}
+
+
 def gate_dry_run(root: Path, wt: Path, branch: str, tip: str, remote_sha: str,
                  remote_url: str) -> dict:
-    """The pre-push hook git would run for `git push origin refs/heads/b:refs/heads/b`."""
+    """The pre-push hook git would run for `git push origin refs/heads/b:refs/heads/b`: the
+    BRANCH'S OWN gate. Since 2026-11-27 it decides nothing; check_branch reports it as a
+    note when it would block a per-branch push that base_gate allows."""
     rc, hooks, _ = git(["rev-parse", "--path-format=absolute", "--git-path", "hooks"], wt)
     hook = Path(hooks.strip()) / "pre-push" if rc == 0 else None
     if hook is None or not hook.is_file():
@@ -449,10 +480,17 @@ def check_branch(root: Path, branch: str, worktrees: dict, gh_state: dict | None
                                                           m.get("error", "?")))
     else:
         r["refusals"].append("no main ref to check against")
-    g = gate_dry_run(root, wt, branch, tip, remote_sha, remote_url)
+    g = base_gate(root, wt, branch, tip, main_ref, remote_url)
     r["steps"]["gate"] = g
     if not g["ok"]:
-        r["refusals"].append(f"push gate rc {g['rc']}: {g.get('reason') or g.get('error')}")
+        r["refusals"].append(f"push gate rc {g['rc']}: {g.get('reason')}")
+    own = gate_dry_run(root, wt, branch, tip, remote_sha, remote_url)
+    r["steps"]["own_gate"] = own
+    if g["ok"] and not own["ok"]:
+        r.setdefault("notes", []).append(
+            f"this branch's own gate refuses a per-branch push (rc {own['rc']}: "
+            f"{own.get('reason') or own.get('error')}); main's gate passes it, so land it "
+            "with --merge-push, not the per-branch push command")
     tools = trusted_tools(root)
     a = audit_check(tools, wt, tip)
     r["steps"]["audit"] = a
@@ -507,7 +545,7 @@ def pr_text(r: dict, main: dict, subjects: list[str], conflicts: list[dict],
     lines = ["## Summary", *[f"- {s}" for s in subjects], "", "## Verification",
              f"- Merges cleanly onto {against} (land_branch.py, git merge-tree, "
              f"{main['method']}).",
-             "- Pre-push gate dry run rc 0; /audit-pii record present for this tip; "
+             "- Push gate rc 0 with main's gate; /audit-pii record present for this tip; "
              f"PII denylist scan: no hits ({at})."]
     mine = [c for c in conflicts if r["branch"] in (c["a"], c["b"])]
     if mine:
@@ -799,10 +837,22 @@ def write_backfill(main: Path, cross: list[dict], audit: list[dict]) -> None:
 
 
 def preview_gate(root: Path, main: Path, checkers: Path, base: str, tip: str, url: str,
-                 extra_cross: list[dict], extra_audit: list[dict]) -> dict:
+                 extra_cross: list[dict], extra_audit: list[dict],
+                 line: str | None = None) -> dict:
     """Run the pre-push hook exactly as `git push origin <tip>:refs/heads/main` would, in a
     throwaway no-checkout worktree whose tools/ is `checkers` plus the main checkout's gate
-    data (GATE_DATA) plus rows not yet written there. Nothing in the main checkout changes."""
+    data (GATE_DATA) plus rows not yet written there. Nothing in the main checkout changes.
+    `line` replaces the refs line the hook reads (base_gate passes the branch's own ref).
+    An OSError while building the worktree is a refusal, and the worktree is removed on
+    every path."""
+    try:
+        return _preview_gate(root, main, checkers, base, tip, url, extra_cross, extra_audit,
+                             line)
+    except OSError as e:
+        return {"rc": None, "ok": False, "reason": f"preview worktree: {e}"}
+
+
+def _preview_gate(root, main, checkers, base, tip, url, extra_cross, extra_audit, line):
     tmp = Path(tempfile.mkdtemp(prefix="merge-push-preview."))
     wt = tmp / "wt"
     try:
@@ -823,7 +873,7 @@ def preview_gate(root: Path, main: Path, checkers: Path, base: str, tip: str, ur
         if not hook.is_file():
             return {"rc": None, "ok": False, "reason": f"no hook at {checkers}/hooks/pre-push"}
         rc, out, err = run(["bash", str(hook), "origin", url], cwd=wt,
-                           stdin=f"{tip} {tip} refs/heads/main {base}\n")
+                           stdin=line or f"{tip} {tip} refs/heads/main {base}\n")
         return {"rc": rc, "ok": rc == 0, "tail": tail(out + err, 12),
                 "reason": None if rc == 0 else gate_reason(out + err)}
     finally:
@@ -1205,9 +1255,18 @@ def verify_landed(root: Path, rng: str, gh=None) -> dict:
     if not sep or not base or not tip:
         res["problems"].append(f"expected BASE..TIP, got {rng!r}")
         return res
+    ff = None     # a single fast-forward push of one branch tip (2026-11-27)
     try:
         chain = mc.walk(root, base, tip)
-    except (mc.ChainError, mc.GitError) as e:
+    except mc.ChainError as e:
+        if git(["merge-base", "--is-ancestor", base, tip], root)[0] != 0 or \
+                not git(["rev-list", f"{base}..{tip}"], root)[1].strip():
+            res["problems"].append(f"not a merge-push chain: {e}")
+            return res
+        names = git(["for-each-ref", "--points-at", tip, "--format=%(refname:short)",
+                     "refs/heads"], root)[1].split()
+        ff, chain = ", ".join(n for n in names if n != "main") or "?", []
+    except mc.GitError as e:
         res["problems"].append(f"not a merge-push chain: {e}")
         return res
     rc, url, _ = git(["remote", "get-url", "--push", "origin"], root)
@@ -1245,8 +1304,10 @@ def verify_landed(root: Path, rng: str, gh=None) -> dict:
         return res
     tools = trusted_tools(root)
     record = tools.parent / "data" / "workstreams" / "orchestration.md" if tools else None
-    lines = [f"\n## {datetime.now().strftime('%Y-%m-%d %H:%M')} by `date` | merge-push landed "
-             f"{len(chain)} branch(es) (land_branch.py --verify-landed)\n",
+    what = (f"fast-forward landed {ff}" if ff else
+            f"merge-push landed {len(chain)} branch(es)")
+    lines = [f"\n## {datetime.now().strftime('%Y-%m-%d %H:%M')} by `date` | {what} "
+             f"(land_branch.py --verify-landed)\n",
              f"- GitHub main contains {tip} (pushed onto {base}); every merged tip compares "
              "behind_by 0 against GitHub main."]
     lines += [f"- {b['branch']} at {b['tip']} via merge {b['merge']}"
@@ -1260,6 +1321,14 @@ def verify_landed(root: Path, rng: str, gh=None) -> dict:
     res["record"] = str(record)
     res["ok"] = True
     return res
+
+
+def install_term_handler() -> None:
+    """SIGTERM (a stopped task, `kill`) raises SystemExit(143), so every `finally` runs and
+    preview_gate removes its throwaway worktree. Python's default SIGTERM skips them, and a
+    stopped run left one registered (2026-11-27 09:43)."""
+    import signal
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1288,6 +1357,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"not a git repository: {args.repo_root}", file=sys.stderr)
         return 2
     root = Path(top.strip())
+    install_term_handler()
     if args.verify_landed:
         res = verify_landed(root, args.verify_landed)
         print(json.dumps(res, indent=2) if args.json else
