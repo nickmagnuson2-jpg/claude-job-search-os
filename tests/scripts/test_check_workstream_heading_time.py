@@ -80,11 +80,18 @@ def test_blocks_a_typed_time(command):
     assert "BLOCKED (check_workstream_heading_time)" in err
 
 
-def test_the_block_message_names_both_fixes_and_the_target():
+def test_the_block_message_names_only_the_writer_and_the_target():
+    """Router fix (org dc 2026-11-27, red team E row 1): the message used to offer a second
+    fix, "Keep cat >>" with a $(date) stamp, which routed sessions around the writer. It
+    now names the writer for the target and nothing else. Blocking is unchanged."""
     code, err = _bash(f"cat >> {WS} <<'EOF'\n## 2026-11-21 18:12 by `date` | x\nEOF")
     assert code == 2
     assert f"workstream_write.py add-section {WS}" in err
-    assert "$(date '+%Y-%m-%d %H:%M')" in err
+    assert "$(date" not in err and "cat >>" not in err
+    # The command runs as printed: the heredoc closes on its own line (Codex 11-27 F1).
+    assert "<<'EOF'\n<entry lines>\nEOF\n" in err
+    # Single-quoted title: a $ or backtick in it is not expanded (Fable 11-27 F4).
+    assert "--title '<X>: <what>'" in err
     assert "'18:12' is typed into the tool call" in err
     assert "## 2026-11-21 18:12 by `date` | x" in err
     assert "Write or Edit tool call can only carry a literal time" in err

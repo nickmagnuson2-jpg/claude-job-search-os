@@ -23,8 +23,10 @@ one, which is why a content check over the file was rejected (Codex redundancy n
          Any ADDED dated heading carrying a time in a workstream file is blocked: a tool call
          of this kind can only carry a literal.
 
-ALLOWED WRITE PATH: tools/workstream_write.py add-section (stamps from the clock), or
-`$(date +%H:%M)` in the heading.
+WRITE PATH: tools/workstream_write.py add-section (stamps the heading from the clock and
+appends under the file's lock). A `$(date ...)` heading written by hand is not blocked here
+(see Bash above), but it is not a write path to offer: it bypasses the writer's lock. The
+block message names only the writer (router fix, org dc 2026-11-27; red team E row 1).
 
 KNOWN LIMITS (tripwire, not a wall): a literal assigned in an EARLIER separate Bash call and
 reused via an exported variable; a script file that writes the heading; cp/mv of a prepared
@@ -82,10 +84,12 @@ ASSIGN = re.compile(r"(?:^|[\s;&|(])(?:export[ \t]+|local[ \t]+)?([A-Za-z_]\w*)=
 BLOCK_MSG = """BLOCKED (check_workstream_heading_time): a dated heading for {target} carries a TYPED time: {heading!r}
 Rule feedback_log_timestamps_from_date_not_estimates: a time in a log heading comes from the clock, never from the keyboard (2026-11-21: "18:12" typed at 18:47).
 Why: {why}.
-Fix, either one:
-  1. PYTHONIOENCODING=utf-8 python3 tools/workstream_write.py add-section {target} --title "<X>: <what>" --body-file - <<'EOF' ... EOF
-     (stamps '## YYYY-MM-DD HH:MM by `date` | <X>: <what>' itself)
-  2. Keep cat >>, with the stamp produced at run time: ## $(date '+%Y-%m-%d %H:%M') by `date` | <X>: <what>
+Fix: write it through the writer, which stamps '## YYYY-MM-DD HH:MM by `date` | <X>: <what>' itself.
+Run this, with the entry's lines between the two EOF lines (the closing EOF must start the line;
+the quoted <<'EOF' keeps $ and backticks as typed):
+PYTHONIOENCODING=utf-8 python3 tools/workstream_write.py add-section {target} --title '<X>: <what>' --body-file - <<'EOF'
+<entry lines>
+EOF
 A Write or Edit tool call can only carry a literal time, so dated workstream headings never go through Write/Edit."""
 
 
