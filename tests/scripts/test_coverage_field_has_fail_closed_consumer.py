@@ -415,6 +415,10 @@ REGISTRY: dict[tuple[str, str, str | None], object] = {
         "directories and binary files, which a text sweep is not meant to read"),
     ("source_corrections.py", "unreadable", None): [
         Branch("source_corrections.py", "main", reads="unreadable", closes="exit")],
+    ("facts.py", "unreadable", None): [
+        # facts.py:580 emits it per scope; the `if unreadable:` in sweep() raises Unreadable
+        # (facts.py:582-584), so any unread file fails the run and the CLI exits 2.
+        Branch("facts.py", "sweep", reads="unreadable", closes="exit")],
     ("check_public_pii.py", "unreadable", None): [
         Branch("check_public_pii.py", "scan_paths", reads="unreadable", closes="exit")],
     ("company_queue.py", "skipped", None): NotCoverage(
