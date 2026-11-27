@@ -353,3 +353,27 @@ def test_add_entry_dry_run_and_real_give_the_same_verdict(tmp_path, rename):
     dry, drc = run_pw(*argv, repo_root=tmp_path, dry_run=True)
     real, rrc = run_pw(*argv, repo_root=tmp_path)
     assert (drc, dry.get("code")) == (rrc, real.get("code")), (dry, real)
+
+
+# Mutation survivors, 2026-11-27 (output/analysis/
+# 112726-s6-writers-mutation-person_write-78165001-changed-lines.json): the dry-run branch
+# after commit() could be forced true and no test noticed, because nothing read the REAL
+# run's JSON. A real write reported as "Would ..." tells the caller nothing was written.
+
+def test_a_real_create_reports_the_write_not_a_preview(tmp_path):
+    """person_write.py:194 (cmd_create's `if dry_run:` after commit)."""
+    res, rc = run_pw("create", "Sam Carter", repo_root=tmp_path)
+    p = people_dir(tmp_path) / "sam-carter.md"
+    assert rc == 0 and p.exists()
+    assert "dry_run" not in res, res
+    assert res["summary"] == f"Created dossier: {p}", res
+
+
+def test_a_real_add_entry_reports_the_appended_bullet_not_a_preview(tmp_path):
+    """person_write.py:256 (cmd_add_entry's `if dry_run:` after commit)."""
+    run_pw("create", "Sam Carter", repo_root=tmp_path)
+    res, rc = run_pw("add-entry", "sam-carter", "--section", "owed", "--text", "lunch",
+                     "--date", "2026-11-26", repo_root=tmp_path)
+    assert rc == 0 and "dry_run" not in res, res
+    assert res["summary"] == "Appended to owed: - 2026-11-26 — lunch", res
+    assert res["entry"] == "- 2026-11-26 — lunch", res
