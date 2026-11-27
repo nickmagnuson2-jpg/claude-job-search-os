@@ -143,7 +143,9 @@ never rebases; it prints the commands Nick runs with `!`.
 
 - **`land_branch.py <branch> ... [--suite] [--json]`** checks each branch and writes nothing
   (git objects aside): its worktree is clean, its upstream is not main, it merges cleanly against
-  GitHub main (read with `gh api`), the push gate dry run passes, it has a clean `/audit-pii`
+  GitHub main (read with `gh api`), main's push gate passes it (since 2026-11-27 the main
+  checkout's hook and gate judge every branch, never the branch's own copy; `own_gate` and a
+  note report when the branch's own gate would block a per-branch push), it has a clean `/audit-pii`
   record, and (`--suite`) a suite record. Conflicts between two named branches are reported with a
   merge order but do not make a branch not ready. Exit 0 when every branch is ready, 1 otherwise,
   2 for a usage error.
@@ -168,7 +170,9 @@ never rebases; it prints the commands Nick runs with `!`.
 - **`--verify-landed BASE..TIP`** runs after the push. It checks through `gh api` that every
   merged branch tip and the chain tip are on GitHub main, and that a key-resolved
   `mutation-allow.json` on GitHub main holds every merged key. Then it appends a landing record
-  to `data/workstreams/orchestration.md`.
+  to `data/workstreams/orchestration.md`. Since 2026-11-27 it also accepts a single fast-forward
+  (BASE an ancestor of TIP, no merge commits): TIP must be on GitHub main, and the record names
+  the local branches that point at TIP.
 
 How the push gates judge a merge chain: `framework/multi-model-architecture.md`, section
 "A push of merge commits".

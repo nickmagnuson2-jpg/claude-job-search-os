@@ -73,6 +73,10 @@ def repo(tmp_path, monkeypatch):
     (root / "tools" / "audit_pii_record.py").write_text(AUDIT_STUB)
     (root / "tools" / "check_public_pii.py").write_text(PII_STUB)
     (root / "shared.json").write_text('{\n  "a": 1\n}\n')
+    # The main checkout's tracked hook: step 5 judges every branch with it (2026-11-27).
+    (root / "tools" / "hooks").mkdir()
+    (root / "tools" / "hooks" / "pre-push").write_text(HOOK_STUB)
+    (root / "tools" / "hooks" / "pre-push").chmod(0o755)
     sh(root, "add", "-A")
     sh(root, "commit", "-qm", "base")
     base = sh(root, "rev-parse", "HEAD")
@@ -283,20 +287,24 @@ def test_waiver_list_is_exactly_the_three_gate_overrides():
 def test_gate_receives_git_refs_line_and_no_waiver(repo, monkeypatch, var):
     _, tip = branch(repo, "feat", {"f.py": "x = 1\n"})
     monkeypatch.setenv(var, "should never reach the hook")
-    lb.check(repo["root"], ["feat"], gh=gh_local_main(repo))
+    r = by_name(lb.check(repo["root"], ["feat"], gh=gh_local_main(repo)))["feat"]
     log = Path(os.environ["LB_HOOK_LOG"]).read_text().splitlines()
-    assert log[0] == f"refs/heads/feat {tip} refs/heads/feat {'0' * 40}"
+    # Step 5 hands main's hook a one-branch merge-push of the tip onto main (2026-11-27).
+    merge = r["steps"]["gate"]["merge"]
+    assert log[0] == f"{merge} {merge} refs/heads/main {repo['base']}"
     assert "waive=unset/unset/unset" in log[1]
     assert "remote=origin url=git@github.com:owner/repo.git" in log[1]
 
 
-def test_gate_uses_remote_sha_when_branch_exists_on_github(repo):
+def test_gate_judges_against_main_even_when_branch_exists_on_github(repo):
+    """The branch's GitHub head no longer sets the gate's base: main does (2026-11-27)."""
     _, tip = branch(repo, "feat", {"f.py": "x = 1\n"})
     gh = gh_for({"main": repo["base"], "feat": repo["base"]},
                 {repo["base"]: {"parents": [], "commit": {"tree": {"sha": "0" * 40}}}})
     r = by_name(lb.check(repo["root"], ["feat"], gh=gh))["feat"]
     first = Path(os.environ["LB_HOOK_LOG"]).read_text().splitlines()[0]
-    assert first == f"refs/heads/feat {tip} refs/heads/feat {repo['base']}"
+    merge = r["steps"]["gate"]["merge"]
+    assert first == f"{merge} {merge} refs/heads/main {repo['base']}"
     assert r["github_tip"] == repo["base"]
     assert r["ready"], r["refusals"]
     assert "the push fast-forwards" in r["notes"][0]
@@ -565,14 +573,16 @@ def test_missing_hook_and_tools_each_refuse(repo):
     wt, _ = branch(repo, "feat", {"f.py": "x = 1\n"})
     hook = Path(sh(repo["root"], "rev-parse", "--path-format=absolute", "--git-path", "hooks"))
     (hook / "pre-push").unlink()
+    (repo["root"] / "tools" / "hooks" / "pre-push").unlink()
     (repo["root"] / "tools" / "audit_pii_record.py").unlink()
     (repo["root"] / "tools" / "check_public_pii.py").unlink()
     r = by_name(lb.check(repo["root"], ["feat"], gh=gh_local_main(repo)))["feat"]
     s = r["steps"]
-    assert s["gate"]["error"] == "no pre-push hook installed" and s["gate"]["rc"] is None
+    no_hook = f"no hook at {repo['root'] / 'tools'}/hooks/pre-push"
+    assert s["gate"]["reason"] == no_hook and s["gate"]["rc"] is None
     assert s["audit"]["error"].startswith("missing ") and s["audit"]["ok"] is False
     assert s["pii"]["error"].startswith("missing ") and s["pii"]["ok"] is False
-    assert "push gate rc None: no pre-push hook installed" in r["refusals"]
+    assert f"push gate rc None: {no_hook}" in r["refusals"]
     assert any(x.startswith("PII scan rc None: missing ") for x in r["refusals"])
 
 
@@ -1045,7 +1055,7 @@ def mp(repo, monkeypatch):
     denylist, and a suite stub: a main checkout whose checkers are current."""
     root = repo["root"]
     (root / ".gitignore").write_text("tools/.*\noutput/\n")
-    (root / "tools" / "hooks").mkdir()
+    (root / "tools" / "hooks").mkdir(exist_ok=True)
     (root / "tools" / "hooks" / "pre-push").write_text(MP_HOOK)
     (root / "tools" / "hooks" / "pre-push").chmod(0o755)
     (root / "tools" / "suite_record.py").write_text(SUITE_STUB)
@@ -1132,6 +1142,9 @@ def test_mp_push_gate_gets_main_refspec_line_and_push_url(mp):
 
 def test_mp_gate_block_refuses_with_reason(mp, monkeypatch):
     ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    # The CHAIN preview's block is under test; the per-branch step runs the same stub on a
+    # one-branch merge since 2026-11-27, so it is held ok here.
+    monkeypatch.setattr(lb, "base_gate", lambda *a, **k: {"ok": True, "rc": 0})
     monkeypatch.setenv("LB_PUSH_GATE_RC", "1")
     rep = run_mp(mp, ["one"])
     assert not rep["ok"]
@@ -1498,6 +1511,17 @@ def test_backfill_dedups_across_worktrees_and_keeps_distinct_audit_rows(mp):
     assert [r["recorded"] for r in aud] == [audit["recorded"], audit2["recorded"]]
 
 
+def test_mp_holds_a_branch_main_gate_blocks_per_branch(mp, monkeypatch):
+    """Since 2026-11-27 the per-branch step judges like the chain, so a branch main's gate
+    blocks is HELD before the chain is built, with the gate's own reason."""
+    ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    monkeypatch.setenv("LB_PUSH_GATE_RC", "1")
+    rep = run_mp(mp, ["one"])
+    assert held(rep)["one"] == ["push gate rc 1: BLOCKED: stub push gate says no"]
+    assert rep["refusals"] == ["nothing to land: every branch is held"]
+    assert rep["commands"] == []
+
+
 def test_write_backfill_with_no_audit_rows_creates_no_audit_ledger(mp):
     lb.write_backfill(mp["root"], [], [])
     assert not (mp["root"] / "tools" / ".audit-pii-ledger.jsonl").exists()
@@ -1526,6 +1550,250 @@ def test_preview_gate_reports_a_bad_base_and_a_missing_hook(mp, tmp_path):
     nohook.mkdir()
     got = lb.preview_gate(root, root, nohook, mp["base"], mp["base"], "u", [], [])
     assert got == {"rc": None, "ok": False, "reason": f"no hook at {nohook}/hooks/pre-push"}
+
+
+# ================================================================ base gate per branch (2026-11-27)
+# Nick's ruling (orchestration.md 09:27): the per-branch push-gate check judges each branch
+# with the BASE's gate, the main checkout's tools/, never the branch's own copy. Before this a
+# branch cut before a gate change (the Fable stand-in, bdec4567) was HELD by its own old gate
+# while main's gate passed it, and a branch that edits tools/cross_model_gate.py judged itself.
+GJ_HOOK = """#!/bin/bash
+root="$(git rev-parse --show-toplevel)"
+in="$(cat)"
+echo "root=$root in=$in" >> "$LB_GJ_LOG"
+set -- $in
+echo "diff=$(git diff --name-only "$4..$2" 2>/dev/null | tr '\n' ',')" >> "$LB_GJ_LOG"
+PYTHONIOENCODING=utf-8 python3 "$root/tools/cross_model_gate.py"
+"""
+GATE_PASS = "print('main gate: pass')\n"
+GATE_MAIN_BLOCK = "import sys\nprint('BLOCKED: main gate says no', file=sys.stderr)\nsys.exit(1)\n"
+GATE_OWN_PASS = "print('own gate: pass')\n"
+GATE_OWN_BLOCK = "import sys\nprint('BLOCKED: own old gate says no', file=sys.stderr)\nsys.exit(1)\n"
+GATE_NEEDS_WT_ROW = ("import pathlib, sys\n"
+                     "led = pathlib.Path(__file__).resolve().parent / '.cross-model-ledger.jsonl'\n"
+                     "if 'WT-ROW' not in (led.read_text() if led.is_file() else ''):\n"
+                     "    print('BLOCKED: no review row', file=sys.stderr); sys.exit(1)\n")
+
+
+@pytest.fixture
+def gj(repo, monkeypatch):
+    """repo whose main checkout has a real-shaped hook: it runs $root/tools/cross_model_gate.py,
+    so WHICH tools/ the hook sees decides the verdict. The installed hook is the tracked one."""
+    root = repo["root"]
+    (root / ".gitignore").write_text("tools/.*\noutput/\n")
+    (root / "tools" / "hooks").mkdir(exist_ok=True)
+    (root / "tools" / "hooks" / "pre-push").write_text(GJ_HOOK)
+    (root / "tools" / "hooks" / "pre-push").chmod(0o755)
+    installed = Path(sh(root, "rev-parse", "--path-format=absolute", "--git-path", "hooks")) / "pre-push"
+    installed.write_text(GJ_HOOK)
+    monkeypatch.setenv("LB_GJ_LOG", str(repo["tmp"] / "gj.log"))
+    return repo
+
+
+def set_main_gate(repo, body):
+    root = repo["root"]
+    (root / "tools" / "cross_model_gate.py").write_text(body)
+    sh(root, "add", "-A")
+    sh(root, "commit", "-qm", "main gate")
+    repo["base"] = sh(root, "rev-parse", "HEAD")
+    sh(root, "update-ref", "refs/remotes/origin/main", repo["base"])
+
+
+def test_a_branch_that_edits_the_gate_is_judged_by_mains_gate(gj):
+    """audit-gate-1127's shape: the branch's own cross_model_gate.py would pass it."""
+    set_main_gate(gj, GATE_MAIN_BLOCK)
+    branch(gj, "feat", {"tools/cross_model_gate.py": GATE_OWN_PASS})
+    r = by_name(lb.check(gj["root"], ["feat"], gh=gh_local_main(gj)))["feat"]
+    assert "push gate rc 1: BLOCKED: main gate says no" in r["refusals"]
+    assert not r["ready"]
+    jw = r["steps"]["gate"]["judged_with"]
+    assert jw == {"path": str(gj["root"] / "tools"), "commit": gj["base"]}
+
+
+def test_a_branch_with_an_old_own_gate_passes_on_mains_gate_with_a_note(gj):
+    """pipe-closedate's shape: cut before a gate change, so its own gate refuses it."""
+    set_main_gate(gj, GATE_PASS)
+    branch(gj, "feat", {"tools/cross_model_gate.py": GATE_OWN_BLOCK})
+    r = by_name(lb.check(gj["root"], ["feat"], gh=gh_local_main(gj)))["feat"]
+    assert r["ready"], r["refusals"]
+    assert r["steps"]["gate"]["ok"] is True
+    assert r["steps"]["own_gate"] == {"differs_from_main": ["tools/cross_model_gate.py"]}
+    note = [n for n in r.get("notes", []) if "differs from main's" in n]
+    assert len(note) == 1
+    assert "tools/cross_model_gate.py" in note[0] and "--merge-push" in note[0]
+
+
+def test_no_note_when_the_branchs_own_gate_also_passes(gj):
+    set_main_gate(gj, GATE_PASS)
+    branch(gj, "feat", {"f.py": "x = 1\n"})
+    r = by_name(lb.check(gj["root"], ["feat"], gh=gh_local_main(gj)))["feat"]
+    assert r["ready"], r["refusals"]
+    assert r["steps"]["own_gate"] == {"differs_from_main": []}
+    assert not [n for n in r.get("notes", []) if "differs from main's" in n]
+
+
+def test_own_gate_differs_is_empty_without_a_main_ref(repo):
+    """With no main ref there is nothing to compare against, so nothing differs. Mutation
+    (2026-11-27): dropping the guard reported tools/hooks/pre-push as differing, because
+    'None:<path>' does not resolve; returning None broke the list contract."""
+    _, tip = branch(repo, "feat", {"f.py": "x = 1\n"})
+    assert sh(repo["root"], "rev-parse", f"{tip}:tools/hooks/pre-push")   # present at tip
+    assert lb.own_gate_differs(repo["root"], tip, None) == []
+    assert lb.own_gate_differs(repo["root"], tip, "") == []
+
+
+def test_no_branch_code_executes(gj, tmp_path):
+    """Codex 1603.F1: step 5 ran the branch's own hook, so its gate code ran (and could write
+    the main checkout) before the trusted steps. Its gate and hook are now only compared."""
+    set_main_gate(gj, GATE_PASS)
+    marker = tmp_path / "branch-code-ran"
+    evil = f"import pathlib\npathlib.Path({str(marker)!r}).write_text('x')\n"
+    branch(gj, "feat", {"tools/cross_model_gate.py": evil,
+                        "tools/hooks/pre-push": f"#!/bin/bash\ntouch {marker}\n"})
+    r = by_name(lb.check(gj["root"], ["feat"], gh=gh_local_main(gj)))["feat"]
+    assert not marker.exists()
+    assert r["steps"]["own_gate"]["differs_from_main"] == ["tools/cross_model_gate.py",
+                                                          "tools/hooks/pre-push"]
+
+
+def test_base_gate_reads_the_branchs_worktree_rows_without_writing_main(gj):
+    """A review row held only in the worktree ledger counts, as merge-push's backfill makes
+    it count, and the read-only check writes nothing into the main checkout."""
+    set_main_gate(gj, GATE_NEEDS_WT_ROW)
+    wt, _ = branch(gj, "feat", {"f.py": "x = 1\n"})
+    row = {"report": "wt.md", "model": "codex", "tree": "t", "findings": [], "note": "WT-ROW"}
+    (wt / "tools" / ".cross-model-ledger.jsonl").write_text(json.dumps(row) + "\n")
+    r = by_name(lb.check(gj["root"], ["feat"], gh=gh_local_main(gj)))["feat"]
+    assert r["steps"]["gate"]["ok"] is True, r["steps"]["gate"]
+    assert not (gj["root"] / "tools" / ".cross-model-ledger.jsonl").exists()
+
+
+def test_base_gate_judges_a_one_branch_merge_chain_onto_main(gj):
+    """Fable 2.F1: the hook gets main's refspec and main..M, where M is a verified merge of
+    the tip onto main, so the real gate takes its chain path (tree rows only), as the
+    merge-push will. Its diff is the branch's change: main's later files are not in it."""
+    set_main_gate(gj, GATE_PASS)
+    _, tip = branch(gj, "feat", {"f.py": "x = 1\n"})
+    (gj["root"] / "later.py").write_text("z = 3\n")
+    sh(gj["root"], "add", "-A")
+    sh(gj["root"], "commit", "-qm", "main moves on")
+    gj["base"] = sh(gj["root"], "rev-parse", "HEAD")
+    sh(gj["root"], "update-ref", "refs/remotes/origin/main", gj["base"])
+    r = by_name(lb.check(gj["root"], ["feat"], gh=gh_local_main(gj)))["feat"]
+    merge = r["steps"]["gate"]["merge"]
+    chain = mc.walk(gj["root"], gj["base"], merge)
+    assert [(m.p1, m.p2) for m in chain] == [(gj["base"], tip)]
+    lines = Path(os.environ["LB_GJ_LOG"]).read_text().splitlines()
+    i = next(k for k, ln in enumerate(lines) if "merge-push-preview" in ln)
+    assert lines[i].endswith(f"in={merge} {merge} refs/heads/main {gj['base']}")
+    assert lines[i + 1] == "diff=f.py,"
+
+
+def test_base_gate_refuses_a_tip_that_cannot_merge_onto_main(gj):
+    set_main_gate(gj, GATE_PASS)
+    branch(gj, "feat", {"shared.json": '{\n  "a": 2\n}\n'})
+    (gj["root"] / "shared.json").write_text('{\n  "a": 3\n}\n')
+    sh(gj["root"], "add", "-A")
+    sh(gj["root"], "commit", "-qm", "main edits the same line")
+    gj["base"] = sh(gj["root"], "rev-parse", "HEAD")
+    sh(gj["root"], "update-ref", "refs/remotes/origin/main", gj["base"])
+    r = by_name(lb.check(gj["root"], ["feat"], gh=gh_local_main(gj)))["feat"]
+    g = r["steps"]["gate"]
+    assert g["ok"] is False and g["rc"] is None
+    assert g["reason"].startswith("cannot build the merge onto main:")
+
+
+def test_base_gate_cleans_up_when_copying_tools_fails(gj, monkeypatch, tmp_path):
+    set_main_gate(gj, GATE_PASS)
+    branch(gj, "feat", {"f.py": "x = 1\n"})
+    scratch = tmp_path / "tmpdirs"
+    scratch.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(scratch))
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(lb.shutil, "copytree", boom)
+    r = by_name(lb.check(gj["root"], ["feat"], gh=gh_local_main(gj)))["feat"]
+    assert not r["ready"]
+    assert r["steps"]["gate"]["ok"] is False and r["steps"]["gate"]["rc"] is None
+    assert "disk full" in r["steps"]["gate"]["reason"]
+    assert list(scratch.iterdir()) == []
+    assert "merge-push-preview" not in sh(gj["root"], "worktree", "list")
+
+
+def test_base_gate_refuses_without_trusted_tools(gj, monkeypatch):
+    set_main_gate(gj, GATE_PASS)
+    branch(gj, "feat", {"f.py": "x = 1\n"})
+    monkeypatch.setattr(lb, "trusted_tools", lambda root: None)
+    r = by_name(lb.check(gj["root"], ["feat"], gh=gh_local_main(gj)))["feat"]
+    assert f"push gate rc None: {lb.NO_TRUSTED}" in r["refusals"]
+
+
+def test_verify_landed_accepts_a_single_fast_forward(mp):
+    wt, tip = branch(mp, "one", {"one.py": "x = 1\n"})
+    wsdir = mp["root"] / "data" / "workstreams"
+    wsdir.mkdir(parents=True)
+    (wsdir / "orchestration.md").write_text("# Orchestration\n")
+    res = lb.verify_landed(mp["root"], f"{mp['base']}..{tip}", gh=gh_landed(tip, {}))
+    assert res["ok"], res
+    text = (wsdir / "orchestration.md").read_text()
+    assert "fast-forward landed one" in text and tip in text
+    assert lb.verify_landed(mp["root"], f"{mp['base']}..{tip}",
+                            gh=gh_landed(tip, {tip: 1}))["ok"] is False
+
+
+def test_verify_landed_still_rejects_a_range_that_is_neither(mp):
+    _, tip = branch(mp, "one", {"one.py": "x = 1\n"})
+    res = lb.verify_landed(mp["root"], f"{tip}..{mp['base']}", gh=gh_landed(tip, {}))
+    assert not res["ok"]
+    assert any("not a merge-push chain" in p for p in res["problems"])
+
+
+def test_verify_landed_fast_forward_refuses_a_range_with_merge_commits(mp):
+    """Fable 2.F2: an ancestor range of merges that fails chain verification is not a
+    fast-forward. Here: a merge whose message breaks no rule but whose second parent is
+    main itself, so walk() refuses it, and it is still a merge commit."""
+    _, tip = branch(mp, "one", {"one.py": "x = 1\n"})
+    root = mp["root"]
+    tree = sh(root, "rev-parse", f"{tip}^{{tree}}")
+    bad = subprocess.run(["git", "commit-tree", tree, "-p", tip, "-p", mp["base"], "-m", "m"],
+                         cwd=root, capture_output=True, text=True, check=True).stdout.strip()
+    with pytest.raises(mc.ChainError):
+        mc.walk(root, mp["base"], bad)
+    res = lb.verify_landed(root, f"{mp['base']}..{bad}", gh=gh_landed(bad, {}))
+    assert not res["ok"]
+    assert any("not a merge-push chain" in x for x in res["problems"])
+
+
+def test_verify_landed_refuses_an_empty_range(mp):
+    res = lb.verify_landed(mp["root"], f"{mp['base']}..{mp['base']}", gh=gh_landed(None, {}))
+    assert not res["ok"]
+    assert any("not a merge-push chain" in p for p in res["problems"])
+
+
+def test_sigterm_runs_cleanup(tmp_path):
+    """A stopped land_branch (SIGTERM, as a task stop sends) must still run preview_gate's
+    finally, or its throwaway worktree stays registered (2026-11-27: one was left at 09:43)."""
+    marker = tmp_path / "cleaned"
+    code = ("import os, signal, sys\n"
+            f"sys.path.insert(0, {str(Path(lb.__file__).parent)!r})\n"
+            "import land_branch as lb\n"
+            "lb.install_term_handler()\n"
+            "try:\n"
+            "    os.kill(os.getpid(), signal.SIGTERM)\n"
+            "    signal.pause()\n"
+            "finally:\n"
+            f"    open({str(marker)!r}, 'w').write('ok')\n")
+    p = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30)
+    assert marker.read_text() == "ok", p.stderr
+    assert p.returncode == 143
+
+
+def test_main_installs_the_term_handler(repo, monkeypatch):
+    calls = []
+    monkeypatch.setattr(lb, "install_term_handler", lambda: calls.append(1))
+    lb.main(["--repo-root", str(repo["root"]), "--verify-landed", "nope"])
+    assert calls == [1]
 
 
 def test_mp_refuses_without_trusted_tools(mp, monkeypatch):
@@ -1718,8 +1986,10 @@ def test_verify_landed_rejects_a_malformed_range(mp, rng):
 
 
 def test_verify_landed_names_a_non_chain(mp):
+    # Neither a chain nor a fast-forward (2026-11-27): the base is a sibling, not an ancestor.
+    _, side = branch(mp, "side", {"s.py": "s = 1\n"})
     _, tip = branch(mp, "plain", {"p.py": "p = 1\n"})
-    res = lb.verify_landed(mp["root"], f"{mp['base']}..{tip}", gh=gh_landed(None, {}))
+    res = lb.verify_landed(mp["root"], f"{side}..{tip}", gh=gh_landed(None, {}))
     assert len(res["problems"]) == 1 and res["problems"][0].startswith("not a merge-push chain:")
 
 
@@ -1773,6 +2043,9 @@ def _git_error(*a, **k):
 
 def test_mp_holds_a_branch_whose_merge_hits_a_git_error(mp, monkeypatch):
     ready_branch(mp, "one", {"one.py": "x = 1\n"})
+    # The chain's own build is under test: the per-branch step (which also builds a merge
+    # since 2026-11-27) is held ok here; test_base_gate_* cover its build failure.
+    monkeypatch.setattr(lb, "base_gate", lambda *a, **k: {"ok": True, "rc": 0})
     monkeypatch.setattr(lb.mc, "build", _git_error)
     rep = run_mp(mp, ["one"])
     assert rep["held"] == [{"branch": "one", "tip": rep["held"][0]["tip"],

@@ -294,7 +294,7 @@ def test_land_branch_refuses_a_stale_stack(repo, monkeypatch):
     import land_branch
     _stale_stack(repo)
     from pathlib import Path
-    monkeypatch.setattr(land_branch, "gate_dry_run", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(land_branch, "base_gate", lambda *a, **k: {"ok": True})
     monkeypatch.setattr(land_branch, "audit_check", lambda *a, **k: {"ok": True})
     monkeypatch.setattr(land_branch, "pii_scan", lambda *a, **k: {"ok": True, "hits": [], "ambiguous": []})
     r = land_branch.check_branch(Path(repo.path), "child", {"child": repo.path}, None, "main", "",
@@ -402,7 +402,7 @@ def test_a_parent_whose_name_is_also_a_tag_still_refuses_a_stale_child(repo):
 def _check_branch(repo, monkeypatch, main_ref):
     import land_branch
     from pathlib import Path
-    monkeypatch.setattr(land_branch, "gate_dry_run", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(land_branch, "base_gate", lambda *a, **k: {"ok": True})
     monkeypatch.setattr(land_branch, "audit_check", lambda *a, **k: {"ok": True})
     monkeypatch.setattr(land_branch, "pii_scan", lambda *a, **k: {"ok": True, "hits": [], "ambiguous": []})
     return land_branch.check_branch(Path(repo.path), "child", {"child": repo.path}, None, main_ref,
