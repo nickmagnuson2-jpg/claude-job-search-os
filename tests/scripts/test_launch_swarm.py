@@ -188,6 +188,43 @@ def test_the_template_logging_rule_routes_to_the_writer_not_cat():
     assert "cat >>" not in rule12
 
 
+def _run_logged(cmd: str, tmp_path, log_rel: str) -> str:
+    """Run a printed logging command for real, against a temp workstream, and return it."""
+    import subprocess
+    target = tmp_path / "data" / "workstreams" / "probe.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("# Probe\n", encoding="utf-8")
+    cmd = cmd.replace(log_rel, str(target))
+    r = subprocess.run(["bash", "-c", cmd], cwd=ROOT, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stdout + r.stderr
+    return target.read_text(encoding="utf-8")
+
+
+def test_the_prompts_logging_command_runs_as_written(run_dir, tmp_path):
+    """Codex 11-27 F1: the command used to print the heredoc on one line ("<<'EOF' ... EOF"),
+    which fails when run literally. The block a section receives must run as printed,
+    once its placeholders are filled, and land a clock-stamped entry."""
+    p = write_brief(run_dir, filled_template())
+    sec = ls.parse_brief(p.read_text()).sections[0]
+    lines = ls.section_prompt(sec, org="proj-org", brief_rel="b").splitlines()
+    start = next(i for i, l in enumerate(lines) if l.startswith("PYTHONIOENCODING=utf-8 python3 tools/workstream_write.py"))
+    end = lines.index("EOF", start)
+    block = "\n".join(lines[start:end + 1]).replace("<what>", "probe").replace("<entry lines>", "entry body")
+    text = _run_logged(block, tmp_path, sec.log_file)
+    assert re.search(rf"^## \d{{4}}-\d\d-\d\d \d\d:\d\d by `date` \| {sec.id}: probe$", text, re.M), text
+    assert "entry body" in text
+
+
+def test_the_templates_logging_command_runs_as_written(tmp_path):
+    rule12 = next(l for l in TEMPLATE.read_text(encoding="utf-8").splitlines()
+                  if l.startswith("12. **Logging:**"))
+    cmd = re.search(r"`(PYTHONIOENCODING=utf-8 python3 tools/workstream_write\.py [^`]+)`", rule12).group(1)
+    cmd = cmd.replace("<X>: <what>", "L9: probe").replace("<entry>", "entry body")
+    text = _run_logged(cmd, tmp_path, "<log file>")
+    assert re.search(r"^## \d{4}-\d\d-\d\d \d\d:\d\d by `date` \| L9: probe$", text, re.M), text
+    assert "entry body" in text
+
+
 # ---------------------------------------------------------------- structure
 
 def test_backlog_must_come_before_sections(run_dir):
