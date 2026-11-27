@@ -315,13 +315,22 @@ def entity(key: str) -> str:
     return key.split(".", 1)[1] if "." in key else key
 
 
-def is_guardrail(line: str, rec: Record, related: list | None = None) -> bool:
+GUARDRAIL_WINDOW = 4   # words before the stale form that a negation must sit in
+
+
+def is_guardrail(line: str, rec: Record, related: list | None = None,
+                 before: str | None = None) -> bool:
     """A line naming a wrong form in order to ban it, or that also states a current form of
     this record or of a record about the same entity (it is documenting the correction, as
-    check_zuora_principal_title.py's self-correcting exception does). The caller removes
-    the stale form from the line first, so a current name INSIDE the stale form (an old
-    title that names the right principal) does not excuse it."""
-    if GUARDRAIL.search(line):
+    check_zuora_principal_title.py's self-correcting exception does).
+
+    `line` has the stale form removed, so a current name INSIDE the stale form (an old title
+    that names the right principal) does not excuse it. `before` is the text just before the
+    stale form: a negation counts only there ("don't say X", "not the X", "instead of X"),
+    never elsewhere on the line, where "did not see" in a first-person answer would excuse
+    a stale title (red team C F1, P0). None judges the whole line (callers outside the
+    judge)."""
+    if GUARDRAIL.search(line if before is None else before):
         return True
     forms = [v for r in [rec, *(related or [])] for v in r.forms.values()]
     return any(_form_re(v).search(line) for v in forms)
@@ -367,7 +376,10 @@ def judge_text(text: str, records: dict, *, path: str, audience: str, as_at: dat
                 ov = OVERRIDE_RE.search(line)
                 if ov is not None:
                     held = "override" if ov.group(1).strip() else None
-                if held is None and is_guardrail(_form_re(form).sub(" ", line), rec, related[rec.key]):
+                m = _form_re(form).search(line)
+                before = " ".join(line[:m.start()].split()[-GUARDRAIL_WINDOW:])
+                if held is None and is_guardrail(_form_re(form).sub(" ", line), rec,
+                                                 related[rec.key], before=before):
                     held = "guardrail"
                 if held is None and generic and not anchored(line, path, owner):
                     held = "unanchored-generic"
@@ -581,12 +593,38 @@ def brief(report: dict, keep: int = 10) -> dict:
     return out
 
 
+COPY_LIST = "output/facts/copies.txt"   # gitignored: names real files outside the repo
+
+
+def registered_copies(root: Path) -> list[str]:
+    """The registered copy files (MEMORY.md, a memory-tier user file, the pipeline ...), one
+    path per line in the main checkout's output/facts/copies.txt, `#` comments allowed, `~`
+    expanded, relative paths taken from the root. The nightly sweep reads it so a stale copy
+    outside the default scope is checked without anyone typing --copy (red team C F2, P0).
+    Missing, unreadable or empty: Unreadable, never a silent clean."""
+    try:
+        import vault_paths
+        main = vault_paths.main_checkout(Path(root).resolve())
+    except Exception:  # noqa: BLE001
+        main = Path(root).resolve()
+    path = main / COPY_LIST
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError) as e:
+        raise Unreadable(f"no registered copy list at {COPY_LIST}: {e}") from e
+    out = [os.path.expanduser(l.split("#", 1)[0].strip()) for l in lines]
+    out = [l for l in out if l]
+    if not out:
+        raise Unreadable(f"the registered copy list {COPY_LIST} names no file")
+    return out
+
+
 def nightly(root: Path, today: date, records_file: Path | None = None,
             short: bool = False) -> dict:
-    """For the nightly scan: never raises. An unreadable or empty scope is recorded as drift,
-    in target_drift.nightly's shape. `short` returns brief(report)."""
+    """For the nightly scan: never raises. An unreadable or empty scope, or a missing copy
+    list, is recorded as drift, in target_drift.nightly's shape. `short` returns brief()."""
     try:
-        report = sweep(root, today, records_file)
+        report = sweep(root, today, records_file, registered_copies(root))
         return brief(report) if short else report
     except Unreadable as e:
         return {"drift": True, "problems": [f"unreadable input: {e}"],
@@ -644,7 +682,7 @@ def _cmd_validate(args, root) -> int:
 
 def _cmd_sweep(args, root) -> int:
     today = date.fromisoformat(args.today) if args.today else date.today()
-    report = sweep(root, today, args.records, args.copy)
+    report = sweep(root, today, args.records, registered_copies(root) + args.copy)
     print(json.dumps(report, indent=2))
     return 1 if report["drift"] else 0
 
@@ -662,7 +700,7 @@ def main(argv=None) -> int:
     s = sub.add_parser("sweep")
     s.add_argument("--today")
     s.add_argument("--copy", action="append", default=[],
-                   help="an extra copy file to check (repeatable), e.g. a memory-tier file")
+                   help="an extra copy file to check (repeatable), in addition to the registered list")
     args = ap.parse_args(argv)
     root = Path(args.repo_root).resolve()
     try:

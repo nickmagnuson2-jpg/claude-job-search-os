@@ -278,6 +278,10 @@ def make_sweep_repo(tmp_path) -> Path:
     (out / "cv/112026-example.yaml").write_text("  - position: Widget Intern\n")       # CV
     (out / "analysis").mkdir()
     (out / "analysis/112026-acme-prep.md").write_text("Widget Intern\n")             # excluded
+    # The registered copy list the nightly and the CLI sweep read (red team C F2).
+    (root / "memory-copy.md").write_text("Pat was Chief of Widgets, Gadgets.\n")
+    (out / "facts").mkdir()
+    (out / "facts/copies.txt").write_text("# registered copies\nmemory-copy.md\n")
     return root
 
 
@@ -708,3 +712,50 @@ def test_facts_takes_its_sealed_roots_from_the_hook_not_a_copy(tmp_path, monkeyp
     with pytest.raises(facts.Unreadable, match="sealed"):
         facts.sweep(root, date(2026, 11, 27), extra_copies=[str(tmp_path / "personal/data/n.md")])
     assert not hasattr(facts, "_vault_sealed")
+
+
+
+# ---------------------------------------------------------------- red team C F1, F2 (org P0s)
+
+@pytest.mark.parametrize("line", [
+    "I was Widget Intern there, and I did not see the reorg coming.",
+    "As Widget Intern I led the team; no one else owned the budget.",
+    "Pat was Widget Intern and never missed a deadline.",
+])
+def test_a_negation_elsewhere_on_the_line_does_not_excuse_the_stale_form(cur, line):
+    assert len(counted(line, cur)) == 1
+
+
+@pytest.mark.parametrize("line", [
+    "Never write Widget Intern.", "Don't say Widget Intern here.", "Pat is not the Widget Intern.",
+    "No Widget Intern on any CV.", "Use the full title instead of Widget Intern.",
+])
+def test_a_negation_just_before_the_stale_form_still_holds(cur, line):
+    assert counted(line, cur) == []
+
+
+def test_nightly_reads_the_registered_copy_list(tmp_path):
+    root = make_sweep_repo(tmp_path)
+    (root / "memory-copy.md").write_text("Pat was the Widget Intern.\n")
+    rep = facts.nightly(root, date(2026, 11, 27))
+    assert "memory-copy.md" in {h["path"] for h in rep["scopes"]["copies"]["hits"]}
+
+
+@pytest.mark.parametrize("content", [None, "# only a comment\n"])
+def test_nightly_fails_closed_without_a_registered_copy_list(tmp_path, content):
+    root = make_sweep_repo(tmp_path)
+    lst = root / "output/facts/copies.txt"
+    lst.unlink()
+    if content is not None:
+        lst.write_text(content)
+    rep = facts.nightly(root, date(2026, 11, 27))
+    assert rep["drift"] is True and "copy list" in rep["error"]
+    r = run(root, "sweep")
+    assert r.returncode == 2 and r.stdout == ""
+
+
+def test_cli_sweep_reads_the_registered_list_and_extra_copies(tmp_path):
+    root = make_sweep_repo(tmp_path)
+    (root / "memory-copy.md").write_text("Pat was the Widget Intern.\n")
+    r = run(root, "sweep", "--today", "2026-11-27")
+    assert r.returncode == 1 and "memory-copy.md" in r.stdout
