@@ -54,7 +54,9 @@ the temp worktree. It is a linked worktree, so tests marked live_data skip there
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import math
 import os
 import shutil
 import signal
@@ -235,12 +237,20 @@ def _tail(log: Path, n: int = 15) -> str:
 
 
 def _run_pytest(wt: Path, junit: Path, log: Path, timeout: int,
-                keep_fds: tuple[int, ...] = ()) -> int | None:
+                keep_fds: tuple[int, ...] = (), on_start=None) -> int | None:
     """pytest's returncode, or None on timeout (the whole process group is killed).
 
     keep_fds: the suite lock's fd, inherited by pytest. flock belongs to the open file
     description, so while pytest holds its copy the lock outlives this process: killing the
-    named holder no longer frees the slot while its pytest keeps running (Grok 585ac8c5 F3)."""
+    named holder no longer frees the slot while its pytest keeps running (Grok 585ac8c5 F3).
+
+    on_start(pid): called with pytest's pid once it is running (the holder record stores it).
+
+    Any interrupt while waiting (Ctrl-C, SystemExit) kills pytest's process group before it
+    propagates (parked 1294.F1): pytest runs in its own session, so it would not get the
+    terminal's SIGINT, and with the inherited lock fd it would keep the slot held after this
+    process unwound. LIMIT: SIGKILL of this process cannot be caught; that case is the
+    "has exited; its pytest is still running" refusal."""
     argv = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
             f"--junitxml={junit}"]
     env = child_env()
@@ -249,11 +259,20 @@ def _run_pytest(wt: Path, junit: Path, log: Path, timeout: int,
                                 stdin=subprocess.DEVNULL, start_new_session=True,
                                 pass_fds=keep_fds)
         try:
+            if on_start is not None:
+                on_start(proc.pid)
             return proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             os.killpg(proc.pid, signal.SIGKILL)
             proc.wait()
             return None
+        except BaseException:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.wait()
+            raise
 
 
 # ---------------------------------------------------------------- one suite at a time
@@ -288,6 +307,33 @@ def read_holder(ledger: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def current_holder(ledger: Path) -> dict:
+    """The holder record, or {} when it is stale (parked 1306.F1 / 1322.F4).
+
+    A run killed with SIGKILL leaves its record behind. The next run takes the lock before it
+    rewrites the record, so a refusal in that window would name the dead run. A record is
+    stale when the run that wrote it AND the pytest it started (pytest_pid, written once
+    pytest runs; null before) are both gone: then neither can be holding the lock, so whoever
+    holds it has not named itself yet. A dead run with a live pytest is NOT stale: that pytest holds the
+    lock through the inherited fd (Grok 585ac8c5 F3). LIMIT: a reused pid reads as alive."""
+    h = read_holder(ledger)
+    # Only records that carry the pytest_pid key (this copy writes it, null until pytest
+    # starts) can be judged stale; a record from an older copy is named as before.
+    if h and "pytest_pid" in h and not _alive(h.get("pid")) and not _alive(h["pytest_pid"]):
+        return {}
+    return h
+
+
+def _note_pytest_pid(ledger: Path, pid: int) -> None:
+    """Add pytest's pid to this run's holder record. Called under the lock by its holder."""
+    h = read_holder(ledger)
+    if h.get("pid") == os.getpid():
+        hp = holder_path(ledger)
+        tmp = hp.with_name(hp.name + ".tmp")
+        tmp.write_text(json.dumps({**h, "pytest_pid": pid}), encoding="utf-8")
+        os.replace(tmp, hp)
+
+
 @contextmanager
 def suite_lock(ledger: Path, branch: str, wait: float):
     """Hold the suite lock for the block. Raises SuiteLocked if it is still held after `wait`."""
@@ -295,13 +341,14 @@ def suite_lock(ledger: Path, branch: str, wait: float):
     try:
         stack.enter_context(file_lock(ledger, timeout=wait))
     except LockTimeout:
-        raise SuiteLocked(read_holder(ledger)) from None
+        raise SuiteLocked(current_holder(ledger)) from None
     with stack:
         hp = holder_path(ledger)
         hp.write_text(json.dumps({
             "pid": os.getpid(), "branch": branch,
             "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "session": os.environ.get("CLAUDE_SESSION_ID", ""),
+            "pytest_pid": None,     # set once pytest runs (_note_pytest_pid)
         }), encoding="utf-8")
         try:
             yield
@@ -362,7 +409,7 @@ def cmd_status(root: Path) -> int:
         # Exit 2, as `check` does: exit 1 means held, and an error must not read as either.
         return _out({"status": "error", "code": "git_error", "message": str(e)}, 2)
     def held() -> int:
-        h = read_holder(ledger)
+        h = current_holder(ledger)
         pid = h.get("pid") if h else None
         return _out({"status": "held", "branch": h.get("branch") if h else None,
                      "started_at": h.get("started_at") if h else None, "pid": pid,
@@ -383,6 +430,74 @@ def cmd_status(root: Path) -> int:
         # it is caught first, above.
         return _out({"status": "error", "code": "lock_error", "message": str(e)}, 2)
     return _out({"status": "free"}, 0)
+
+
+def gate_verdict(main: Path, base_sha: str, tip_sha: str,
+                 merged_commit: str) -> tuple[str | None, str]:
+    """Would the push gate refuse this branch? (None, note) when it would not, else
+    (fail code, message). S5, 2026-11-26: a stacked branch passed its suite and then
+    failed the gate on its parent's paths 3 times on 11-25, about 16 minutes each.
+
+    merged_commit is the commit run builds (parents base_sha, tip_sha; git's merge
+    tree), which is a one-merge chain, so the gate's own merge-push function judges it:
+    paths changed against base need rows keyed to the branch tip's tree, plus the open-P0
+    check. No gate logic is copied here.
+
+    A tip that already IS a verified merge chain (land_branch --merge-push --suite runs
+    the suite on its chain tip) is judged as that chain, check_chain(main, base, tip),
+    the push land_branch will make: merging it into base again would put the chain tip's
+    merge tree where a branch tip belongs, which no review row is keyed to. It is never
+    skipped: Codex 2026-11-26 F1 (P0) showed a skip on chain shape let any hand-built
+    chain run unjudged, since walk() proves topology, not that preview_gate ran. Limit:
+    during land_branch --dry-run, review rows not yet copied to main's ledger (its
+    backfill, normally empty because codex_verify mirrors) are not seen here, so such a
+    dry run refuses; fail closed. There is no option to turn this check off.
+
+    Fails closed: a gate that cannot answer refuses, as the push gate does.
+    """
+    import cross_model_gate
+    import merge_chain
+    with _no_git_env():
+        return _gate_verdict(cross_model_gate, merge_chain, main, base_sha, tip_sha,
+                             merged_commit)
+
+
+@contextlib.contextmanager
+def _no_git_env():
+    """GIT_* dropped while the gate runs, the rule _git above follows: merge_chain._git
+    and cross_model_gate pass os.environ to git, so a GIT_DIR exported by a hook would
+    point them at another repository than `main` (test_a_stray_git_dir_does_not_redirect
+    _the_run). The source fix belongs in those modules; reported to the org 2026-11-26."""
+    saved = {k: v for k, v in os.environ.items() if k.startswith("GIT_")}
+    for k in saved:
+        del os.environ[k]
+    try:
+        yield
+    finally:
+        os.environ.update(saved)
+
+
+def _gate_verdict(cross_model_gate, merge_chain, main: Path, base_sha: str, tip_sha: str,
+                  merged_commit: str) -> tuple[str | None, str]:
+    judged = merged_commit
+    try:
+        merge_chain.walk(main, base_sha, tip_sha)
+        judged = tip_sha
+    except merge_chain.ChainError:
+        pass
+    except merge_chain.GitError as e:
+        return "gate_unreadable", f"could not read {tip_sha[:8]} as a merge chain: {e}"
+    try:
+        v = cross_model_gate.check_chain(main, base_sha, judged)
+    except Exception as e:  # any failure inside the gate: refuse, never run unjudged
+        return "gate_unreadable", f"the push gate failed: {type(e).__name__}: {e}"
+    if v is None:
+        return "gate_unreadable", ("the push gate did not judge "
+                                   f"{judged[:8]} as a merge chain")
+    if v.blocked:
+        return "gate_would_refuse", ("the push gate would refuse this branch, so the "
+                                     "suite was not started.\n" + v.message)
+    return None, v.message
 
 
 def _run_locked(root: Path, common_git: Path, ledger: Path, branch: str, base: str,
@@ -413,6 +528,9 @@ def _run_locked(root: Path, common_git: Path, ledger: Path, branch: str, base: s
     merged_commit = ct.stdout.strip()
     ids = {"tree": tree, "branch": branch, "base": base, "base_sha": base_sha,
            "branch_tip": tip_sha, "merged_commit": merged_commit}
+    refuse, gate = gate_verdict(common_git.parent, base_sha, tip_sha, merged_commit)
+    if refuse:
+        return _fail(refuse, gate, **ids)
 
     tmp = Path(tempfile.mkdtemp(prefix="suite-record-"))
     wt = tmp / "wt"
@@ -427,7 +545,8 @@ def _run_locked(root: Path, common_git: Path, ledger: Path, branch: str, base: s
         junit, log = tmp / "junit.xml", tmp / "pytest.log"
         start = time.monotonic()
         fd = held_fd(ledger)
-        rc = _run_pytest(wt, junit, log, timeout, keep_fds=(fd,) if fd is not None else ())
+        rc = _run_pytest(wt, junit, log, timeout, keep_fds=(fd,) if fd is not None else (),
+                         on_start=lambda pid: _note_pytest_pid(ledger, pid))
         duration = round(time.monotonic() - start, 1)
         if rc is None:
             return _fail("timeout", f"timeout after {timeout} s", duration_s=duration, **ids)
@@ -460,7 +579,7 @@ def _run_locked(root: Path, common_git: Path, ledger: Path, branch: str, base: s
         with ledger.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
         return _out({"status": "ok", "action": "run", **row, "recorded": True,
-                     "ledger": str(ledger)}, 0)
+                     "ledger": str(ledger), "gate": gate}, 0)
     finally:
         # Only this run's worktree is cleaned up: its directory, then git's record of it.
         # A repository-wide `git worktree prune` would also drop the record of any other
@@ -497,6 +616,8 @@ def _nonneg(v: str) -> float:
         f = float(v)
     except ValueError:
         raise argparse.ArgumentTypeError(f"not a number: {v}") from None
+    if not math.isfinite(f):     # parked 1306.F2 / 1322.F3: NaN passed `< 0`, inf never ends
+        raise argparse.ArgumentTypeError(f"--wait must be a finite number: {v}")
     if f < 0:
         raise argparse.ArgumentTypeError("--wait must be >= 0")
     return f
