@@ -906,3 +906,15 @@ def test_sweep_with_a_records_file_fails_closed_when_the_first_copy_is_unreadabl
     (root / "data/profile.md").write_bytes(b"- **Name:** Pat Example\n\xff\xfe\n")
     with pytest.raises(facts.Unreadable, match="could not be read"):
         facts.sweep(root, date(2026, 11, 27), rf)
+
+
+def test_the_sealed_rules_are_read_once_per_root_per_process(tmp_path, monkeypatch):
+    # _sealed_hook's documented contract is "cached per root": one process judges every
+    # file against one snapshot of the sealed rules, so the roots cannot change between the
+    # records guard and the scope guards of a single run (Codex narrow 1 F2; org 67 ruling).
+    import vault_paths
+    monkeypatch.delenv(vault_paths.ENV_VAR, raising=False)
+    root = make_sweep_repo(tmp_path)
+    first = facts.sealed_roots(root)
+    monkeypatch.setenv(vault_paths.ENV_VAR, str(root.parent / "another-vault"))
+    assert facts.sealed_roots(root) == first
