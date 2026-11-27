@@ -287,20 +287,24 @@ def test_waiver_list_is_exactly_the_three_gate_overrides():
 def test_gate_receives_git_refs_line_and_no_waiver(repo, monkeypatch, var):
     _, tip = branch(repo, "feat", {"f.py": "x = 1\n"})
     monkeypatch.setenv(var, "should never reach the hook")
-    lb.check(repo["root"], ["feat"], gh=gh_local_main(repo))
+    r = by_name(lb.check(repo["root"], ["feat"], gh=gh_local_main(repo)))["feat"]
     log = Path(os.environ["LB_HOOK_LOG"]).read_text().splitlines()
-    assert log[0] == f"refs/heads/feat {tip} refs/heads/feat {'0' * 40}"
+    # Step 5 hands main's hook a one-branch merge-push of the tip onto main (2026-11-27).
+    merge = r["steps"]["gate"]["merge"]
+    assert log[0] == f"{merge} {merge} refs/heads/main {repo['base']}"
     assert "waive=unset/unset/unset" in log[1]
     assert "remote=origin url=git@github.com:owner/repo.git" in log[1]
 
 
-def test_gate_uses_remote_sha_when_branch_exists_on_github(repo):
+def test_gate_judges_against_main_even_when_branch_exists_on_github(repo):
+    """The branch's GitHub head no longer sets the gate's base: main does (2026-11-27)."""
     _, tip = branch(repo, "feat", {"f.py": "x = 1\n"})
     gh = gh_for({"main": repo["base"], "feat": repo["base"]},
                 {repo["base"]: {"parents": [], "commit": {"tree": {"sha": "0" * 40}}}})
     r = by_name(lb.check(repo["root"], ["feat"], gh=gh))["feat"]
     first = Path(os.environ["LB_HOOK_LOG"]).read_text().splitlines()[0]
-    assert first == f"refs/heads/feat {tip} refs/heads/feat {repo['base']}"
+    merge = r["steps"]["gate"]["merge"]
+    assert first == f"{merge} {merge} refs/heads/main {repo['base']}"
     assert r["github_tip"] == repo["base"]
     assert r["ready"], r["refusals"]
     assert "the push fast-forwards" in r["notes"][0]
@@ -576,7 +580,6 @@ def test_missing_hook_and_tools_each_refuse(repo):
     s = r["steps"]
     no_hook = f"no hook at {repo['root'] / 'tools'}/hooks/pre-push"
     assert s["gate"]["reason"] == no_hook and s["gate"]["rc"] is None
-    assert s["own_gate"]["error"] == "no pre-push hook installed"
     assert s["audit"]["error"].startswith("missing ") and s["audit"]["ok"] is False
     assert s["pii"]["error"].startswith("missing ") and s["pii"]["ok"] is False
     assert f"push gate rc None: {no_hook}" in r["refusals"]
@@ -1614,10 +1617,10 @@ def test_a_branch_with_an_old_own_gate_passes_on_mains_gate_with_a_note(gj):
     r = by_name(lb.check(gj["root"], ["feat"], gh=gh_local_main(gj)))["feat"]
     assert r["ready"], r["refusals"]
     assert r["steps"]["gate"]["ok"] is True
-    assert r["steps"]["own_gate"]["ok"] is False
-    note = [n for n in r.get("notes", []) if "own gate" in n]
+    assert r["steps"]["own_gate"] == {"differs_from_main": ["tools/cross_model_gate.py"]}
+    note = [n for n in r.get("notes", []) if "differs from main's" in n]
     assert len(note) == 1
-    assert "BLOCKED: own old gate says no" in note[0] and "--merge-push" in note[0]
+    assert "tools/cross_model_gate.py" in note[0] and "--merge-push" in note[0]
 
 
 def test_no_note_when_the_branchs_own_gate_also_passes(gj):
@@ -1625,7 +1628,22 @@ def test_no_note_when_the_branchs_own_gate_also_passes(gj):
     branch(gj, "feat", {"f.py": "x = 1\n"})
     r = by_name(lb.check(gj["root"], ["feat"], gh=gh_local_main(gj)))["feat"]
     assert r["ready"], r["refusals"]
-    assert not [n for n in r.get("notes", []) if "own gate" in n]
+    assert r["steps"]["own_gate"] == {"differs_from_main": []}
+    assert not [n for n in r.get("notes", []) if "differs from main's" in n]
+
+
+def test_no_branch_code_executes(gj, tmp_path):
+    """Codex 1603.F1: step 5 ran the branch's own hook, so its gate code ran (and could write
+    the main checkout) before the trusted steps. Its gate and hook are now only compared."""
+    set_main_gate(gj, GATE_PASS)
+    marker = tmp_path / "branch-code-ran"
+    evil = f"import pathlib\npathlib.Path({str(marker)!r}).write_text('x')\n"
+    branch(gj, "feat", {"tools/cross_model_gate.py": evil,
+                        "tools/hooks/pre-push": f"#!/bin/bash\ntouch {marker}\n"})
+    r = by_name(lb.check(gj["root"], ["feat"], gh=gh_local_main(gj)))["feat"]
+    assert not marker.exists()
+    assert r["steps"]["own_gate"]["differs_from_main"] == ["tools/cross_model_gate.py",
+                                                          "tools/hooks/pre-push"]
 
 
 def test_base_gate_reads_the_branchs_worktree_rows_without_writing_main(gj):

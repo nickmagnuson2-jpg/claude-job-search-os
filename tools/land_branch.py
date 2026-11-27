@@ -22,11 +22,12 @@ For each branch:
      a throwaway worktree, with the main checkout's gate data plus the branch worktree's
      review and audit rows main lacks (merge-push's backfill). The gate's chain path counts
      only rows reviewed at the tip's tree, as it will for the real merge-push. The
-     report's `judged_with` names the checkers' path and commit. The branch's own gate (the
-     installed hook from its worktree, which runs the BRANCH'S copy of the gate) still runs,
-     as `own_gate`; it decides nothing, and a note says when it would block a per-branch
-     push that main's gate allows. Before this, a branch cut before a gate change was refused
-     by its own old gate, and a branch that edits the gate judged itself.
+     report's `judged_with` names the checkers' path and commit. Nothing from the branch
+     executes: `own_gate` only compares the branch's tools/cross_model_gate.py and
+     tools/hooks/pre-push blobs with main's, and a note says a per-branch push would run the
+     branch's differing copy. Before this, step 5 RAN the branch's own hook, so a branch cut
+     before a gate change was refused by its own old gate, a branch that edits the gate
+     judged itself, and branch code ran before the trusted steps (Codex 1603.F1).
   6. `tools/audit_pii_record.py check --tip <sha>`, pointed at the worktree. The check reads
      the MAIN checkout's audit ledger (2026-11-22): a record held only by the worktree's copy
      is refused, and the refusal carries the tool's message naming the command to fix it.
@@ -36,7 +37,7 @@ For each branch:
 
 Steps 5 to 8 judge with the MAIN CHECKOUT's copies of those tools, never the branch's: a
 branch that edits its own gate, audit or PII scanner must not get to judge itself (Codex r1 F1,
-P0). Step 5 also RUNS the branch's own hook as own_gate, for the note only; it judges nothing. Those
+P0). No step executes the branch's own copies of anything. Those
 copies are whatever the main checkout has checked out, so the report prints that commit and
 warns when it is not GitHub main, and the PR text says which copies ran.
 
@@ -318,19 +319,23 @@ def base_gate(root: Path, wt: Path, branch: str, tip: str, main_ref: str | None,
     return {**g, "judged_with": judged, "merge": merge}
 
 
-def gate_dry_run(root: Path, wt: Path, branch: str, tip: str, remote_sha: str,
-                 remote_url: str) -> dict:
-    """The pre-push hook git would run for `git push origin refs/heads/b:refs/heads/b`: the
-    BRANCH'S OWN gate. Since 2026-11-27 it decides nothing; check_branch reports it as a
-    note when it would block a per-branch push that base_gate allows."""
-    rc, hooks, _ = git(["rev-parse", "--path-format=absolute", "--git-path", "hooks"], wt)
-    hook = Path(hooks.strip()) / "pre-push" if rc == 0 else None
-    if hook is None or not hook.is_file():
-        return {"rc": None, "ok": False, "hook": str(hook), "error": "no pre-push hook installed"}
-    line = f"refs/heads/{branch} {tip} refs/heads/{branch} {remote_sha}\n"
-    rc, out, err = run([str(hook), "origin", remote_url], cwd=wt, stdin=line)
-    return {"rc": rc, "ok": rc == 0, "hook": str(hook), "tail": tail(out + err),
-            "reason": None if rc == 0 else gate_reason(out + err)}
+# The files a per-branch `git push` runs from the branch's own tree (the installed hook calls
+# $root/tools/cross_model_gate.py). Compared as blobs only: nothing from the branch executes
+# (Codex 1603.F1, 2026-11-27: running them let branch code write the main checkout).
+OWN_GATE_FILES = ("tools/cross_model_gate.py", "tools/hooks/pre-push")
+
+
+def own_gate_differs(root: Path, tip: str, main_ref: str | None) -> list[str]:
+    """OWN_GATE_FILES whose blob at the tip differs from main's (absent on one side counts)."""
+    if not main_ref:
+        return []
+    out = []
+    for path in OWN_GATE_FILES:
+        a = git(["rev-parse", "--verify", "--quiet", f"{tip}:{path}"], root)[1].strip()
+        b = git(["rev-parse", "--verify", "--quiet", f"{main_ref}:{path}"], root)[1].strip()
+        if a != b:
+            out.append(path)
+    return out
 
 
 def gate_reason(text: str) -> str:
@@ -494,13 +499,13 @@ def check_branch(root: Path, branch: str, worktrees: dict, gh_state: dict | None
     r["steps"]["gate"] = g
     if not g["ok"]:
         r["refusals"].append(f"push gate rc {g['rc']}: {g.get('reason')}")
-    own = gate_dry_run(root, wt, branch, tip, remote_sha, remote_url)
-    r["steps"]["own_gate"] = own
-    if g["ok"] and not own["ok"]:
+    differs = own_gate_differs(root, tip, main_ref)
+    r["steps"]["own_gate"] = {"differs_from_main": differs}
+    if g["ok"] and differs:
         r.setdefault("notes", []).append(
-            f"this branch's own gate refuses a per-branch push (rc {own['rc']}: "
-            f"{own.get('reason') or own.get('error')}); main's gate passes it, so land it "
-            "with --merge-push, not the per-branch push command")
+            f"this branch's own {', '.join(differs)} differs from main's, and a per-branch "
+            "`git push` runs the branch's copy, which can refuse what main's gate passes: "
+            "land it with --merge-push, not the per-branch push command")
     tools = trusted_tools(root)
     a = audit_check(tools, wt, tip)
     r["steps"]["audit"] = a
