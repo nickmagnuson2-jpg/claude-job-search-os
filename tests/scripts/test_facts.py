@@ -780,3 +780,117 @@ def test_apply_application_answers_are_in_the_artifact_scope(tmp_path):
     p = root / "output/acme/112726-application-answers.md"
     p.write_text("I was the Widget Intern there.\n")
     assert p in facts.artifact_scope(root, "Pat Example")
+
+
+# ---------------------------------------------------------------- mutation A survivors (09ce692d)
+
+def test_supersedes_needs_quoted_forms_and_a_two_token_until_at_most():
+    with pytest.raises(facts.Malformed, match="supersedes needs quoted forms"):
+        facts.parse_record('k | as_of: 2026-01-01 | source: agent | forms: cv=A | supersedes: Old')
+    with pytest.raises(facts.Malformed, match="until for"):
+        facts.parse_record('k | as_of: 2026-01-01 | source: agent | forms: cv=A | '
+                           'supersedes: "Old" until cv 2026-01-01 extra')
+
+
+def test_a_line_with_an_unclosed_marker_yields_no_record_from_it():
+    line = ("<!-- fact: k | as_of: 2026-01-01 | source: agent | forms: cv=A --> "
+            "<!-- fact: broken")
+    recs, errs = facts.scan_text(line, "f.md")
+    assert recs == [] and len(errs) == 1
+
+
+def test_a_missing_home_is_named_in_the_error(tmp_path):
+    root = make_repo(tmp_path / "repo")
+    (root / "data/goals.md").unlink()
+    with pytest.raises(facts.Unreadable, match="home missing: data/goals.md"):
+        facts.home_paths(root)
+
+
+def test_owner_name_is_empty_string_when_the_profile_cannot_be_decoded(tmp_path):
+    root = make_repo(tmp_path / "repo")
+    (root / "data/profile.md").write_bytes(b"- **Name:** Pat \xff\xfe Example\n")
+    assert facts.owner_name(root) == ""
+
+
+def test_facts_loads_by_file_path_from_an_unrelated_directory(tmp_path):
+    # The hook and other callers may load facts.py by path; its own directory must go on
+    # sys.path so its sibling imports (source_corrections) resolve. -I keeps the caller's
+    # path out, so only facts.py's own insert can make the import work.
+    code = ("import importlib.util, sys; "
+            f"spec = importlib.util.spec_from_file_location('facts_by_path', {str(SCRIPT)!r}); "
+            "m = importlib.util.module_from_spec(spec); sys.modules['facts_by_path'] = m; "
+            "spec.loader.exec_module(m); print('ok')")
+    r = subprocess.run([sys.executable, "-I", "-c", code], cwd=tmp_path,
+                       capture_output=True, text=True)
+    assert r.returncode == 0 and r.stdout.strip() == "ok", r.stderr
+
+
+def test_loading_the_sealed_hook_restores_seal_repo_root(tmp_path, monkeypatch):
+    root = make_sweep_repo(tmp_path)
+    monkeypatch.setenv("SEAL_REPO_ROOT", "/some/where")
+    facts.sealed_roots(root / "data")          # a fresh key, so the hook really loads
+    assert os.environ["SEAL_REPO_ROOT"] == "/some/where"
+    monkeypatch.delenv("SEAL_REPO_ROOT")
+    facts.sealed_roots(root / "output")
+    assert "SEAL_REPO_ROOT" not in os.environ
+
+
+def test_audience_is_cv_for_yaml_and_prose_otherwise(tmp_path):
+    assert facts._audience(tmp_path / "x.yaml") == "cv"
+    assert facts._audience(tmp_path / "x.yml") == "cv"
+    assert facts._audience(tmp_path / "x.md") == "prose"
+
+
+def test_artifact_scope_keeps_only_named_text_files(tmp_path):
+    root = make_sweep_repo(tmp_path)
+    (root / "output/acme/112726-acme-prep.pdf").write_text("x")
+    (root / "output/acme/112726-notes.md").write_text("x")
+    scope = {str(p.relative_to(root)) for p in facts.artifact_scope(root, "Pat Example")}
+    assert "output/acme/112726-acme-prep.pdf" not in scope
+    assert "output/acme/112726-notes.md" not in scope
+    assert "output/acme/112026-acme-prep.md" in scope
+
+
+def test_sweep_refuses_malformed_records(tmp_path):
+    root = make_sweep_repo(tmp_path)
+    with open(root / "data/goals.md", "a") as fh:
+        fh.write("<!-- fact: broken | as_of: soon | source: agent | forms: cv=x -->\n")
+    with pytest.raises(facts.Unreadable, match="malformed records"):
+        facts.sweep(root, date(2026, 11, 27))
+
+
+def test_nightly_records_an_unexpected_error_as_drift(tmp_path, monkeypatch):
+    root = make_sweep_repo(tmp_path)
+    def boom(*a, **k):
+        raise RuntimeError("unexpected")
+    monkeypatch.setattr(facts, "sweep", boom)
+    rep = facts.nightly(root, date(2026, 11, 27))
+    assert rep["drift"] is True and "RuntimeError: unexpected" in rep["error"]
+
+
+def test_get_error_messages_reach_stderr(tmp_path):
+    root = make_repo(tmp_path / "repo")
+    r = run(root, "get", "role_title.acme", "--audience", "spoken")
+    assert "NO RECORD for role_title.acme in audience 'spoken'" in r.stderr
+    with open(root / "data/profile.md", "a") as fh:
+        fh.write('<!-- fact: role_title.acme | as_of: 2026-10-01 | source: nick "other" '
+                 '| forms: cv=Different -->\n')
+    r = run(root, "get", "role_title.acme")
+    assert r.returncode == 2 and "ERROR:" in r.stderr and "disagree" in r.stderr
+    with open(root / "data/goals.md", "a") as fh:
+        fh.write("<!-- fact: broken | as_of: soon | source: agent | forms: cv=x -->\n")
+    r = run(root, "get", "role_title.acme")
+    assert "malformed record(s)" in r.stderr
+
+
+def test_validate_reports_conflicts_and_keys_as_json(tmp_path):
+    import json as _json
+    root = make_repo(tmp_path / "repo")
+    with open(root / "data/profile.md", "a") as fh:
+        fh.write('<!-- fact: role_title.acme | as_of: 2026-10-01 | source: nick "other" '
+                 '| forms: cv=Different -->\n')
+    r = run(root, "validate")
+    assert r.returncode == 1
+    out = _json.loads(r.stdout)
+    assert out["keys"] == ["role_title.acme"] and len(out["conflicts"]) == 1
+    assert out["records"] == 2
