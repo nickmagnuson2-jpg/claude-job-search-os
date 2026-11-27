@@ -926,3 +926,40 @@ def test_remove_never_deletes_a_block_that_arrived_after_the_import_read(tmp_pat
     assert "Acme" not in left and "Casey Doe" not in left
     assert out["blocks_removed"] == 2
     assert "Newco" not in {e["name"] for e in cq.load(tmp_path)["pending"]}
+
+
+# --- _merge_note branches (mutation run 1 survivors, org 67 ruling 2026-11-27 14:00) --------
+
+def test_a_duplicate_without_a_note_leaves_the_existing_note_alone(tmp_path):
+    """Kills _merge_note L138 IF_FALSE: without the empty-note guard, a skipped duplicate
+    carrying no note appended " | " to the queued entry's note."""
+    cq.add(tmp_path, "lane-a", "company", [{"name": "Beacon", "inbox_note": "[Peninsula]"}], "2026-11-16")
+    cq.add(tmp_path, "lane-a", "company", [{"name": "Beacon", "inbox_note": None}], "2026-11-17")
+    [beacon] = cq.load(tmp_path)["pending"]
+    assert beacon["inbox_note"] == "[Peninsula]"
+
+
+def test_a_person_duplicates_note_lands_on_that_person(tmp_path):
+    """Kills _merge_note L140 IF_FALSE and both L141 NEGATE_CMP: a person is matched by its
+    stored key, not by the company-name rule, so its note reaches its own entry."""
+    person = {"name": "Casey Doe", "company": "Northwind", "location": "San Francisco"}
+    cq.add(tmp_path, "deployment-leads", "person", [person], "2026-11-16")
+    cq.add(tmp_path, "deployment-leads", "person", [{**person, "inbox_note": "met at a meetup"}],
+           "2026-11-17")
+    [casey] = cq.load(tmp_path)["pending"]
+    assert casey["inbox_note"] == "met at a meetup"
+
+
+def test_a_note_prefers_the_entry_in_the_same_preset(tmp_path):
+    """Kills _merge_note L147 NEGATE_CMP. add() never queues one name twice, but a queue
+    written before that dedup can hold the same company under two presets; the note goes
+    to the entry in the duplicate's own preset."""
+    cq.add(tmp_path, "lane-a", "company", [{"name": "Beacon"}], "2026-11-16")
+    path = cq.queue_path(tmp_path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["pending"].append({**data["pending"][0], "preset": "lane-b"})
+    path.write_text(json.dumps(data), encoding="utf-8")
+    cq.add(tmp_path, "lane-b", "company", [{"name": "Beacon", "inbox_note": "[Bay, not SF]"}],
+           "2026-11-17")
+    by_preset = {e["preset"]: e.get("inbox_note") for e in cq.load(tmp_path)["pending"]}
+    assert by_preset == {"lane-a": None, "lane-b": "[Bay, not SF]"}
