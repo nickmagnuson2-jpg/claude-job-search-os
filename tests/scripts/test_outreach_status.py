@@ -1048,3 +1048,24 @@ def test_real_date_requires_the_dashed_form(value):
     """Mutation 2026-10-30: date.fromisoformat also accepts compact and week forms, so the
     YYYY-MM-DD shape check is what refuses them."""
     assert _writer()._real_date(value) is False
+
+
+def test_a_reply_closes_the_newest_delivered_row(tmp_path):
+    """Delivered is open (MERGED item 4): a receipt is not a reply, so "they replied"
+    must close the newest Delivered row, not skip it for an older Sent row."""
+    os_ = _writer()
+    log = make_log(tmp_path, [
+        "| 2026-10-01 | cold-outreach | email | Jane Doe | Acme Corp | First | Sent |",
+        "| 2026-10-20 | follow-up | email | Jane Doe | Acme Corp | Second | Delivered |",
+    ])
+    code, out = os_.set_latest_open(log, "Jane Doe", "Replied")
+    assert code == 0, out
+    lines = log.read_text(encoding="utf-8").splitlines()
+    assert lines[-2].endswith("| First | Sent |")
+    assert lines[-1].endswith("| Second | Replied |")
+
+
+def test_readers_share_the_open_vocabulary():
+    os_ = _writer()
+    assert "Delivered" in os_.OPEN_STATUSES
+    assert os_.UNRESOLVED_READ_STATUSES == {"drafted", "sent", "delivered", "pending"}

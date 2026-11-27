@@ -316,7 +316,14 @@ def _public(row: dict) -> dict:
 # ---------------------------------------------------------------- writer
 
 
-OPEN_STATUSES = {"Drafted", "Sent"}
+# Open = sent or drafted, with no reply recorded. Delivered is open: a receipt says the
+# message arrived, not that anyone answered, so a reply must still be able to close it
+# and the readers must still list it as awaiting (MERGED item 4, 2026-11-27).
+OPEN_STATUSES = {"Drafted", "Sent", "Delivered"}
+# The readers' view of the same set: lower-cased, plus the legacy "pending" spelling that
+# old rows carry. outreach_pending and outreach_metrics read this instead of keeping
+# their own tuples, so the three tools hold one vocabulary.
+UNRESOLVED_READ_STATUSES = frozenset({s.lower() for s in OPEN_STATUSES} | {"pending"})
 
 
 def set_status(path: Path, recipient: str, date: str, artifact: str | None,
@@ -345,7 +352,7 @@ def set_status(path: Path, recipient: str, date: str, artifact: str | None,
 
 
 def set_latest_open(path: Path, recipient: str, new_status: str) -> tuple[int, dict]:
-    """Set the status of the recipient's newest open (Drafted/Sent) row.
+    """Set the status of the recipient's newest open (Drafted/Sent/Delivered) row.
 
     The log is chronological, so on a same-date tie the later row is the later message.
     This is the one entry point for "they replied" from other tools.

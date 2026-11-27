@@ -566,3 +566,21 @@ def test_a_row_with_an_impossible_date_is_skipped_not_given_the_previous_date():
         "| 2026-13-40 | cold | email | Bad Date | Beta | Hi | Sent |"), date(2026, 2, 28), 30, 7, {}, {})
     assert out["recent_outreach"]["sent"] == 1
     assert [e["name"] for e in out["awaiting_response_overdue"]] == ["Ann Example"]
+
+
+def test_delivered_row_is_awaiting_when_no_reply(tmp_path):
+    """A Delivered row with no reply is still awaiting (MERGED item 4). It used to fall
+    through every branch: counted as sent, never listed, never followed up."""
+    write_fixture(tmp_path, "data/outreach-log.md", """\
+        # Outreach Log
+
+        | Date | Type | Channel | Name | Company | Subject | Status |
+        |------|------|---------|------|---------|---------|--------|
+        | 2026-02-10 | cold-outreach | email | Sarah Chen | Northwind Inc | Hello | Delivered |
+    """)
+    result = run_script("outreach_pending.py",
+                        "--target-date", "2026-02-26",
+                        "--days-threshold-overdue", "5",
+                        "--repo-root", str(tmp_path))
+    assert [e["name"] for e in result["awaiting_response_overdue"]] == ["Sarah Chen"]
+    assert result["recent_outreach"]["replied"] == 0

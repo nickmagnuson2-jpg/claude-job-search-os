@@ -29,6 +29,7 @@ from pathlib import Path
 # Shared freeform-stage classifier (single source of truth). See stage_vocab.py.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from stage_vocab import is_terminal_stage  # noqa: E402
+from outreach_status import UNRESOLVED_READ_STATUSES  # noqa: E402
 from pipe_read import parse_all_rows  # noqa: E402
 from md_table import read_file_narrow as read_file  # noqa: E402
 from outreach_read import parse_rows as parse_outreach_rows  # noqa: E402
@@ -195,7 +196,7 @@ def parse_outreach_log(content: str, today: date, lookback_days: int,
         latest_interaction = networking_interactions.get(reconcile_key(name, company))
         if (latest_interaction is not None
                 and latest_interaction > sent_date
-                and effective_status.lower() in ("sent", "drafted", "pending")):
+                and effective_status.lower() in UNRESOLVED_READ_STATUSES):
             effective_status = "Replied"
 
         # Suppress from the awaiting lists (but NOT from the stats) when the
@@ -227,7 +228,7 @@ def parse_outreach_log(content: str, today: date, lookback_days: int,
                 awaiting_overdue.append(entry)
             else:
                 awaiting.append(entry)
-        elif effective_status.lower() in ("drafted", "sent", "pending"):
+        elif effective_status.lower() in UNRESOLVED_READ_STATUSES:
             if suppress_awaiting:
                 continue
             days_since = (today - sent_date).days
