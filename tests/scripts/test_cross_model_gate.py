@@ -2249,3 +2249,22 @@ def test_merge_chain_with_a_missing_branch_tip_object_blocks(tmp_path):
     v = g.check_chain(tmp_path, base, m2)
     assert v is not None and v.blocked is True
     assert "could not be read" in v.message
+
+
+# --- MERGED item 3 (parked 924.F2, 34.F3): one family is one family ------------------
+# 14.F1 (a waiver row counted as coverage) is NOT fixed here: its parking reason says
+# whether a waiver confers coverage is a design call, and two 2026-09-06 tests record
+# that it does. Filed for Nick instead.
+
+def test_family_spelling_is_case_insensitive():
+    """924.F2: "OpenAI" and "openai" are one provider. Counting them as two let one
+    provider clear a two-family tier."""
+    assert g.row_model({"family": "OpenAI"}) == g.row_model({"family": "openai"}) == "openai"
+    assert g.row_model({"model": "Codex"}) == "openai"
+
+
+def test_gpt5_label_maps_to_openai():
+    """34.F3: a row labelled gpt5 with no family is OpenAI, not a family of its own."""
+    assert g.row_model({"model": "gpt5"}) == "openai"
+    assert "gpt5" not in g.LEGACY_MODEL_FAMILIES, "the parity-tested map stays wired-only"
+

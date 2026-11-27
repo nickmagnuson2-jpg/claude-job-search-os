@@ -255,6 +255,10 @@ AUTHOR_FAMILY = "anthropic"
 # Duplicated deliberately rather than imported from codex_verify.MODELS: that import
 # would be circular, since codex_verify imports this module. A parity test pins them.
 LEGACY_MODEL_FAMILIES = {"codex": "openai", "grok": "xai", "fable": "anthropic"}
+# Labels that name a provider's model but are not a wired CLI, so they cannot sit in the
+# map above (its parity test requires every key to be wired). Without this, a row
+# labelled gpt5 with no family counted as a family of its own (parked 34.F3).
+LABEL_ALIASES = {"gpt5": "openai"}
 
 # TEMPORARY EXCEPTION, Nick 2026-10-30: Grok (xai) hit its provider usage limit, which resets
 # when the monthly cycle ends on 2026-11-12, and Nick chose not to buy more. Until then the
@@ -287,17 +291,19 @@ def row_model(row: dict) -> str:
     field keep counting as the one perspective they were rather than becoming
     uncountable and blocking every push they used to clear.
     """
+    # Lower-cased: "OpenAI" and "openai" are one provider, and counting them as two let one
+    # provider clear a two-family tier (parked 924.F2).
     fam = row.get("family")
     if isinstance(fam, str) and fam.strip():
-        return fam.strip()
+        return fam.strip().lower()
     label = row.get("model")
-    label = label.strip() if isinstance(label, str) and label.strip() else DEFAULT_MODEL
+    label = label.strip().lower() if isinstance(label, str) and label.strip() else DEFAULT_MODEL
     # Map the label INTO the family namespace. Returning it raw was a P0 (grok, F1,
     # 2026-09-07): a legacy row {model: codex} returned "codex" while a current row
     # {family: openai} returned "openai", so one provider counted twice and cleared a
     # tier-3 push. Two namespaces in one set is the same label-counting defect the
     # family field was added to remove.
-    return LEGACY_MODEL_FAMILIES.get(label, label)
+    return LEGACY_MODEL_FAMILIES.get(label) or LABEL_ALIASES.get(label, label)
 
 
 @dataclass
