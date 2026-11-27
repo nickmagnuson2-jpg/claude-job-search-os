@@ -49,6 +49,11 @@ FRICTION = """# Friction
 
 @pytest.fixture
 def world(tmp_path):
+    return _build_world(tmp_path)
+
+
+def _build_world(tmp_path):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     mem = tmp_path / "mem"
     mem.mkdir()
     repo = tmp_path / "repo"
@@ -80,9 +85,15 @@ def _digest(world):
     return lc.cutover_digest(mem, repo, inputs)
 
 
-def test_digest_is_deterministic(world):
-    assert _digest(world) == _digest(world)
-    assert len(_digest(world)) == 64
+def test_digest_depends_on_content_not_on_where_or_when_it_is_read(tmp_path):
+    """The same corpus built in two different folders gives the same digest, a 64-hex
+    sha256. Replaces a test that compared one digest with itself, which could not fail
+    (flagged by every S1 mutation record, 2026-11-25): this one fails if an absolute path,
+    a directory listing order or a per-run value leaks into the digest."""
+    a = _digest(_build_world(tmp_path / "a"))
+    b = _digest(_build_world(tmp_path / "elsewhere" / "b"))
+    assert a == b
+    assert len(a) == 64 and int(a, 16) >= 0
 
 
 @pytest.mark.parametrize("target", ["rule", "lessons", "input"])

@@ -545,15 +545,15 @@ def test_bump_keeps_the_file_mode(lessons):
 # (main_checkout resolves to main), and skips only where main's file is absent, such as a
 # clean merged tree.
 ROW_167_MATCH = "Claude closes a warm first-reply DM with a scheduling-mechanics offer"
+sys.path.insert(0, str(REPO / "tools"))
+from vault_paths import main_checkout  # noqa: E402
+LIVE_LESSONS = main_checkout(REPO) / "memory" / "lessons.md"
 
 
+@pytest.mark.live_data(LIVE_LESSONS)
 def test_bump_on_row_167_real_text(tmp_path):
-    sys.path.insert(0, str(REPO / "tools"))
     import learning_state as ls
-    from vault_paths import main_checkout
-    live = main_checkout(REPO) / "memory" / "lessons.md"
-    if not live.is_file():
-        pytest.skip(f"LIVE-DATA-ABSENT: {live} not present")
+    live = LIVE_LESSONS
     rows = [ln for ln in live.read_text(encoding="utf-8").split("\n") if ROW_167_MATCH in ln]
     assert len(rows) == 1, f"row 167 match found {len(rows)} rows"
     real = rows[0]

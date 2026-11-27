@@ -301,17 +301,12 @@ def test_json_output_is_parseable(tmp_path, capsys):
 
 # ---------------------------------------------------------------- the live repo
 
-@pytest.mark.live_data
+LIVE_MEMORY = claude_project_dir(main_checkout(REPO_ROOT)) / "memory"
+
+
+@pytest.mark.live_data(LIVE_MEMORY, "memory/friction-log.md", "memory/lessons.md")
 def test_the_live_ledger_reads_every_lane():
-    mem = claude_project_dir(main_checkout(REPO_ROOT)) / "memory"
-    if not mem.is_dir():
-        pytest.skip("live memory tier not present")
-    if not (REPO_ROOT / "memory" / "friction-log.md").is_file():
-        # mutation_check runs pytest from outside its temporary worktree, where
-        # tests/conftest.py's live_data skip does not load and the gitignored repo memory/
-        # is absent (2026-11-25, S1 mutation r2 baseline_red). The main checkout has it.
-        pytest.skip("LIVE-DATA-ABSENT: repo memory/ is gitignored and absent in this checkout")
-    report = ll.collect(REPO_ROOT, mem)
+    report = ll.collect(REPO_ROOT, LIVE_MEMORY)
     assert set(report["lanes"]) >= {"memory", "friction", "lessons-2"}
     assert report["total"] > 500
 

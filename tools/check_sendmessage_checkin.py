@@ -6,7 +6,10 @@ BLOCKS (exit 2) a cross-session message that
       "(1) changed (2) uncommitted (3) unlogged (4) blocked on"; rule 12 of the overnight
       briefs is "log first, then message", so an unlogged item means the log is behind;
   (b) carries a guessed clock time: HH:Mx or HH:x ("07:4x") anywhere outside quotes and
-      backticks, or ~HH:MM / about HH:MM in the same clause as a "by `date`" label.
+      backticks, or ~HH:MM / about HH:MM in the same clause as a "by `date`" label; also,
+      anywhere outside quotes, HH:MMish ("16:40ish") and a present-tense claim with an
+      approximator ("it's ~3:40", "it is about 11:50", "the time is roughly 10:20"), the
+      shapes of feedback_run_date_dont_infer_local_time's fires (added 2026-11-25, S1).
       Times come from running `date` (feedback_log_timestamps_from_date_not_estimates).
 
 WHY (measured 2026-11-23, output/overnight-112226/S1-staging/sendmessage-hook/PLAN.md):
@@ -47,6 +50,16 @@ _NONE = re.compile(r"^[\s*_-]*(none|nothing)\b", re.I)
 _GUESS = re.compile(r"(?<![\w:])\d{1,2}:(?:\d[xX]|[xX]{1,2})(?!\w)")
 _APPROX = re.compile(r"(?:~\s?|\babout\s+)\d{1,2}:\d{2}\b", re.I)
 _DATE_LABEL = re.compile(r"\bby\s+`?date`?", re.I)
+# The two shapes of the run_date rule's own fires that the patterns above miss (S1,
+# 2026-11-25): a clock time with "ish" ("16:40ish", fire 11), and a present-tense claim
+# about the time with an approximator ("it's ~3:40", "It's roughly 10:20", "It's about
+# 11:50"). A forecast ("ETA about 11:15", "done around 17:00") is not a claim about now
+# and stays allowed.
+_ISH = re.compile(r"(?<![\w:])\d{1,2}:\d{2}\s?-?ish\b", re.I)
+_NOW_CLAIM = re.compile(
+    r"\b(?:it[’']?s|it\s+is|the\s+time\s+is)(?:\s+now)?\s+"
+    r"(?:~\s?|about\s+|roughly\s+|around\s+|approx(?:imately|\.)?\s+|nearly\s+|almost\s+)"
+    r"\d{1,2}:\d{2}\b", re.I)
 _CLAUSE = re.compile(r"[.;\n]\s|\n|[.;]$")
 
 
@@ -69,7 +82,8 @@ def _unlogged(text: str) -> bool:
 
 
 def _guessed_time(text: str) -> bool:
-    if _GUESS.search(_strip_quotes(text)):
+    plain = _strip_quotes(text)
+    if _GUESS.search(plain) or _ISH.search(plain) or _NOW_CLAIM.search(plain):
         return True
     for clause in _CLAUSE.split(_strip_quotes(text, backticks=False)):
         if _APPROX.search(clause) and _DATE_LABEL.search(clause):
@@ -89,8 +103,9 @@ def judge(text: str) -> str | None:
 FIX = {
     "unlogged": "(3) unlogged is not none. Log first (append the entry, time from `date`), "
                 "then send with (3) unlogged: none.",
-    "guessed_time": "a guessed time (HH:Mx, or ~/about HH:MM beside 'by date'). Run `date` and "
-                    "paste its HH:MM; to mention a guessed time, quote it.",
+    "guessed_time": "a guessed time (HH:Mx, HH:MMish, \"it's about/~ HH:MM\", or ~/about HH:MM "
+                    "beside 'by date'). Run `date` and paste its HH:MM; to mention a guessed "
+                    "time, quote it.",
 }
 
 
