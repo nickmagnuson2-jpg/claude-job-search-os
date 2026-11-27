@@ -416,11 +416,6 @@ def main_checkout_of(repo_root: Path) -> Path | None:
     return main
 
 
-def _row_key(row: dict) -> tuple:
-    """What makes a mirrored row the same run as a worktree row: finding_write's match."""
-    return row.get("report"), row.get("model"), row.get("recorded")
-
-
 def read_gate_ledger(repo_root: Path) -> tuple[list[dict], int, str]:
     """The rows the push gate judges: this checkout's ledger, plus, from a linked worktree,
     the main checkout's (S2d, 2026-11-25).
@@ -429,8 +424,9 @@ def read_gate_ledger(repo_root: Path) -> tuple[list[dict], int, str]:
     from ANOTHER worktree at the same tree reached its own copy and main's mirror, never
     this one, so the push was refused and both reviews were repeated (S5, tree 734f1e8f).
     main's ledger is the copy codex_verify mirrors every review into and finding_write keeps
-    in step, dispositions included, so reading it is enough; nothing is copied. On the same
-    run (report, model, recorded) this worktree's own row wins.
+    in step, dispositions included, so reading it is enough; nothing is copied. When a
+    main row is this worktree's own run's mirror (codex_verify.is_mirror_of), the
+    worktree's own row wins.
 
     FAILS CLOSED: if main's ledger cannot be located, is missing or cannot be read, one
     unreadable line is counted, which blocks, and the third value says why."""
@@ -447,10 +443,17 @@ def read_gate_ledger(repo_root: Path) -> tuple[list[dict], int, str]:
         main_rows, main_corrupt = read_ledger_with_health(main)
     except (OSError, UnicodeDecodeError) as e:
         return rows, corrupt + 1, f"the main checkout's ledger cannot be read ({e})"
-    own = {_row_key(r) for r in rows}
+    # A main row is dropped only when it is this worktree's own run's mirror, judged by
+    # codex_verify.is_mirror_of: the identity plus the mirror's worktree and run number
+    # (Codex 11-27 1656.F1 and s2d 5.F1: a key without them let a distinct main run in the
+    # same second be dropped with its open P0). Imported here, as finding_write does,
+    # because codex_verify imports this module.
+    import codex_verify as cv
+    runs = cv.worktree_runs(repo_root)
     # A waiver clears only its own push (land_branch.collect_backfill states the same rule):
     # main's waiver rows never reach a worktree push (Fable 11-26 F1).
-    merged = rows + [r for r in main_rows if _row_key(r) not in own and not r.get("waived")]
+    merged = rows + [r for r in main_rows
+                     if not cv.is_mirror_of(r, repo_root, runs) and not r.get("waived")]
     note = f"the main checkout's ledger has {main_corrupt} unreadable line(s)" if main_corrupt else ""
     return merged, corrupt + main_corrupt, note
 
@@ -1012,8 +1015,11 @@ def open_p0_against(repo_root: Path, required: set) -> list[dict]:
     except (RuntimeError, OSError, subprocess.SubprocessError):
         main = None
     if main is not None and ledger_path(main).is_file():
-        # A run's identity is _row_key, model included (Codex 11-26 F1: keyed on report and
-        # recorded alone, a worktree Codex row hid main's Grok P0 that shared both). collect()
+        # A main P0 is dropped only when its row is this worktree's own run's mirror
+        # (codex_verify.is_mirror_of: identity, worktree and run number). Codex 11-26 F1: keyed
+        # on report and recorded alone, a worktree Codex row hid main's Grok P0 that shared
+        # both; Codex 11-27 1656.F1 and s2d 5.F1: a distinct run in the same second, with
+        # other or identical findings, hid its P0 the same way. collect()
         # numbers findings by ledger line, so main's rows are read with the same numbering;
         # a line that does not parse keys as no run, and its P0s stay counted.
         main_rows = {}
@@ -1022,9 +1028,10 @@ def open_p0_against(repo_root: Path, required: set) -> list[dict]:
                 main_rows[i] = json.loads(line)
             except json.JSONDecodeError:
                 continue
-        own = {_row_key(r) for r in read_ledger(repo_root)}
+        import codex_verify as cv     # the one mirror match; codex_verify imports this module
+        runs = cv.worktree_runs(repo_root)
         found += [f for f in finding_write.collect(main, severity="P0")
-                  if _row_key(main_rows.get(f["run"], {})) not in own]
+                  if not cv.is_mirror_of(main_rows.get(f["run"], {}), repo_root, runs)]
     return [f for f in found if required & set(f["paths"]) and blocks_push(f)]
 
 
