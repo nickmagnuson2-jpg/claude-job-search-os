@@ -44,11 +44,40 @@ def read_file_narrow(path: Path) -> str:
 
 
 def write_atomic(path: Path, content: str) -> None:
-    """Write via a sibling temp file and an atomic rename, creating the folder if needed."""
+    """Write via a sibling temp file and an atomic rename, creating the folder if needed.
+
+    Raises OSError on failure, after removing its temp file. Callers depend on the raise:
+    networking_write undoes a capture link and remember_apply isolates one note's
+    failure from the rest of its batch. A CLI writer with no handler of its own calls
+    write_atomic_or_exit instead.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        tmp.write_text(content, encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass  # never written, or already gone: the original error is the one to raise
+        raise
+
+
+def write_atomic_or_exit(path: Path, content: str, **extra) -> None:
+    """write_atomic for a CLI writer: an OSError (a read-only data/ dir, a full disk)
+    becomes the JSON error the writer promises on stdout, code write_failed, exit 1,
+    instead of a traceback (1495.F1, 2026-11-26).
+
+    The message names only `path`: this call cannot know what the caller saved before
+    it. A caller that writes several files passes that in `extra` (granola_save sends
+    written=[...]), and the extra fields go into the error JSON (Codex 1.F1 on 55ec0274).
+    """
+    try:
+        write_atomic(path, content)
+    except OSError as exc:
+        out_error(f"{path} could not be written ({exc})",
+                  "write_failed", path=str(path), **extra)
 
 
 def load_lines(path: Path) -> tuple[str, list[str]]:

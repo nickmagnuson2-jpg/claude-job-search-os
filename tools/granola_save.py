@@ -42,7 +42,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from meeting_vocab import split_transcript_turns  # noqa: E402
-from md_table import JsonArgumentParser, write_atomic  # noqa: E402
+from md_table import JsonArgumentParser, out_error, write_atomic_or_exit  # noqa: E402
 import vault_paths  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -271,7 +271,11 @@ def cmd_write(data: dict, output: Path, no_overwrite: bool = False) -> None:
     if refusal:
         print(json.dumps({"status": "refused", "reason": refusal, "requested_path": str(output)}))
         sys.exit(2)
-    output.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        output.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:  # Codex 1.F2 on 55ec0274: was a traceback
+        out_error(f"{output.parent} could not be created ({exc})",
+                  "write_failed", path=str(output.parent), written=[])
     transcript_basename = output.stem
     summary_path = output.with_name(transcript_basename + "-summary.md")
     summary_basename = summary_path.stem
@@ -301,11 +305,12 @@ def cmd_write(data: dict, output: Path, no_overwrite: bool = False) -> None:
 
     # Transcript file
     transcript_content = transcript_frontmatter(data) + "\n" + transcript_body(data, summary_basename)
-    write_atomic(output, transcript_content)
+    write_atomic_or_exit(output, transcript_content, written=[])
 
     # Summary file
     summary_content = summary_frontmatter(data, transcript_basename) + "\n" + summary_body(data, transcript_basename)
-    write_atomic(summary_path, summary_content)
+    # The transcript is already on disk; say so if the summary fails (Codex 1.F1).
+    write_atomic_or_exit(summary_path, summary_content, written=[str(output)])
 
     result = {
         "status": "ok",

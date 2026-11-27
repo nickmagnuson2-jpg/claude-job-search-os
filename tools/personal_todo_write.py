@@ -32,7 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools import vault_paths
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # siblings import as `tools.X` too
-from md_table import out_ok, parse_cols, safe_cell, table_insert_pos, write_atomic  # noqa: E402
+from md_table import out_ok, parse_cols, safe_cell, table_insert_pos, write_atomic_or_exit  # noqa: E402
 
 DONE_HEADER = "| Task | Completed | Notes |"
 DONE_SEP = "| --- | --- | --- |"
@@ -134,7 +134,7 @@ def save_lines(path: Path, lines: list[str], original_content: str) -> None:
     content = "\n".join(lines)
     if original_content.endswith("\n"):
         content += "\n"
-    write_atomic(path, content)
+    write_atomic_or_exit(path, content)
 
 
 # ---------------------------------------------------------------------------

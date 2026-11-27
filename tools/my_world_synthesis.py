@@ -26,7 +26,7 @@ import sys
 from datetime import date
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # siblings import as `tools.X` too
-from md_table import out_error, read_file, write_atomic  # noqa: E402
+from md_table import out_error, read_file, write_atomic_or_exit  # noqa: E402
 
 REFLECTIONS_DIR = "data/reflections"
 LONGITUDINAL_REL = "data/reflections/_longitudinal.md"
@@ -141,7 +141,7 @@ def cmd_append(args, repo_root: Path) -> None:
     # First run: create the file with frontmatter + header + first block.
     if not existing:
         content = HEADER.format(last=last, covered=covered_through) + "\n" + block + "\n"
-        write_atomic(longitudinal, content)
+        write_atomic_or_exit(longitudinal, content)
         out_ok("append", path=str(longitudinal.relative_to(repo_root)),
                covered_through=covered_through, created=True)
         return
@@ -204,7 +204,7 @@ def cmd_append(args, repo_root: Path) -> None:
     content = "\n".join(new_lines)
     if existing.endswith("\n"):
         content += "\n"
-    write_atomic(longitudinal, content)
+    write_atomic_or_exit(longitudinal, content)
     extra = {}
     if warning:
         extra["warning"] = warning
