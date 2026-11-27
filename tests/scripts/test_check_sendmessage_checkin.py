@@ -206,3 +206,119 @@ def test_judge_returns_the_reason_kind():
     assert hook.judge("(3) unlogged: x") == "unlogged"
     assert hook.judge("at 07:4x") == "guessed_time"
     assert hook.judge("(3) unlogged: none") is None
+
+
+# ---------------------------------------------------------------- HOLD (S3, 2026-11-26)
+# During an org HOLD stage 2 the log is closed, so "log first" cannot happen. The held form
+# "(3) unlogged: held" passes only while a HOLD is on record in orchestration.md.
+
+from datetime import datetime, timedelta  # noqa: E402
+
+_NOW = datetime(2026, 11, 26, 12, 0)
+
+
+def _head(when: datetime, who: str, title: str) -> str:
+    return f"## {when:%Y-%m-%d %H:%M} by `date` | {who}: {title}\n\nbody\n\n"
+
+
+def test_hold_open_on_record_under_two_hours():
+    log = _head(_NOW - timedelta(minutes=30), "ORG b7", "HOLD stage 2 for push 1; no data/ writes")
+    assert hook.hold_on_record(log, _NOW) is True
+
+
+@pytest.mark.parametrize("end", ["HOLD lifted; push with Nick", "push-1 HOLD 18:44 to 19:27, eased",
+                                 "HOLD released", "HOLD ended"])
+def test_a_later_end_word_closes_the_hold(end):
+    log = (_head(_NOW - timedelta(minutes=50), "ORG b7", "HOLD stage 2")
+           + _head(_NOW - timedelta(minutes=10), "ORG b7", end))
+    assert hook.hold_on_record(log, _NOW) is False
+
+
+def test_a_hold_reopened_after_an_end_is_open():
+    log = (_head(_NOW - timedelta(minutes=90), "ORG b7", "HOLD stage 2")
+           + _head(_NOW - timedelta(minutes=60), "ORG b7", "HOLD lifted")
+           + _head(_NOW - timedelta(minutes=5), "ORG b7", "HOLD stage 2 again"))
+    assert hook.hold_on_record(log, _NOW) is True
+
+
+def test_line_order_decides_not_heading_time():
+    # an end written later in the file closes the hold even with an earlier heading time
+    log = (_head(_NOW - timedelta(minutes=10), "ORG b7", "HOLD stage 2")
+           + _head(_NOW - timedelta(minutes=20), "ORG b7", "HOLD lifted"))
+    assert hook.hold_on_record(log, _NOW) is False
+
+
+@pytest.mark.parametrize("age", [timedelta(hours=2), timedelta(hours=5)])
+def test_a_hold_expires_after_two_hours(age):
+    assert hook.hold_on_record(_head(_NOW - age, "ORG b7", "HOLD stage 2"), _NOW) is False
+
+
+def test_just_under_two_hours_is_still_open():
+    log = _head(_NOW - timedelta(minutes=119), "ORG b7", "HOLD stage 2")
+    assert hook.hold_on_record(log, _NOW) is True
+
+
+def test_a_hold_dated_in_the_future_is_not_open():
+    assert hook.hold_on_record(_head(_NOW + timedelta(minutes=5), "ORG b7", "HOLD"), _NOW) is False
+
+
+@pytest.mark.parametrize("log", [
+    "",
+    _head(_NOW, "S4", "HOLD stage 1 acknowledged"),          # a section, not the org
+    _head(_NOW, "ORG b7", "S2c r2 hold released"),           # lowercase: a branch hold
+    _head(_NOW, "ORG b7", "suite slot to S5"),               # no HOLD at all
+    "## 2026-11-26 11:50 ORG b7: HOLD stage 2\n",            # not a dated `date` heading
+])
+def test_no_org_hold_heading_means_no_hold(log):
+    assert hook.hold_on_record(log, _NOW) is False
+
+
+HELD = "(1) changed: nothing. (2) uncommitted: none. (3) unlogged: held for HOLD stage 2. (4) blocked on: HOLD."
+
+
+def test_held_check_in_passes_only_with_a_hold_on_record():
+    assert hook.judge(HELD, hold=lambda: True) is None
+    assert hook.judge(HELD, hold=lambda: False) == "unlogged"
+
+
+def test_a_non_held_value_blocks_even_during_a_hold():
+    assert hook.judge("(3) unlogged: two fires; logging next.", hold=lambda: True) == "unlogged"
+
+
+def test_every_unlogged_field_must_be_held():
+    msg = "(3) unlogged: held\n(2) x (3) unlogged: the ruling\n"
+    assert hook.judge(msg, hold=lambda: True) == "unlogged"
+
+
+def test_the_log_is_not_read_without_a_held_value():
+    def boom():
+        raise AssertionError("hold read for a message with no held value")
+    assert hook.judge("(3) unlogged: none", hold=boom) is None
+    assert hook.judge("(3) unlogged: x", hold=boom) == "unlogged"
+
+
+def test_a_held_check_in_still_blocks_a_guessed_time():
+    assert hook.judge(HELD + " Back at 07:4x.", hold=lambda: True) == "guessed_time"
+
+
+def _tree_with_log(tmp_path, log_text):
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    for name in ("check_sendmessage_checkin.py", "hook_runtime.py", "vault_paths.py"):
+        (tools / name).write_bytes((ROOT / "tools" / name).read_bytes())
+    if log_text is not None:
+        (tmp_path / "data" / "workstreams").mkdir(parents=True)
+        (tmp_path / "data" / "workstreams" / "orchestration.md").write_text(log_text, encoding="utf-8")
+    return tools / "check_sendmessage_checkin.py"
+
+
+@pytest.mark.parametrize("log_text, code", [
+    (_head(datetime.now() - timedelta(minutes=5), "ORG 3e", "HOLD stage 2"), 0),
+    (_head(datetime.now() - timedelta(minutes=5), "ORG 3e", "HOLD lifted"), 2),
+    (None, 2),                                             # no log: no HOLD on record
+], ids=["hold_open", "hold_lifted", "no_log"])
+def test_the_hook_reads_the_orchestration_log(tmp_path, log_text, code):
+    hook_file = _tree_with_log(tmp_path, log_text)
+    r = subprocess.run([sys.executable, "-I", str(hook_file)], input=json.dumps(send(HELD)),
+                       text=True, capture_output=True, timeout=30)
+    assert r.returncode == code, r.stderr
