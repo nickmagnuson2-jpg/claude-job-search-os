@@ -1632,6 +1632,16 @@ def test_no_note_when_the_branchs_own_gate_also_passes(gj):
     assert not [n for n in r.get("notes", []) if "differs from main's" in n]
 
 
+def test_own_gate_differs_is_empty_without_a_main_ref(repo):
+    """With no main ref there is nothing to compare against, so nothing differs. Mutation
+    (2026-11-27): dropping the guard reported tools/hooks/pre-push as differing, because
+    'None:<path>' does not resolve; returning None broke the list contract."""
+    _, tip = branch(repo, "feat", {"f.py": "x = 1\n"})
+    assert sh(repo["root"], "rev-parse", f"{tip}:tools/hooks/pre-push")   # present at tip
+    assert lb.own_gate_differs(repo["root"], tip, None) == []
+    assert lb.own_gate_differs(repo["root"], tip, "") == []
+
+
 def test_no_branch_code_executes(gj, tmp_path):
     """Codex 1603.F1: step 5 ran the branch's own hook, so its gate code ran (and could write
     the main checkout) before the trusted steps. Its gate and hook are now only compared."""
