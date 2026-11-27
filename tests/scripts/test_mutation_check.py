@@ -1363,38 +1363,97 @@ def _runnable_tiny_repo(tmp_path):
     return tool
 
 
-def test_a_mutant_whose_tests_time_out_is_not_scored_as_killed(tmp_path):
+def _run_in_process_where_mutants_stall(tool, tmp_path, monkeypatch, capsys, timeout=3):
+    """main() in this process with the pytest runner replaced: the real source passes at
+    once and ANY mutant times out. No wall clock is involved, so machine load cannot turn
+    the baseline into a timeout (11-25 18:38: four concurrent mutation runs pushed the
+    baseline past a real 3 s limit and the test read an error result; 11-26 S4)."""
+    original = tool.read_text(encoding="utf-8")
+
+    class _Passed:
+        returncode, stdout, stderr = 0, "", ""
+
+    def fake_run(cmd, env=None, timeout=None, cwd=None):
+        if tool.read_text(encoding="utf-8") == original:
+            return _Passed()
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
+
+    monkeypatch.setattr(mc, "_run_reaping_descendants", fake_run)
+    monkeypatch.setattr(mc, "REPO_ROOT", tmp_path)
+    monkeypatch.setenv("MUTATION_BACKUP_DIR", str(tmp_path / "store"))
+    test_file = tmp_path / "tests" / "scripts" / "test_sample_tool.py"
+    monkeypatch.setattr(mc.sys, "argv", ["mutation_check.py", str(tool), "--tests",
+                                         str(test_file), "--json", "--timeout", str(timeout)])
+    capsys.readouterr()
+    try:
+        mc.main()
+    except SystemExit:
+        pass
+    finally:
+        mc.release_run_lock()     # in-process: main() keeps the tree lock until exit
+    assert tool.read_text(encoding="utf-8") == original, "the source was not restored"
+    return json.loads(capsys.readouterr().out)
+
+
+def test_a_mutant_whose_tests_time_out_is_not_scored_as_killed(tmp_path, monkeypatch, capsys):
     """The limit is shared by the baseline and every mutant, and a night run measures
     about twice as slow as a day run. Scoring a timeout as a kill certified that a suite
     protects behaviour it never checked, on the nights the machine was merely slow."""
-    tool = _runnable_tiny_repo(tmp_path)
-    # Passes at once on the real source. On any mutant that changes f(2) it does not
-    # fail, it stalls, which is what a slow suite looks like from outside.
-    (tmp_path / "tests" / "scripts" / "test_sample_tool.py").write_text(
-        "import time\nimport sample_tool\n\n\ndef test_f():\n"
-        "    if sample_tool.f(2) is not True:\n        time.sleep(40)\n"
-        "    assert sample_tool.f(2) is True\n", encoding="utf-8")
-    r = _run([str(tool), "--json", "--timeout", "3"], cwd=tmp_path)
-    d = json.loads(r.stdout)
+    tool = _tiny_repo(tmp_path)
+    catalog = {m["op"] for m in json.loads(_run([str(tool), "--list"], cwd=tmp_path).stdout)["catalog"]}
+    d = _run_in_process_where_mutants_stall(tool, tmp_path, monkeypatch, capsys)
     assert d["timed_out"] >= 1, "no mutant stalled; the fixture proves nothing"
     assert d["killed"] == 0, "a stalled run was counted as a kill"
     assert d["weak_kill_count"] == 0, "a stalled run was counted as a crash-only kill"
     assert len(d["timed_out_mutants"]) == d["timed_out"]
-    assert {m["op"] for m in d["timed_out_mutants"]} <= {m["op"] for m in
-            json.loads(_run([str(tool), "--list"], cwd=tmp_path).stdout)["catalog"]}
+    assert {m["op"] for m in d["timed_out_mutants"]} <= catalog
     assert d["timeout"] == 3, "the limit that was hit is not on the record"
 
 
-def test_timeouts_without_survivors_are_not_a_clean_status(tmp_path):
+def test_a_run_leaves_the_process_signal_handlers_as_it_found_them(tmp_path, monkeypatch,
+                                                                    capsys):
+    """S5, 11-26: after an in-process run, _on_signal stayed the SIGINT handler, so a later
+    test's KeyboardInterrupt became SystemExit(130). The run restores what it replaced."""
+    import signal
+    held = [s for s in mc._HELD_SIGNALS]
+    before = {s: signal.getsignal(s) for s in held}
+    tool = _tiny_repo(tmp_path)
+    _run_in_process_where_mutants_stall(tool, tmp_path, monkeypatch, capsys)
+    assert {s: signal.getsignal(s) for s in held} == before
+
+
+def test_a_second_run_puts_back_the_handlers_in_place_before_it_not_before_the_first(
+        tmp_path, monkeypatch, capsys):
+    """Hand mutation of 7ee9418f (S4, 11-26): with _PREV_HANDLERS never cleared, a second
+    run kept the first run's entries and put back the handler from before run 1, not the
+    one a caller installed between the runs."""
+    import signal
+    held = [s for s in mc._HELD_SIGNALS]
+    before = {s: signal.getsignal(s) for s in held}
+
+    def mine(_signum, _frame):
+        pass
+
+    try:
+        (tmp_path / "a").mkdir()
+        tool = _tiny_repo(tmp_path / "a")
+        _run_in_process_where_mutants_stall(tool, tmp_path / "a", monkeypatch, capsys)
+        for s in held:
+            signal.signal(s, mine)
+        (tmp_path / "b").mkdir()
+        tool = _tiny_repo(tmp_path / "b")
+        _run_in_process_where_mutants_stall(tool, tmp_path / "b", monkeypatch, capsys)
+        assert {s: signal.getsignal(s) for s in held} == {s: mine for s in held}
+    finally:
+        for s, h in before.items():
+            signal.signal(s, signal.SIG_DFL if h is None else h)
+
+
+def test_timeouts_without_survivors_are_not_a_clean_status(tmp_path, monkeypatch, capsys):
     """`ok` says every mutant got a verdict."""
-    tool = _runnable_tiny_repo(tmp_path)
+    tool = _tiny_repo(tmp_path)
     tool.write_text("def f(x):\n    return not x\n", encoding="utf-8")
-    (tmp_path / "tests" / "scripts" / "test_sample_tool.py").write_text(
-        "import time\nimport sample_tool\n\n\ndef test_f():\n"
-        "    if sample_tool.f(0) is not True:\n        time.sleep(40)\n"
-        "    assert sample_tool.f(0) is True\n", encoding="utf-8")
-    r = _run([str(tool), "--json", "--timeout", "3"], cwd=tmp_path)
-    d = json.loads(r.stdout)
+    d = _run_in_process_where_mutants_stall(tool, tmp_path, monkeypatch, capsys)
     assert d["survived"] == 0 and d["timed_out"] >= 1, d
     assert d["status"] == "mutants_timed_out"
 
@@ -2612,3 +2671,217 @@ def test_without_the_cache_the_child_gets_no_cache_dir(tmp_path, flags, inherite
     r = _run(["tools/plain.py", "--in-worktree", *flags], cwd=wt, env_extra=extra)
     assert r.returncode == 0, r.stdout + r.stderr
     assert json.loads(record.read_text())["cache"] is None
+
+
+# --- SIGTERM to an --in-worktree parent reaches the child, and the worktree is removed -------
+# S5, 2026-11-25: stopping a parent with SIGTERM ended only the parent. The child kept
+# mutating in the temp worktree and the parent's cleanup (worktree remove + prune) never
+# ran; the worktree was removed by hand.
+
+_SIGNAL_STUB = (
+    "import json, os, signal, sys, time\nfrom pathlib import Path\n"
+    "rec = Path(os.environ['STUB_RECORD'])\n"
+    "def got(sig, frame):\n"
+    "    rec.write_text(json.dumps({'signal': signal.Signals(sig).name, 'cwd': os.getcwd()}))\n"
+    "    sys.exit(0)\n"
+    "signal.signal(signal.SIGTERM, got)\n"
+    "Path(os.environ['STUB_READY']).write_text(os.getcwd())\n"
+    "time.sleep(60)\n")
+
+
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT])
+def test_a_signal_to_the_in_worktree_parent_reaches_the_child_and_the_worktree_goes(tmp_path, sig):
+    wt = _linked_wt_with_stub(tmp_path)
+    (wt / "tools" / "mutation_check.py").write_text(
+        _SIGNAL_STUB.replace("signal.signal(signal.SIGTERM, got)",
+                             "signal.signal(signal.SIGTERM, got)\nsignal.signal(signal.SIGINT, got)"),
+        encoding="utf-8")
+    _git(wt, "commit", "-qam", "signal stub")
+    record, ready = tmp_path / "record.json", tmp_path / "ready.txt"
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("MUTATION_CHECK_ACTIVE", "MUTATION_SWEEP_ACTIVE", "CLAUDECODE",
+                        "MUTATION_CACHE_DIR")}
+    env.update(PYTHONIOENCODING="utf-8", MUTATION_REPO_ROOT=str(wt),
+               STUB_RECORD=str(record), STUB_READY=str(ready))
+    parent = subprocess.Popen([sys.executable, str(TOOL), "tools/plain.py", "--in-worktree"],
+                              cwd=str(wt), env=env, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, text=True)
+    try:
+        deadline = time.time() + 30
+        while not ready.exists() and time.time() < deadline:
+            time.sleep(0.1)
+        assert ready.exists(), "the child never started"
+        child_wt = Path(ready.read_text())
+        parent.send_signal(sig)
+        parent.wait(timeout=30)
+    finally:
+        if parent.poll() is None:
+            parent.kill()
+            parent.wait(timeout=10)
+    assert record.exists(), "the child never received the signal: it was left running"
+    assert json.loads(record.read_text())["signal"] == sig.name
+    assert not child_wt.exists(), "the temp worktree was left behind"
+    listed = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=str(wt),
+                            capture_output=True, text=True).stdout
+    assert str(child_wt.resolve()) not in listed and str(child_wt) not in listed
+
+
+def test_the_in_worktree_child_runs_in_its_own_session(monkeypatch, tmp_path):
+    """A terminal Ctrl-C reaches the parent's process group; the child must get the
+    signal once, by forwarding, not twice."""
+    seen = {}
+
+    class _P:
+        def __init__(self, cmd, **kw):
+            seen.update(kw)
+
+        def wait(self):
+            return 0
+    monkeypatch.setattr(mc.subprocess, "Popen", _P)
+    assert mc._run_forwarding_signals(["x"], cwd=str(tmp_path), env={}) == 0
+    assert seen.get("start_new_session") is True
+
+
+def test_the_forwarding_handlers_are_put_back(monkeypatch, tmp_path):
+    before = {s: signal.getsignal(s) for s in mc._FORWARDED_SIGNALS}
+
+    class _P:
+        def __init__(self, cmd, **kw):
+            pass
+
+        def wait(self):
+            return 3
+    monkeypatch.setattr(mc.subprocess, "Popen", _P)
+    assert mc._run_forwarding_signals(["x"], cwd=str(tmp_path), env={}) == 3
+    assert {s: signal.getsignal(s) for s in mc._FORWARDED_SIGNALS} == before
+
+
+# --- allowlist keys are unique per site (S1's finding; org: no deferral) ------------------
+# The key is path::func::OP::sha1(stripped line)[:8], so identical lines with the same
+# operator in one function shared a key, and one allowlist entry hid a second, unreviewed
+# mutant (two `sys.exit(0)` in one main, 2026-11-23). Occurrence 1 keeps today's key, so
+# no existing entry changes meaning; occurrences 2+ get ".N" on the hash part.
+
+_TWIN = textwrap.dedent("""\
+    import sys
+
+
+    def main(argv):
+        if not argv:
+            sys.exit(0)
+        if argv[0] == "x":
+            return 1
+        sys.exit(0)
+""")
+
+
+def _twin_keys(tmp_path):
+    import ast
+    tree = ast.parse(_TWIN)
+    points = mc.enumerate_mutants(tree)
+    return points, mc.unique_keys("tools/twin.py", tree, _TWIN.splitlines(), points)
+
+
+def test_identical_lines_in_one_function_get_distinct_keys(tmp_path):
+    points, keys = _twin_keys(tmp_path)
+    exits = sorted((ln, col, op) for ln, col, op in points if op == "DROP_CALL")
+    assert [ln for ln, _, _ in exits] == [6, 9]
+    k6, k9 = keys[exits[0]], keys[exits[1]]
+    assert k6 != k9
+    assert k6 == mc.mutant_key("tools/twin.py", "main", "DROP_CALL", "        sys.exit(0)")
+    assert k9 == k6 + ".2"
+    assert len(set(keys.values())) == len(points)
+
+
+def test_a_key_with_no_twin_is_unchanged(tmp_path):
+    import ast
+    points, keys = _twin_keys(tmp_path)
+    tree = ast.parse(_TWIN)
+    lines = _TWIN.splitlines()
+    plain = [p for p in points if p[0] == 7]          # `if argv[0] == "x":` is unique
+    assert plain
+    for ln, col, op in plain:
+        assert keys[(ln, col, op)] == mc.mutant_key(
+            "tools/twin.py", mc.enclosing_function(tree, ln), op, lines[ln - 1])
+
+
+def test_list_reports_each_mutants_occurrence(tmp_path):
+    (tmp_path / "tools").mkdir()
+    src = tmp_path / "tools" / "twin.py"
+    src.write_text(_TWIN, encoding="utf-8")
+    t = tmp_path / "test_twin.py"
+    t.write_text(f"import sys; sys.path.insert(0, r'{tmp_path / 'tools'}')\n"
+                 "import twin\ndef test_x(): assert twin.main(['x']) == 1\n", encoding="utf-8")
+    r = _run([str(src), "--tests", str(t), "--list", "--whole-file"], cwd=tmp_path)
+    cat = json.loads(r.stdout)["catalog"]
+    exits = [e for e in cat if e["op"] == "DROP_CALL"]
+    assert sorted((e["line"], e["key_occurrence"]) for e in exits) == [(6, 1), (9, 2)]
+    assert len({e["key"] for e in cat}) == len(cat)
+
+
+def test_an_existing_entry_covers_occurrence_1_only_and_the_twin_surfaces(tmp_path):
+    """The migration: an entry written under today's key keeps covering occurrence 1, and
+    the twin it used to hide is now a survivor to review."""
+    (tmp_path / "tools").mkdir()
+    src = tmp_path / "tools" / "twin.py"
+    src.write_text(_TWIN, encoding="utf-8")
+    t = tmp_path / "test_twin.py"
+    t.write_text(f"import sys; sys.path.insert(0, r'{tmp_path / 'tools'}')\n"
+                 "import twin\ndef test_x(): assert twin.main(['x']) == 1\n", encoding="utf-8")
+    old_key = mc.mutant_key("tools/twin.py", "main", "DROP_CALL", "        sys.exit(0)")
+    (tmp_path / "tools" / "mutation-allow.json").write_text(
+        json.dumps({old_key: "EQUIVALENT: a placeholder reason for this fixture."}),
+        encoding="utf-8")
+    r = _run([str(src), "--tests", str(t), "--whole-file", "--json"], cwd=tmp_path)
+    d = json.loads(r.stdout)
+    allowed = {a["key"] if isinstance(a, dict) else a for a in d["allowlisted_detail"]} \
+        if isinstance(d.get("allowlisted_detail"), list) else set(d.get("allowlisted_detail") or {})
+    survivors = {s["key"] for s in d["survivors"]}
+    assert old_key in allowed, d.get("allowlisted_detail")
+    assert old_key + ".2" in survivors, survivors
+
+
+def test_a_signal_that_lands_before_the_child_exists_is_forwarded_once_it_does(monkeypatch, tmp_path):
+    """Codex 11-25 s5c F2: the handlers went in after Popen, so a signal in that window
+    killed the parent with no forwarding and no worktree cleanup."""
+    sent = []
+
+    class _P:
+        def __init__(self, cmd, **kw):
+            # the signal arrives while Popen is still starting the child
+            signal.raise_signal(signal.SIGTERM)
+
+        def send_signal(self, sig):
+            sent.append(sig)
+
+        def wait(self):
+            return 0
+    monkeypatch.setattr(mc.subprocess, "Popen", _P)
+    assert mc._run_forwarding_signals(["x"], cwd=str(tmp_path), env={}) == 0
+    assert sent == [signal.SIGTERM]
+
+
+# --- the ".N" keys and allowlist_write's precedent check: s5c depends on s2c ---------------
+# Org b7, 2026-11-25, on Codex 11-25 s5c F1 (P0): occurrence N >= 2 keys carry ".N", and
+# allowlist_write's NOT EQUIVALENT precedent lookup must read "db837ff3.2" as "db837ff3", or
+# an occurrence-2 EQUIVALENT claim skips its precedent. The strip is on s2c (c5382da8);
+# landing constraint s2c before s5c. RED on s5c alone, GREEN on the merged tree. Lives here,
+# not in test_allowlist_write_precedent.py, because s2c appends to that file too.
+
+_PRECEDENT = "tools/check_draft_voice.py::main::DROP_CALL::db837ff3"
+_SAME_SHAPE = "tools/check_draft_pleasantry.py::main::DROP_CALL::db837ff3"
+
+
+def _aw():
+    import importlib
+    return importlib.import_module("allowlist_write")
+
+
+def test_an_occurrence_suffixed_key_meets_its_unsuffixed_precedent():
+    data = {_PRECEDENT: "NOT EQUIVALENT: real survivor (placeholder)."}
+    assert _aw().not_equivalent_precedents(data, _SAME_SHAPE + ".2") == [_PRECEDENT]
+
+
+def test_an_unsuffixed_claim_meets_an_occurrence_suffixed_precedent():
+    data = {_PRECEDENT + ".2": "NOT EQUIVALENT: real survivor (placeholder)."}
+    assert _aw().not_equivalent_precedents(data, _SAME_SHAPE) == [_PRECEDENT + ".2"]

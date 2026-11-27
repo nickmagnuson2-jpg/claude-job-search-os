@@ -4,6 +4,12 @@
 Usage:
     PYTHONIOENCODING=utf-8 python3 tools/land_branch.py <branch> [<branch> ...] [--json] [--suite]
 
+Where to run it: the check mode works from any checkout of the repo, a branch's own worktree
+included; it finds each branch's worktree itself, and steps 6 to 8 always use the main
+checkout's tools/ (below). --merge-push is run from the main checkout. --suite only CHECKS for a
+suite record; it never runs the suite, so `tools/suite_record.py run --branch <branch>` comes
+first (S4 Grok F4 and S4's lesson, 2026-11-25).
+
 For each branch:
   1. Its worktree, from `git worktree list --porcelain`. Refused when there is none, or when the
      worktree has uncommitted changes to tracked files.
@@ -89,11 +95,19 @@ SUITE_WAIT_S = 3600 + 1800
 def suite_supports_wait(tool: Path) -> bool:
     """True if the checkers' suite_record.py accepts --wait (C2). GitHub main's copy before C2
     lands rejects the flag with argparse exit 2, so it is passed only when supported (Grok
-    585ac8c5 F1). Unreadable means unsupported."""
-    try:
-        return '"--wait"' in tool.read_text(encoding="utf-8")
-    except OSError:
+    585ac8c5 F1). The parser is asked (`run --help`), not the file text: a comment or a
+    string naming "--wait" is not support (1294.F2, 1306.F3, 1322.F2). Unreadable, failing
+    or silent means unsupported."""
+    if not Path(tool).is_file():
         return False
+    try:
+        r = subprocess.run([sys.executable, str(tool), "run", "--help"], capture_output=True,
+                           text=True, timeout=60, cwd=str(Path(tool).parent))
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0 and re.search(r"^\s+--wait\b", r.stdout, re.M) is not None
+
+
 MAIN_NAMES = {"main", "origin/main", "refs/heads/main", "refs/remotes/origin/main"}
 
 
@@ -589,7 +603,7 @@ def merge_order(results: list[dict], conflicts: list[dict]) -> dict:
 
 
 def check(root: Path, branches: list[str], want_suite: bool = False, gh=gh_json, *,
-          allowlist_ok: bool = False) -> dict:
+          allowlist_ok: bool = False, descriptions: bool = False) -> dict:
     rc, porcelain, err = git(["worktree", "list", "--porcelain"], root)
     worktrees = parse_worktrees(porcelain) if rc == 0 else {}
     # The PUSH url: the hook receives it on a real push, and it can differ from the fetch url.
@@ -619,7 +633,19 @@ def check(root: Path, branches: list[str], want_suite: bool = False, gh=gh_json,
         m = merge_check(root, tips[a], tips[b])
         if not m["clean"]:
             conflicts.append({"a": a, "b": b, "files": m["files"], "error": m.get("error")})
-    checkers = checker_provenance(trusted_tools(root), main)
+    tools = trusted_tools(root)
+    checkers = checker_provenance(tools, main)
+    if descriptions:
+        # CLI check mode reads the description the merge will use, so a bad title shows
+        # before push day (2 of 10 titles over 72 chars were found only at push, 11-25).
+        # merge_push checks it itself and leaves this off, so nothing is reported twice.
+        for r in results:
+            probs = ([f"description not checked: {NO_TRUSTED}"] if tools is None
+                     else check_description(tools.parent, r["branch"])[1])
+            r["steps"]["description"] = {"ok": not probs, "problems": probs}
+            if probs:
+                r["refusals"] += probs
+                r["ready"] = False
     landing = []
     for r in results:
         if not r["ready"]:
@@ -725,11 +751,68 @@ EM_DASH = "—"
 GATE_DATA = (".cross-model-ledger.jsonl", ".audit-pii-ledger.jsonl", ".pii-denylist.txt",
              ".pii-denylist-targetwords.txt", ".pii-denylist-ambiguous.txt")
 CROSS_LEDGER, AUDIT_LEDGER = GATE_DATA[0], GATE_DATA[1]
-_BUSY_RE = re.compile(r"\bssh\b.*git@github\.com|(?:^|[\s/])git(?:\s+-C\s+\S+)?\s+"
-                      r"(?:push|fetch|pull)\b")
 WEDGE_HELP = ('diagnose: ps -ax -o pid,etime,command | grep -E "ssh git@github.com|SecretAgent"; '
               "a wedged agent is fixed by Nick: kill the waiting push pids, then "
               "pkill -f SecretAgent; sleep 2; open -a Secretive")
+
+
+# GitHub's ssh endpoints (ssh.github.com serves ssh over port 443).
+GITHUB_SSH_HOSTS = {"github.com", "ssh.github.com"}
+
+# git's global options that take a separate value: skipped to reach the subcommand.
+_GIT_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env",
+                   "--super-prefix"}
+
+
+def _ssh_host_candidates(args: list[str]) -> list[str]:
+    """Every token of an ssh argv that could name the host ssh connects to, lowercased
+    (host names are case-insensitive). Covers the destination as [user@]host[:path] or
+    ssh://[user@]host[:port]/path, the user from -l or -oUser, and the host from
+    `-o HostName=<host>` or `-oHostName=<host>` (Codex 11-26 s5c F1 and narrow F1; dc 14:11
+    ruling). -p, -oPort and -oUser values are not hosts. Erring toward busy is the safe
+    direction: a false busy only delays a landing, so every bare token is a candidate
+    rather than only the parsed destination. That fallback is also what catches the
+    ps-joined `-o HostName <host>`: ps splits it into separate tokens, so the option parse
+    sees `HostName` with no value and the host arrives as a bare token (Fable 6.F2).
+
+    Known limits: a host that only ssh_config supplies (`ssh gh` where `Host gh` sets
+    HostName github.com), a ProxyJump/ProxyCommand hop, an IP address for GitHub, or a
+    HostName given inside clustered short flags (`ssh -vo HostName=github.com gh`, Fable
+    6.F1) is not recognised. ps output does not carry ssh_config, so the first three cannot
+    be read from argv; git does not produce the fourth."""
+    out = []
+    prev = ""
+    for t in args:
+        opt = t[2:] if t.startswith("-o") and len(t) > 2 else (t if prev == "-o" else None)
+        if opt is not None:
+            key, _, val = opt.replace("=", " ", 1).partition(" ")
+            if key.lower() == "hostname" and val:
+                out.append(val.strip().lower())
+        elif not t.startswith("-"):
+            out.append(t.removeprefix("ssh://").split("@")[-1].split(":")[0]
+                       .split("/")[0].lower())
+        prev = t
+    return out
+
+
+def _is_busy_command(command: str) -> bool:
+    """True when the process IS a network git command or an ssh session to GitHub, read
+    from its argv: argv[0]'s name, then git's subcommand. Text quoted inside another
+    program's arguments (a review prompt that mentions "git push") is not a push (11-25).
+    ps joins argv with spaces, so a token split is argv up to spaces inside an argument,
+    which can only add tokens after argv[0], never change it."""
+    toks = command.split()
+    if not toks:
+        return False
+    exe = os.path.basename(toks[0])
+    if exe == "ssh":
+        return any(h in GITHUB_SSH_HOSTS for h in _ssh_host_candidates(toks[1:]))
+    if exe != "git":
+        return False
+    i = 1
+    while i < len(toks) and toks[i].startswith("-"):
+        i += 2 if toks[i] in _GIT_VALUE_OPTS else 1
+    return i < len(toks) and toks[i] in ("push", "fetch", "pull")
 
 
 def busy_processes(ps_output: str | None = None) -> list[str]:
@@ -742,7 +825,7 @@ def busy_processes(ps_output: str | None = None) -> list[str]:
     out = []
     for line in ps_output.splitlines()[1:]:
         parts = line.split(None, 2)
-        if len(parts) == 3 and parts[0] != str(os.getpid()) and _BUSY_RE.search(parts[2]):
+        if len(parts) == 3 and parts[0] != str(os.getpid()) and _is_busy_command(parts[2]):
             out.append(line.strip())
     return out
 
@@ -1377,7 +1460,7 @@ def main(argv: list[str] | None = None) -> int:
                          want_suite=True if (args.suite or not args.dry_run) else False)
         print(json.dumps(rep, indent=2) if args.json else render_merge_push(rep))
         return 0 if rep["ok"] else 1
-    rep = check(root, list(dict.fromkeys(args.branches)), args.suite)
+    rep = check(root, list(dict.fromkeys(args.branches)), args.suite, descriptions=True)
     print(json.dumps(rep, indent=2) if args.json else render(rep))
     return 0 if rep["all_ready"] else 1
 

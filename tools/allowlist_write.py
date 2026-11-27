@@ -129,11 +129,22 @@ def claims_equivalent(reason: str) -> bool:
     return bool(_EQ.search(reason)) and not is_not_equivalent_label(reason)
 
 
+# Occurrence 2+ of the same line, op and function carries "<hash>.<N>" (S5's per-site
+# keys, 2026-11-25); occurrence 1 keeps the bare hash. The line shape is the bare hash.
+_OCCURRENCE = re.compile(r"\.\d+$")
+
+
+def _shape(key: str) -> tuple[str, str]:
+    """(operator, line hash without any occurrence suffix)."""
+    parts = key.split("::")
+    return parts[2], _OCCURRENCE.sub("", parts[3])
+
+
 def not_equivalent_precedents(data: dict, key: str) -> list[str]:
     """Other keys with the same operator and hash whose reason is labelled NOT EQUIVALENT."""
-    shape = key.split("::")[2:]
+    shape = _shape(key)
     return sorted(k for k, v in data.items()
-                  if k != key and k.split("::")[2:] == shape
+                  if k != key and len(k.split("::")) == KEY_PARTS and _shape(k) == shape
                   and is_not_equivalent_label(v))
 
 

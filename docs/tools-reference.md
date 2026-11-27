@@ -138,8 +138,11 @@ Args are passed as a **JSON object**, not a bare string — e.g. `{"planPath": "
 ## Landing branches: `land_branch.py`
 
 Added 2026-11-21. Nick, 2026-11-18: no PRs; one command and one Touch ID land every ready branch
-as merge commits on GitHub main. Run from the main checkout. It never fetches, never pushes and
-never rebases; it prints the commands Nick runs with `!`.
+as merge commits on GitHub main. The check mode runs from any checkout of the repo (it finds each
+branch's worktree, and runs the audit, PII and suite checks from the main checkout's `tools/`
+wherever it is called); `--merge-push` is run from the main checkout. It never fetches, never
+pushes and never rebases; it prints the commands Nick runs with `!`. `--suite` only checks that a
+suite record exists for the tip: run `tools/suite_record.py run --branch <branch>` first.
 
 - **`land_branch.py <branch> ... [--suite] [--json]`** checks each branch and writes nothing
   (git objects aside): its worktree is clean, its upstream is not main, it merges cleanly against

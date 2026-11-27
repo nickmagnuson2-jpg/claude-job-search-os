@@ -372,7 +372,9 @@ _PY_SAFE_MODULES = {
     "textwrap", "difflib", "csv", "glob", "fnmatch", "string", "typing",
     "statistics", "base64", "uuid", "random", "copy", "enum", "ast", "tokenize", "shlex",
     "dataclasses", "pprint", "traceback", "__future__", "warnings", "stat", "errno",
-    "tomllib"}
+    "tomllib",
+    # argparse writes only through FileType, which targets() follows (S2c, 2026-11-25).
+    "argparse"}
 # An attribute with one of these names is a module reached through another module
 # (shutil.os, os.path.os), which the qualified-name tables would not recognise.
 _PY_MODULE_ATTRS = {"os", "sys", "shutil", "subprocess", "pathlib", "io", "builtins",
@@ -394,8 +396,22 @@ _PY_RUNNERS = {"subprocess.run", "subprocess.call", "subprocess.check_call",
                "subprocess.check_output", "subprocess.Popen", "subprocess.getoutput",
                "subprocess.getstatusoutput", "os.system", "os.popen"}
 _PY_DYNAMIC = {"exec", "eval", "compile", "getattr", "setattr", "delattr", "__import__",
-               "globals", "locals", "vars", "breakpoint", "sys.modules", "os.chdir",
+               "globals", "locals", "vars", "breakpoint", "sys.modules",
                "os.fchdir", "os.chroot"}
+# os.chdir is followed, not refused (S2c, 2026-11-25): a chdir whose argument folds to ONE
+# known absolute path adds that directory. A relative write target is checked against the
+# start cwd AND every chdir that may have run before it. ORDER (Codex S2c r1 F1): in
+# straight-line code a chdir applies only to writes on later lines, so a write before it
+# is not read as landing in the new directory. DESIGN, not a deferred defect: when the
+# chdir sits inside a loop or a function, or the write sits inside a function, execution
+# order is not tracked and the chdir applies to that write whatever the line order. That
+# can only add directories to check, so it can only over-block, never let a guard write
+# through. Any other chdir cannot be followed and the script blocks.
+# A script that uses chdir or argparse is analysable only since that change, so its
+# verdict is STRICT: every write target must be fully known, or it blocks (org ce ruling:
+# a newly allowed script shows all its write targets resolved).
+_PY_CHDIR = "os.chdir"
+_PY_FILETYPE = "argparse.FileType"
 _PY_DYNAMIC_PREFIXES = ("os.exec", "os.spawn", "os.posix_spawn", "os.fork")
 # Path methods: those that change the receiver, and those that move it to an argument.
 _PY_PATH_WRITES = {"write_text", "write_bytes", "touch", "unlink", "rmdir", "chmod"}
@@ -426,16 +442,22 @@ class _PyWrites:
         self.imports: dict[str, str] = {}
         self.values: dict[str, list] = {}
         self.modules: set[str] = set()                 # local names bound to a module
+        self.chdirs: list[str] = []                    # known absolute dirs from os.chdir
+        self.chdir_nodes: list = []                    # the os.chdir call for each dir
+        self.target_nodes: list = []                   # the call that produced each target
+        self.strict = False                            # chdir or argparse: no unknown targets
         self.unsafe = False
         for n in ast.walk(tree):
             if isinstance(n, ast.Import):
                 for a in n.names:
                     self.unsafe |= a.name not in _PY_SAFE_MODULES
+                    self.strict |= a.name == "argparse"
                     local = a.asname or a.name.split(".")[0]
                     self.imports[local] = a.name if a.asname else a.name.split(".")[0]
                     self.modules.add(local)
             elif isinstance(n, ast.ImportFrom):
                 self.unsafe |= n.level != 0 or n.module not in _PY_SAFE_MODULES
+                self.strict |= n.module == "argparse"
                 for a in n.names:
                     self.unsafe |= a.name == "*"
                     self.imports[a.asname or a.name] = f"{n.module}.{a.name}"
@@ -498,7 +520,10 @@ class _PyWrites:
         out: list[str] = []
         if self.unsafe:
             return None
+        prev = None
         for n in ast.walk(self.tree):
+            self.target_nodes += [prev] * (len(out) - len(self.target_nodes))
+            prev = n
             name = n.attr if isinstance(n, ast.Attribute) else getattr(n, "id", "")
             if name.startswith("__") and name not in ("__name__", "__file__"):
                 return None                           # __builtins__, os.__dict__[...]
@@ -518,6 +543,8 @@ class _PyWrites:
                     and isinstance(p.ctx, ast.Load) and isinstance(p.slice, ast.Constant)):
                 return None                           # sys.argv changed or passed around
             called = isinstance(p, ast.Call) and p.func is n
+            if q in (_PY_CHDIR, _PY_FILETYPE) and not called:
+                return None                           # `cd = os.chdir`: not followed
             writes = q in _PY_WRITE_FUNCS or q in _PY_OPENERS or q in _PY_RUNNERS or (
                 isinstance(n, ast.Attribute)
                 and n.attr in _PY_PATH_WRITES | _PY_PATH_MOVES | {"open"})
@@ -528,6 +555,22 @@ class _PyWrites:
             q, f = self.qual(n.func), n.func
             kw = {k.arg: k.value for k in n.keywords}
             method = f.attr if isinstance(f, ast.Attribute) else ""
+            if q == _PY_CHDIR:
+                self.strict = True
+                dirs = self.fold(n.args[0]) if len(n.args) == 1 and not kw else {_UNKNOWN}
+                d = next(iter(dirs)) if len(dirs) == 1 else _UNKNOWN
+                if _UNKNOWN in d or not os.path.isabs(os.path.expanduser(d)):
+                    return None                       # a chdir it cannot place
+                self.chdirs.append(os.path.expanduser(d))
+                self.chdir_nodes.append(n)
+                continue
+            if q == _PY_FILETYPE:
+                if None in kw or any(isinstance(a, ast.Starred) for a in n.args):
+                    return None
+                mode = n.args[0] if n.args else kw.get("mode")
+                if mode is not None and self._write_mode(mode):
+                    out.append(_UNKNOWN)              # the path comes from the command line
+                continue
             if (q in _PY_OPENERS or q in _PY_WRITE_FUNCS or q in _PY_RUNNERS
                     or method in _PY_PATH_WRITES | _PY_PATH_MOVES | {"open"}) and (
                     None in kw or any(isinstance(a, ast.Starred) for a in n.args)):
@@ -558,6 +601,31 @@ class _PyWrites:
                 mode = n.args[0] if n.args else kw.get("mode")
                 if mode is not None and self._write_mode(mode):
                     out += self.fold(f.value)
+        self.target_nodes += [prev] * (len(out) - len(self.target_nodes))
+        return out
+
+    def _inside(self, node, kinds) -> bool:
+        p = self.parent.get(node)
+        while p is not None:
+            if isinstance(p, kinds):
+                return True
+            p = self.parent.get(p)
+        return False
+
+    def dirs_for(self, i: int, cwd: str) -> list[str]:
+        """The directories target i may be relative to: the start cwd, and each chdir that
+        may have run before it (see the ORDER note at _PY_CHDIR)."""
+        ast = self.ast
+        loops = (ast.For, ast.AsyncFor, ast.While, ast.FunctionDef, ast.AsyncFunctionDef,
+                 ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+        funcs = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+        t = self.target_nodes[i] if i < len(self.target_nodes) else None
+        out = [cwd]
+        for d, c in zip(self.chdirs, self.chdir_nodes):
+            ordered = (t is not None and not self._inside(c, loops)
+                       and not self._inside(t, funcs))
+            if not ordered or (c.lineno, c.col_offset) < (t.lineno, t.col_offset):
+                out.append(d)
         return out
 
     def _run_targets(self, cmd, cwd: str, fed: bool = False) -> list[str]:
@@ -580,7 +648,11 @@ class _PyWrites:
             head = os.path.basename(words[0])
             sub = words[1] if len(words) > 1 else ""
             read_only = head in _READ_ONLY_COMMANDS or (head == "git" and sub in _READ_ONLY_GIT)
-            return [""] if read_only and _UNKNOWN not in "".join(words) else [_UNKNOWN]
+            # An unknown word could be an option that writes (`git log --output=<f>`), so it
+            # blocks, EXCEPT after git's literal `--`, where every word is a pathspec and
+            # cannot be an option (S2c, 2026-11-25: `git log -1 -- <loop variable>`).
+            known = words[:words.index("--")] if head == "git" and "--" in words else words
+            return [""] if read_only and _UNKNOWN not in "".join(known) else [_UNKNOWN]
         return [_UNKNOWN]          # a shell string (os.system, shell=True): not followed
 
 
@@ -598,10 +670,15 @@ def _python_rewrites_a_guard(text: str, cwd: str, argv: list[str]) -> bool:
     import ast
     try:
         tree = ast.parse(text)
-        targets = _PyWrites(tree, argv).targets(cwd)
+        w = _PyWrites(tree, argv)
+        targets = w.targets(cwd)
     except (SyntaxError, ValueError, RecursionError):
         return True
-    return targets is None or any(_may_be_guard(t, cwd) for t in targets)
+    if targets is None:
+        return True
+    if w.strict and any(_UNKNOWN in t for t in targets):
+        return True                                   # newly analysable: every target known
+    return any(_may_be_guard(t, c) for i, t in enumerate(targets) for c in w.dirs_for(i, cwd))
 
 
 def _read_script(path: str, cwd: str) -> str:

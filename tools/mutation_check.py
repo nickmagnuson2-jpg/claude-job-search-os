@@ -242,6 +242,28 @@ def mutant_key(rel_path: str, func: str, op: str, source_line: str) -> str:
     return f"{rel_path}::{func}::{op}::{h}"
 
 
+def unique_keys(rel_path: str, tree: ast.AST, src_lines: list[str],
+                points: list[tuple[int, int, str]]) -> dict[tuple[int, int, str], str]:
+    """{(line, col, op): key}, one distinct key per mutant site.
+
+    mutant_key alone collides when one function holds the same stripped line twice with the
+    same operator (two `sys.exit(0)` in one main), so one allowlist entry silently covered a
+    second, never-reviewed mutant (S1's finding, 2026-11-23/25). Sites sharing a key are
+    numbered in (line, column) order: occurrence 1 keeps mutant_key's value exactly, so
+    every existing allowlist entry keeps its meaning; occurrence N >= 2 gets ".N" on the hash
+    part. An existing entry therefore still covers occurrence 1 only, and occurrences 2+ show
+    up as survivors until reviewed under their own key: an extra survivor, never a hidden one.
+    allowlist_write's validate_key accepts the suffix (still four '::' parts)."""
+    seen: dict[str, int] = {}
+    out: dict[tuple[int, int, str], str] = {}
+    for line, col, op in sorted(points, key=lambda p: (p[0], p[1], p[2])):
+        text = src_lines[line - 1] if 0 < line <= len(src_lines) else ""
+        base = mutant_key(rel_path, enclosing_function(tree, line), op, text)
+        seen[base] = seen.get(base, 0) + 1
+        out[(line, col, op)] = base if seen[base] == 1 else f"{base}.{seen[base]}"
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Test mapping
 # ---------------------------------------------------------------------------
@@ -1259,6 +1281,19 @@ def resolve_scope(args, target: Path, root: Path, test_files: list | None = None
         return {"mode": "whole_file", "base": base,
                 "reason": "the target does not exist at the base (new, untracked or renamed)"}
     t = changed_test_inputs(base, root, test_files or [], target.stem)
+    if getattr(args, "changed_lines_only", False):
+        # Never widened. Everything the default would have widened or added for is
+        # recorded, so the record cannot read as more than it measured (S5, 2026-11-25).
+        if t is None:
+            skipped = ["changed test inputs could not be listed (git failed)"]
+        else:
+            skipped = [f"{p} ({why})" for p, why in t["whole"]] + \
+                      [f"{p} (changed mapped test: the target lines it executes were not "
+                       "added)" for p in t["tests"]]
+        return {"mode": "changed_lines_only", "base": base,
+                "reason": "--changed-lines-only: the target's changed lines only",
+                "changed": d["changed"], "deleted_at": d["deleted_at"],
+                "widen_skipped": skipped}
     if t is None:
         return {"mode": "whole_file", "base": base,
                 "reason": "git could not list changed test files; measuring the whole file"}
@@ -1993,9 +2028,25 @@ def _restore_in_flight() -> dict | None:
         outcome = _restore(target, original)
         _IN_FLIGHT = None
         _RESTORE_OUTCOME = outcome
+        _disarm_signals()
         if outcome["state"] != RESTORED:
             _shout(_failure_report(outcome))
     return outcome
+
+
+# The handlers arm_restore replaced, put back once the restore has run (S5, 11-26: an
+# in-process run left _on_signal as SIGINT's handler, so a later KeyboardInterrupt in
+# the same process became SystemExit(130)).
+_PREV_HANDLERS: dict = {}
+
+
+def _disarm_signals() -> None:
+    for sig, prev in list(_PREV_HANDLERS.items()):
+        try:
+            signal.signal(sig, signal.SIG_DFL if prev is None else prev)
+        except (ValueError, OSError):
+            pass
+    _PREV_HANDLERS.clear()
 
 
 def _on_signal(signum, _frame):
@@ -2037,9 +2088,11 @@ def arm_restore(target: Path, original: str, head_matched: bool | None = None) -
     atexit.register(_restore_in_flight)
     for sig in _HELD_SIGNALS:
         try:
-            signal.signal(sig, _on_signal)
+            prev = signal.signal(sig, _on_signal)
         except (ValueError, OSError):
-            pass          # not on the main thread, or unsupported on this platform
+            continue      # not on the main thread, or unsupported on this platform
+        if prev is not _on_signal:
+            _PREV_HANDLERS.setdefault(sig, prev)
 
 
 def load_allowlist() -> dict:
@@ -2160,6 +2213,50 @@ def uncommitted_inputs(root: Path, only: set[str] | None = None) -> list[str]:
     return [q for q in paths if only is None or q in only]
 
 
+_FORWARDED_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def _run_forwarding_signals(cmd: list[str], cwd: str, env: dict) -> int:
+    """Run the --in-worktree child, passing SIGTERM, SIGINT and SIGHUP on to it.
+
+    S5, 2026-11-25: with subprocess.run a SIGTERM ended only this parent. The child kept
+    mutating in the temp worktree, and the cleanup in run_in_worktree's finally (worktree
+    remove + prune) never ran, so the worktree was removed by hand. Now the signal reaches
+    the child (which restores its target on all three), this parent waits for it to exit,
+    and then returns normally so the finally runs. The previous handlers are put back.
+
+    Own session: a terminal Ctrl-C signals the whole foreground process group, so a child
+    in this parent's group would get SIGINT twice (once direct, once forwarded), and the
+    second could interrupt its own restore. Only the forwarded copy reaches it now."""
+    # Handlers BEFORE the child starts (Codex 11-25 s5c F2): a signal that lands while Popen
+    # is still starting it is queued and forwarded the moment the child exists, instead of
+    # killing this parent with no forwarding and no cleanup.
+    proc = None
+    pending: list[int] = []
+
+    def forward(signum, _frame):
+        if proc is None:
+            pending.append(signum)
+            return
+        try:
+            proc.send_signal(signum)
+        except ProcessLookupError:
+            pass
+
+    previous = {s: signal.signal(s, forward) for s in _FORWARDED_SIGNALS}
+    try:
+        proc = subprocess.Popen(cmd, cwd=cwd, env=env, start_new_session=True)
+        for signum in pending:
+            try:
+                proc.send_signal(signum)
+            except ProcessLookupError:
+                pass
+        return proc.wait()
+    finally:
+        for s, handler in previous.items():
+            signal.signal(s, handler)
+
+
 def run_in_worktree(argv: list[str], args) -> int:
     """Run this tool in a throwaway linked worktree from HEAD, then remove it (2026-10-27:
     the refusal used to print these steps for the caller to do by hand)."""
@@ -2199,8 +2296,9 @@ def run_in_worktree(argv: list[str], args) -> int:
             env[CACHE_DIR_ENV] = str(cache_dir())
         else:   # a caller-set one too: git_env copied os.environ (Codex 11-25 d220eeef F1)
             env.pop(CACHE_DIR_ENV, None)
-        return subprocess.run([sys.executable, str(wt / "tools" / "mutation_check.py")]
-                              + child_argv, cwd=str(wt), env=env).returncode
+        return _run_forwarding_signals(
+            [sys.executable, str(wt / "tools" / "mutation_check.py")] + child_argv,
+            cwd=str(wt), env=env)
     finally:
         rm = subprocess.run(["git", "worktree", "remove", "--force", str(wt)],
                             capture_output=True, text=True, cwd=str(REPO_ROOT), env=git_env)
@@ -2279,6 +2377,17 @@ def main() -> int:
                     help="measure every mutant in the file. The default measures only "
                          "mutants on lines changed against --base; the overnight sweep "
                          "(MUTATION_SWEEP_ACTIVE) defaults to the whole file.")
+    ap.add_argument("--changed-lines-only", action="store_true",
+                    help="measure ONLY the mutants on the target's changed lines against "
+                         "--base, never widening to the whole file when a mapped test, an "
+                         "imported sibling or fixture data changed. What the default would "
+                         "have widened for is recorded in scope.widen_skipped. As rule 10 "
+                         "mutation evidence (org ruling, 2026-11-25): the record counts on "
+                         "its own when widen_skipped is empty; when it is not, it counts "
+                         "only if the READY evidence gives a one-line reason per skipped "
+                         "item why that change cannot alter a changed-line verdict. Not "
+                         "with --whole-file; refused under the overnight sweep without "
+                         "--base.")
     ap.add_argument("--base", default=None,
                     help="git ref to diff against (default: merge-base of HEAD and "
                          "origin/main). Implies diff scope, even under the sweep.")
@@ -2299,6 +2408,13 @@ def main() -> int:
     ap.add_argument("--no-cache", action="store_true",
                     help="neither read nor write the verdict cache; wins over --cache")
     args = ap.parse_args()
+    if args.changed_lines_only and args.whole_file:
+        ap.error("--changed-lines-only and --whole-file are opposite scopes; pass one")
+    if args.changed_lines_only and not args.base and os.environ.get(SWEEP_ENV):
+        print(json.dumps({"status": "error", "code": "changed_lines_only_under_sweep",
+                          "message": "the overnight sweep measures the corpus; "
+                                     "--changed-lines-only needs an explicit --base there"}))
+        return 1
     # Honored from anywhere, a linked worktree included (FT:26, 2026-11-16). It used to be
     # skipped there, so the run mutated the caller's worktree in place and froze it (one
     # froze ~8 h). The child never sees the flag (worktree_argv drops it in any
@@ -2390,11 +2506,14 @@ def main() -> int:
     allow = load_allowlist()
 
     catalog = []
+    keys = unique_keys(rel, tree, src_lines, points)
     for lineno, col, op in points:
         line = src_lines[lineno - 1] if 0 < lineno <= len(src_lines) else ""
         func = enclosing_function(tree, lineno)
+        key = keys[(lineno, col, op)]
+        occ = key.rsplit("::", 1)[1].partition(".")[2]
         catalog.append({"line": lineno, "col": col, "op": op, "func": func,
-                        "key": mutant_key(rel, func, op, line),
+                        "key": key, "key_occurrence": int(occ) if occ else 1,
                         "source": line.strip()[:100]})
 
     # Scope: the whole file, or the mutants on lines the diff touched (resolve_scope).
@@ -2411,7 +2530,7 @@ def main() -> int:
                            f"({why}); measuring the whole file"}
     pending_tests = scope.get("pending_tests")
     full_catalog = catalog
-    if scope["mode"] == "diff" and not pending_tests:
+    if scope["mode"] in ("diff", "changed_lines_only") and not pending_tests:
         functions = _function_spans(tree)
         catalog = [e for e in catalog
                    if in_scope(spans.get((e["line"], e["col"], e["op"]),
@@ -2422,9 +2541,11 @@ def main() -> int:
     changed_ids: set[int] = set()   # mutants on changed lines (changed_first)
     if scope.get("tests_changed"):
         scope_out["tests_changed"] = scope["tests_changed"]
-    if scope["mode"] == "diff":
+    if scope["mode"] in ("diff", "changed_lines_only"):
         scope_out["changed_lines"] = sorted(scope["changed"])
         scope_out["deleted_after_lines"] = sorted(scope["deleted_at"])
+    if scope["mode"] == "changed_lines_only":
+        scope_out["widen_skipped"] = scope["widen_skipped"]
     if scope["mode"] == "whole_file" and scope["reason"] != "--whole-file" \
             and not os.environ.get(SWEEP_ENV):
         print(f"mutation_check: scope: whole file ({scope['reason']})",
