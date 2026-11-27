@@ -38,9 +38,12 @@ real-data run before any record is written into a home).
 
 EXIT CODES (absence is never printed as a value)
 ------------------------------------------------
-  get:      0 value printed | 3 NO RECORD (not evidence the fact is false) | 2 error
-  validate: 0 every record parses | 1 a malformed record | 2 a home cannot be read
-  sweep:    0 no stale form | 1 stale forms listed | 2 a scope is empty, unreadable or sealed
+  get:      0 value printed | 3 NO RECORD (not evidence the fact is false)
+            | 2 error: a malformed or conflicting record, or a home unreadable or sealed
+  validate: 0 every record parses and none conflicts | 1 a malformed or conflicting record
+            (listed in its JSON) | 2 a home or the records file is unreadable or sealed
+  sweep:    0 no stale form | 1 stale forms listed | 2 a scope is empty, unreadable or
+            sealed, no records, or a malformed or conflicting record
 
 Every real key and value lives in gitignored files; this file holds only generic code.
 """
@@ -380,9 +383,13 @@ def judge_text(text: str, records: dict, *, path: str, audience: str, as_at: dat
 
 
 def owner_name(root: Path) -> str:
-    """The owner's name from data/profile.md's Name line ('' when absent)."""
+    """The owner's name from data/profile.md's Name line ('' when absent). Raises
+    Unreadable when the profile resolves under a sealed tree: it is read in --records mode
+    too, where the homes are not loaded and guarded (Codex follow-up F1, P0)."""
+    path = Path(root) / "data/profile.md"
+    _guard_sealed([path], Path(root))
     try:
-        text = (Path(root) / "data/profile.md").read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError):
         return ""
     m = re.search(r"^\s*-\s*\*\*Name:\*\*\s*(.+?)\s*$", text, re.M)
@@ -396,28 +403,70 @@ COPY_SCOPE = ("data/profile.md", "data/project-index.md", "data/company-notes/*.
 ARTIFACT_NAMES = ("*cover-letter*", "*prep*", "*cheat-sheet*", "*soft-answers*",
                   "*outreach-brief*", "*cold-outreach*", "*follow-up*", "*draft-email*")
 ARTIFACT_EXCLUDE = ("output/analysis/",)
+LIVE_ARTIFACTS = ("coaching/coached-answers/",)   # rehearsed text, not a dated snapshot
 ARTIFACT_SUFFIXES = (".md", ".yaml", ".yml", ".txt")
 MMDDYY = re.compile(r"^(\d{2})(\d{2})(\d{2})-")
 
 
+_HOOKS: dict = {}
+
+
+def _sealed_hook(root: Path):
+    """tools/check_sealed_read.py, loaded read-only with SEAL_REPO_ROOT set to `root`, so its
+    own module-level resolution (the in-repo tree, the -sealed sibling, the vault folders and
+    every fail-closed fallback, judged from the main checkout) is computed for this root.
+    One source of truth: facts.py keeps no copy of those rules (org dc ruling; Codex/Fable
+    7.F2, 9.F1, 10.F1, 10.F2 were all drift between a copy and the hook). The guard file is
+    imported, never edited. Cached per root."""
+    key = str(root)
+    if key not in _HOOKS:
+        import importlib.util
+        path = Path(__file__).resolve().parent / "check_sealed_read.py"
+        old = os.environ.get("SEAL_REPO_ROOT")
+        os.environ["SEAL_REPO_ROOT"] = key
+        try:
+            spec = importlib.util.spec_from_file_location(f"_facts_sealed_{len(_HOOKS)}", path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            # _root() reads the variable on every call, so take it inside the same window
+            # the module-level constants were computed in.
+            base = Path(mod._root())
+        finally:
+            if old is None:
+                os.environ.pop("SEAL_REPO_ROOT", None)
+            else:
+                os.environ["SEAL_REPO_ROOT"] = old
+        _HOOKS[key] = (mod, base)
+    return _HOOKS[key]
+
+
 def sealed_roots(root: Path) -> list[Path]:
-    """Paths no scope may reach: the in-repo sealed tree and the -sealed sibling of the main
-    checkout (the same derivation tools/check_sealed_read.py and backup-data.sh use)."""
-    root = Path(root).resolve()
+    """Paths no scope may reach, exactly as check_sealed_read.py computes them for this root:
+    its in-repo sealed tree and -sealed sibling (both of the main checkout) and its vault
+    folders, including the vault's data/ whenever the hook fails closed. Raises Unreadable
+    when the hook cannot be loaded: no sealed set means nothing may be read."""
     try:
-        import vault_paths
-        main = vault_paths.main_checkout(root)
-    except Exception:  # noqa: BLE001 -- fall back to the root itself
-        main = root
-    return [(root / "data/project-background").resolve(),
-            (main.parent / (main.name + "-sealed")).resolve()]
+        hook, base = _sealed_hook(Path(root).resolve())
+        roots =[base / hook.SEALED_REL, base.parent / hook.SEALED_HOME]
+        roots += [base / d for d in hook.VAULT_DIRS]
+    except Exception as e:  # noqa: BLE001 -- fail closed
+        raise Unreadable(f"cannot load the sealed-root rules from check_sealed_read.py: {e}")
+    return sorted({p.resolve() for p in roots})
+
+
+def _under(path: Path, root: Path) -> bool:
+    """path is root or inside it, compared case-insensitively: this filesystem folds case,
+    and so does check_sealed_read.py, so a case-variant spelling is the same folder
+    (Fable 7.F1). Folding can only over-block, never let a sealed path through."""
+    p, r = str(path).casefold(), str(root).casefold().rstrip("/")
+    return p == r or p.startswith(r + "/")
 
 
 def _guard_sealed(paths: list[Path], root: Path) -> None:
     blocked = sealed_roots(root)
     for p in paths:
         rp = p.resolve()
-        if any(rp == b or b in rp.parents for b in blocked):
+        if any(_under(rp, b) for b in blocked):
             raise Unreadable(f"scope reaches a sealed path: {p}")
 
 
@@ -497,8 +546,11 @@ def sweep(root: Path, today: date, records_file: Path | None = None,
                 continue
             rel = os.path.relpath(p, root)
             aud = _audience(p)
-            # Defects: judged as at the file's own date (a form correct when written is not one).
-            as_at = today if name == "copies" else file_date(p)
+            # Defects: a dated artifact is judged as at its own date (a form correct when it
+            # was written is not a defect). Copies and coached answers are live documents,
+            # judged as at today (Fable narrow 5.F1).
+            live = name == "copies" or rel.replace(os.sep, "/").startswith(LIVE_ARTIFACTS)
+            as_at = today if live else file_date(p)
             for h in judge_text(text, cur, path=rel, audience=aud, as_at=as_at, owner=owner):
                 (counted if h["held"] is None else held).append(h)
             # Whole-artifact rule at write time: would the next edit of this file block?
@@ -615,7 +667,7 @@ def main(argv=None) -> int:
     root = Path(args.repo_root).resolve()
     try:
         return {"get": _cmd_get, "validate": _cmd_validate, "sweep": _cmd_sweep}[args.cmd](args, root)
-    except (Unreadable, Conflict, ValueError) as e:   # Conflict: Fable F4, never exit 1
+    except (Unreadable, Conflict, ValueError) as e:   # a conflict is an error (Fable F4); validate reports one as exit 1
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
 

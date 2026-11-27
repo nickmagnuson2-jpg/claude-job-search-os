@@ -556,3 +556,155 @@ def test_coached_answers_are_judged_once_as_artifacts_not_also_as_copies(tmp_pat
     arts = {h["path"] for h in rep["scopes"]["artifacts"]["hits"]}
     assert "coaching/coached-answers/pitch.md" in arts
     assert "coaching/coached-answers/pitch.md" not in copies
+
+
+# ---------------------------------------------------------------- Fable narrow 5.F1, 5.F2
+
+def test_a_live_coached_answer_with_a_superseded_form_is_drift_whatever_its_file_date(tmp_path):
+    root = make_sweep_repo(tmp_path)
+    pitch = root / "coaching/coached-answers/pitch.md"
+    pitch.write_text("I was Widget Boss there.\n")
+    old = 1756684800          # 2025-09-01, before the form's until date
+    os.utime(pitch, (old, old))
+    rep = facts.sweep(root, date(2026, 11, 27))["scopes"]["artifacts"]
+    hits = [h for h in rep["hits"] if h["path"] == "coaching/coached-answers/pitch.md"]
+    assert [h["kind"] for h in hits] == ["superseded"]
+    # A dated artifact of the same age is still judged at its own date (not a defect).
+    assert "output/acme/090126-acme-cheat-sheet.md" not in {h["path"] for h in rep["hits"]}
+
+
+def make_worktree(tmp_path) -> tuple:
+    """A main checkout with a linked worktree, as git lays them out (a .git FILE in the
+    worktree pointing at <main>/.git/worktrees/<name>)."""
+    main = tmp_path / "repo"
+    (main / ".git/worktrees/wt").mkdir(parents=True)
+    wt = tmp_path / "wt"
+    make_sweep_repo(tmp_path / "wtbuild")
+    (tmp_path / "wtbuild/repo").rename(wt)
+    (wt / ".git").write_text(f"gitdir: {main}/.git/worktrees/wt\n")
+    return main, wt
+
+
+def test_from_a_worktree_the_main_checkouts_in_repo_sealed_tree_is_refused(tmp_path):
+    main, wt = make_worktree(tmp_path)
+    sealed = main / "data/project-background"
+    sealed.mkdir(parents=True)
+    rf = sealed / "records.md"
+    rf.write_text(TITLE + "\n")
+    assert sealed.resolve() in facts.sealed_roots(wt)
+    with pytest.raises(facts.Unreadable, match="sealed"):
+        facts.load(wt, rf)
+    r = run(wt, "--records", str(rf), "get", "role_title.acme")
+    assert r.returncode == 2 and r.stdout == ""
+
+
+def test_a_profile_symlinked_into_a_sealed_tree_is_never_read_for_the_owner_name(tmp_path):
+    # Codex follow-up F1 (P0): in --records mode the homes are not loaded, so owner_name()
+    # was the only read of data/profile.md, and it had no sealed guard.
+    main, wt = make_worktree(tmp_path)
+    sealed = main / "data/project-background"
+    sealed.mkdir(parents=True)
+    (sealed / "profile.md").write_text("# Profile\n\n- **Name:** Sealed Name\n")
+    (wt / "data/profile.md").unlink()
+    os.symlink(sealed / "profile.md", wt / "data/profile.md")
+    rf = tmp_path / "records.md"
+    rf.write_text(TITLE + "\n")
+    with pytest.raises(facts.Unreadable, match="sealed"):
+        facts.owner_name(wt)
+    with pytest.raises(facts.Unreadable, match="sealed"):
+        facts.sweep(wt, date(2026, 11, 27), rf)
+    r = run(wt, "--records", str(rf), "sweep")
+    assert r.returncode == 2 and r.stdout == "" and "Sealed Name" not in r.stderr
+
+
+# ---------------------------------------------------------------- Fable 7.F1, 7.F2 (org ruling)
+
+def _case_insensitive_fs(p: Path) -> bool:
+    probe = p / "CaseProbe"
+    probe.write_text("x")
+    return (p / "caseprobe").exists()
+
+
+def test_a_sealed_root_spelled_in_another_case_is_refused(tmp_path):
+    if not _case_insensitive_fs(tmp_path):
+        pytest.skip("case-variant paths only reach the file on a case-insensitive filesystem")
+    root = make_sweep_repo(tmp_path)
+    (tmp_path / "repo-sealed").mkdir()
+    (tmp_path / "repo-sealed/x.md").write_text("sealed\n")
+    variant = tmp_path / "REPO-Sealed" / "x.md"
+    assert variant.exists()
+    with pytest.raises(facts.Unreadable, match="sealed"):
+        facts.sweep(root, date(2026, 11, 27), extra_copies=[str(variant)])
+
+
+def _vault(tmp_path, root, rels):
+    vault = tmp_path / "vault"
+    (vault / "data/private").mkdir(parents=True)
+    (vault / "data/open").mkdir(parents=True)
+    (vault / "data/private/x.md").write_text("vault sealed\n")
+    (vault / "data/open/y.md").write_text("Pat, fine.\n")
+    (root / "tools").mkdir(exist_ok=True)
+    (root / "tools/.personal-vault.conf").write_text(f"{vault}\n")
+    if rels is not None:
+        (root / "tools/.sealed-folders.conf").write_text(rels)
+    return vault
+
+
+def test_a_copy_under_a_vault_sealed_folder_is_refused(tmp_path, monkeypatch):
+    monkeypatch.delenv("PERSONAL_VAULT_ROOT", raising=False)
+    root = make_sweep_repo(tmp_path)
+    vault = _vault(tmp_path, root, "data/private\n")
+    assert (vault / "data/private").resolve() in facts.sealed_roots(root)
+    with pytest.raises(facts.Unreadable, match="sealed"):
+        facts.sweep(root, date(2026, 11, 27), extra_copies=[str(vault / "data/private/x.md")])
+    facts.sweep(root, date(2026, 11, 27), extra_copies=[str(vault / "data/open/y.md")])
+
+
+def test_with_no_sealed_folder_list_the_whole_vault_data_is_sealed(tmp_path, monkeypatch):
+    monkeypatch.delenv("PERSONAL_VAULT_ROOT", raising=False)
+    root = make_sweep_repo(tmp_path)
+    vault = _vault(tmp_path, root, None)
+    with pytest.raises(facts.Unreadable, match="sealed"):
+        facts.sweep(root, date(2026, 11, 27), extra_copies=[str(vault / "data/open/y.md")])
+
+
+def test_a_malformed_sealed_folder_list_fails_closed_too(tmp_path, monkeypatch):
+    monkeypatch.delenv("PERSONAL_VAULT_ROOT", raising=False)
+    root = make_sweep_repo(tmp_path)
+    vault = _vault(tmp_path, root, "../outside\n")
+    with pytest.raises(facts.Unreadable, match="sealed"):
+        facts.sweep(root, date(2026, 11, 27), extra_copies=[str(vault / "data/open/y.md")])
+
+
+def test_a_configured_vault_folder_missing_on_disk_fails_closed(tmp_path, monkeypatch):
+    # Codex final round F1 (P0): check_sealed_read treats a listed folder that does not exist
+    # as "cannot tell which folder is sealed" and seals the vault's whole data/.
+    monkeypatch.delenv("PERSONAL_VAULT_ROOT", raising=False)
+    root = make_sweep_repo(tmp_path)
+    vault = _vault(tmp_path, root, "data/privte\n")     # a typo: no such folder
+    with pytest.raises(facts.Unreadable, match="sealed"):
+        facts.sweep(root, date(2026, 11, 27), extra_copies=[str(vault / "data/open/y.md")])
+
+
+def test_a_listed_vault_folder_outside_data_stays_sealed_when_another_is_missing(tmp_path, monkeypatch):
+    # Fable final 10.F1: the fallback must ADD the vault's data/ to the listed folders, as
+    # check_sealed_read does, never replace them.
+    monkeypatch.delenv("PERSONAL_VAULT_ROOT", raising=False)
+    root = make_sweep_repo(tmp_path)
+    vault = _vault(tmp_path, root, "notes/private\ndata/typo\n")
+    (vault / "notes/private").mkdir(parents=True)
+    (vault / "notes/private/z.md").write_text("vault sealed\n")
+    with pytest.raises(facts.Unreadable, match="sealed"):
+        facts.sweep(root, date(2026, 11, 27), extra_copies=[str(vault / "notes/private/z.md")])
+
+
+def test_facts_takes_its_sealed_roots_from_the_hook_not_a_copy(tmp_path, monkeypatch):
+    # One source of truth (org dc ruling): with no vault configured, the hook fails closed to
+    # ../personal/data, and facts.py must too (Fable final 10.F2).
+    monkeypatch.delenv("PERSONAL_VAULT_ROOT", raising=False)
+    root = make_sweep_repo(tmp_path)
+    (tmp_path / "personal/data").mkdir(parents=True)
+    (tmp_path / "personal/data/n.md").write_text("vault\n")
+    with pytest.raises(facts.Unreadable, match="sealed"):
+        facts.sweep(root, date(2026, 11, 27), extra_copies=[str(tmp_path / "personal/data/n.md")])
+    assert not hasattr(facts, "_vault_sealed")
