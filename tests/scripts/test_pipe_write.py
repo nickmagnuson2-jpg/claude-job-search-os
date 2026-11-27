@@ -315,6 +315,22 @@ def test_remove_moves_to_archived(tmp_path):
     assert "Withdrawn" in archived_cols[6]  # date appended to notes
 
 
+def test_remove_stamps_date_updated_with_the_close_date(tmp_path):
+    """Closing a row is a pipeline move, so the archived row's Date Updated is today,
+    not the row's last active date (fixture: 2026-01-01). Nick, 2026-11-25."""
+    from datetime import date
+    write_fixture(tmp_path, "data/job-pipeline.md", PIPELINE_WITH_ROW)
+    result, code = run_pipe_write(
+        "--repo-root", str(tmp_path), "remove", "Acme Corp", "--stage", "Rejected"
+    )
+    assert code == 0, result
+    lines = (tmp_path / "data/job-pipeline.md").read_text(encoding="utf-8").splitlines()
+    archived_start = next(i for i, l in enumerate(lines) if l.strip() == "## Archived")
+    row = next(l for l in lines[archived_start:] if l.startswith("| Acme Corp |"))
+    cols = [c.strip() for c in row.strip("|").split("|")]
+    assert cols[3] == date.today().strftime("%Y-%m-%d")
+
+
 def test_remove_stage_records_the_real_terminal_outcome(tmp_path):
     """--stage lets the archived row say what actually happened.
 
@@ -1127,7 +1143,9 @@ def test_remove_archives_the_row_with_its_cells(tmp_path):
     days |= _s6c_today_window()
     assert code == 0, out
     cols = _s6c_row(tmp_path, "Acme Corp")
-    assert cols[:4] == ["Acme Corp", "Director", "Withdrawn", "2026-01-01"]
+    assert cols[:3] == ["Acme Corp", "Director", "Withdrawn"]
+    # Date Updated becomes the close date on archive (Nick, 2026-11-25), not the old 2026-01-01.
+    assert cols[3] in days
     assert cols[4:6] == ["Call Jane", "cv-acme.pdf"]
     assert cols[6] in {f"warm lead - Withdrawn {d}" for d in days}
     assert cols[7] == "https://acme.example/jobs/1"

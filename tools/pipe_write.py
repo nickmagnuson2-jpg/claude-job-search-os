@@ -375,7 +375,7 @@ def cmd_remove(args, pipeline_path: Path, dry_run: bool) -> None:
         cols[0],
         cols[1] if len(cols) > 1 else "—",
         stage,
-        cols[3] if len(cols) > 3 else today,
+        today,  # closing a row is a pipeline move: Date Updated is the close date (Nick, 2026-11-25)
         cols[4] if len(cols) > 4 else "—",
         cols[5] if len(cols) > 5 else "—",
         new_notes,

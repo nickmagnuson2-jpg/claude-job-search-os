@@ -116,7 +116,8 @@ def test_the_header_row_is_never_the_target_of_update_or_remove(tmp_path):
 
 # --- remove ---------------------------------------------------------------------------
 
-ARCHIVED_ACME = (f"| Acme Corp | PM | Withdrawn | 2026-01-02 | Follow up Fri | cv-acme.pdf "
+# Date Updated becomes the close date on archive (Nick, 2026-11-25).
+ARCHIVED_ACME = (f"| Acme Corp | PM | Withdrawn | {TODAY} | Follow up Fri | cv-acme.pdf "
                  f"| Met at event - Withdrawn {TODAY} | https://acme.example/job |")
 
 
