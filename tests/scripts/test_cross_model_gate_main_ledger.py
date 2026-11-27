@@ -136,6 +136,54 @@ def test_a_distinct_main_run_in_the_same_second_is_merged(repos):
     assert corrupt == 0 and len(rows) == 2
 
 
+def _fixed_p0():
+    f = _open_p0()
+    f[0]["disposition"] = "fixed"
+    return f
+
+
+def test_a_distinct_main_run_with_identical_findings_keeps_its_p0(repos):
+    """Codex 11-27 s2d 5.F1 (P0): row_identity alone cannot tell apart two runs whose
+    findings are identical (codex_verify.mirror_to_main says the same, r2 F1). A main run
+    in the same second with the same report, model and finding, still open there, was
+    taken for this worktree's mirror and its P0 dropped. A main row is this worktree's
+    own run only if it names this worktree (codex_verify.is_mirror_of)."""
+    main, wt = repos
+    _row(wt, findings=_fixed_p0())
+    _row(main, findings=_open_p0())                         # main-native: names no worktree
+    assert len(g.open_p0_against(wt, {PATH})) == 1
+    assert g.check(wt, CHANGE, since=0).blocked is True
+
+
+def test_an_identical_run_mirrored_from_another_worktree_is_merged(repos, tmp_path):
+    main, wt = repos
+    _row(wt, findings=_fixed_p0())
+    _row(main, findings=_open_p0(), worktree=str(tmp_path / "other-review-wt"))
+    rows, corrupt, _ = g.read_gate_ledger(wt)
+    assert corrupt == 0 and len(rows) == 2
+    assert len(g.open_p0_against(wt, {PATH})) == 1
+
+
+def test_a_mirror_whose_run_number_names_another_run_is_not_ours(repos):
+    """worktree_run is the run's position in this worktree's ledger; a mirror that claims
+    a position holding a different run is not that run's copy, so its P0 counts."""
+    main, wt = repos
+    _row(wt, report="output/analysis/unrelated.md", paths=["docs/x.md"])    # run 1
+    _row(wt, findings=_fixed_p0())                                          # run 2
+    _row(main, findings=_open_p0(), worktree=str(wt), worktree_run=1)
+    assert len(g.open_p0_against(wt, {PATH})) == 1
+
+
+def test_a_mirror_with_its_run_number_is_still_ours(repos):
+    main, wt = repos
+    _row(wt, report="output/analysis/unrelated.md", paths=["docs/x.md"])    # run 1
+    _row(wt, findings=_fixed_p0())                                          # run 2
+    _row(main, findings=_open_p0(), worktree=str(wt), worktree_run=2)       # stale mirror
+    assert g.open_p0_against(wt, {PATH}) == []
+    rows, _, _ = g.read_gate_ledger(wt)
+    assert len(rows) == 2
+
+
 def test_a_malformed_main_line_does_not_unmatch_the_runs_after_it(repos):
     """Main's rows are numbered as collect() numbers them; a line that does not parse is
     skipped, and the stale mirror after it is still recognised as this worktree's run."""
