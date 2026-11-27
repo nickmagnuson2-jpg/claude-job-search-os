@@ -894,3 +894,15 @@ def test_validate_reports_conflicts_and_keys_as_json(tmp_path):
     out = _json.loads(r.stdout)
     assert out["keys"] == ["role_title.acme"] and len(out["conflicts"]) == 1
     assert out["records"] == 2
+
+
+def test_sweep_with_a_records_file_fails_closed_when_the_first_copy_is_unreadable(tmp_path):
+    # Codex narrow 1 F1: with --records, load() never reads data/profile.md, so profile.md
+    # (the first copy) can be the first file the sweep fails to read. That must still be
+    # Unreadable naming the file, not a crash on text from no file.
+    root = make_sweep_repo(tmp_path)
+    rf = tmp_path / "records.md"
+    rf.write_text(TITLE + "\n")
+    (root / "data/profile.md").write_bytes(b"- **Name:** Pat Example\n\xff\xfe\n")
+    with pytest.raises(facts.Unreadable, match="could not be read"):
+        facts.sweep(root, date(2026, 11, 27), rf)
