@@ -721,23 +721,33 @@ def import_inbox(repo_root: Path, inbox: Path, remove: bool = False) -> dict:
         merged += r.get("notes_merged", 0)
     removed = 0
     if remove and spans:
+        # Remove only what was imported: the exact text of each block read above. The
+        # transform runs on the inbox as it is NOW, and a drip block written after the
+        # read was never queued, so dropping every block found now lost it (Codex r2 F1).
+        read_lines = text.splitlines(keepends=True)
+        imported = {"".join(read_lines[a:b]) for a, b in spans}
+        dropped = [0]
+
         def transform(t: str) -> str:
             _, sp = parse_inbox_blocks(t)
             ls = t.splitlines(keepends=True)
             drop = set()
+            dropped[0] = 0
             # Only the lines this parser understood: the header, the review-gated marker,
             # the entry lines it imported, and blank lines. Anything else in a span stays
             # (review 2026-11-17, Codex/Grok F3).
             for a, b in sp:
+                if "".join(ls[a:b]) not in imported:
+                    continue
+                dropped[0] += 1
                 for k in range(a, b):
                     line = ls[k].rstrip("\n")
                     if (k == a or not line.strip() or line.startswith("<!-- review-gated")
                             or _COMPANY_LINE.match(line) or _PERSON_LINE.match(line)):
                         drop.add(k)
             return "".join(l for k, l in enumerate(ls) if k not in drop)
-        before = len(spans)
         inbox_lock.atomic_update(inbox, transform)
-        removed = before
+        removed = dropped[0]
     return {"blocks": len(spans), "entries": len(entries), "added": added,
             "skipped": skipped, "notes_merged": merged, "blocks_removed": removed}
 

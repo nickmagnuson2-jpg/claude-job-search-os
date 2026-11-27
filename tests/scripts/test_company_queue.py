@@ -895,3 +895,34 @@ def test_a_skipped_duplicate_never_overwrites_an_existing_note(tmp_path):
            [{"name": "BEACON", "score": 5, "inbox_note": "second note"}], "2026-11-18")
     [beacon] = cq.load(tmp_path)["pending"]
     assert beacon["inbox_note"] == "first note | second note"
+
+
+def test_remove_never_deletes_a_block_that_arrived_after_the_import_read(tmp_path, monkeypatch):
+    """Codex r2 F1 (P0): import read the inbox, queued what it read, then its removal
+    transform reparsed the CURRENT inbox and dropped every drip block it found there,
+    including one a writer added in between. That block was never queued, so it was lost.
+    Removal must touch only blocks whose text is exactly what was imported."""
+    inbox = tmp_path / "inbox.md"
+    inbox.write_text(INBOX, encoding="utf-8")
+    late = ("## 2026-11-17 | Agent drip: lane-a (company)\n"
+            "<!-- review-gated: accept via /act or /networking -->\n"
+            "- **Newco** - arrived during the import (score 6) [Peninsula]\n\n")
+    real_add = cq.add
+    fired = []
+
+    def add_then_a_writer_prepends(*a, **k):
+        out = real_add(*a, **k)
+        if not fired:
+            fired.append(1)
+            text = inbox.read_text(encoding="utf-8")
+            head, rest = text.split("\n", 1)
+            inbox.write_text(head + "\n\n" + late + rest, encoding="utf-8")
+        return out
+
+    monkeypatch.setattr(cq, "add", add_then_a_writer_prepends)
+    out = cq.import_inbox(tmp_path, inbox, remove=True)
+    left = inbox.read_text(encoding="utf-8")
+    assert "Newco" in left and "arrived during the import" in left
+    assert "Acme" not in left and "Casey Doe" not in left
+    assert out["blocks_removed"] == 2
+    assert "Newco" not in {e["name"] for e in cq.load(tmp_path)["pending"]}
