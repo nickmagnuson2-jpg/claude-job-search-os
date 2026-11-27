@@ -412,7 +412,14 @@ def owner_name(root: Path) -> str:
 
 # Coached answers are judged once, in the artifact scope (Fable F7).
 COPY_SCOPE = ("data/profile.md", "data/project-index.md", "data/company-notes/*.md")
-ARTIFACT_NAMES = ("*cover-letter*", "*prep*", "*cheat-sheet*", "*soft-answers*",
+# "*cheatsheet*": /generate-cv names cheat sheets MMDDYY-[role]-cheatsheet.md, no hyphen
+# (Fable staged-hook review F1, P0: 60 real files were outside the scope).
+# "*application-answers*": /apply's employer-facing answers (Fable F2, folded in by org ruling).
+# Both names were misses of a hand-kept copy of the filenames skills write; the source fix
+# is one registry of skill output names that the skills and this module both read (KB
+# workstream; not built here).
+ARTIFACT_NAMES = ("*cover-letter*", "*prep*", "*cheat-sheet*", "*cheatsheet*", "*soft-answers*",
+                  "*application-answers*",
                   "*outreach-brief*", "*cold-outreach*", "*follow-up*", "*draft-email*")
 ARTIFACT_EXCLUDE = ("output/analysis/",)
 LIVE_ARTIFACTS = ("coaching/coached-answers/",)   # rehearsed text, not a dated snapshot

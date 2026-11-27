@@ -759,3 +759,24 @@ def test_cli_sweep_reads_the_registered_list_and_extra_copies(tmp_path):
     (root / "memory-copy.md").write_text("Pat was the Widget Intern.\n")
     r = run(root, "sweep", "--today", "2026-11-27")
     assert r.returncode == 1 and "memory-copy.md" in r.stdout
+
+
+def test_generate_cv_cheatsheet_naming_is_in_the_artifact_scope(tmp_path):
+    # Fable staged-hook review F1 (P0): /generate-cv writes MMDDYY-[role]-cheatsheet.md (no
+    # hyphen); the glob only matched *cheat-sheet*, so most real cheat sheets were never read.
+    root = make_sweep_repo(tmp_path)
+    p = root / "output/acme/112726-ops-lead-cheatsheet.md"
+    p.write_text("Pat was the Widget Intern.\n")
+    assert p in facts.artifact_scope(root, "Pat Example")
+    rep = facts.sweep(root, date(2026, 11, 27))
+    assert "output/acme/112726-ops-lead-cheatsheet.md" in {
+        h["path"] for h in rep["scopes"]["artifacts"]["hits"]}
+
+
+def test_apply_application_answers_are_in_the_artifact_scope(tmp_path):
+    # Fable staged-hook review F2 (folded in by org ruling): /apply writes employer-facing
+    # answers to output/<slug>/MMDDYY-application-answers.md.
+    root = make_sweep_repo(tmp_path)
+    p = root / "output/acme/112726-application-answers.md"
+    p.write_text("I was the Widget Intern there.\n")
+    assert p in facts.artifact_scope(root, "Pat Example")
