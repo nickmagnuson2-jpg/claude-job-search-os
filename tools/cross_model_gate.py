@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -46,6 +47,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import inbox_lock  # noqa: E402
+import vault_paths  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LEDGER_NAME = ".cross-model-ledger.jsonl"
@@ -393,6 +395,65 @@ def read_ledger_with_health(repo_root: Path) -> tuple[list[dict], int]:
     return rows, corrupt
 
 
+def main_checkout_of(repo_root: Path) -> Path | None:
+    """The main checkout when repo_root is a linked worktree; None when it is not one.
+    Raises RuntimeError when a linked worktree's main checkout cannot be placed.
+
+    A fail-closed wrapper over vault_paths.main_checkout, the one locator (11-26 S4): that
+    function falls back to `root` on any failure, which suits a hook, but here a fallback
+    would read this worktree's own ledger as main's and let a push through, so a linked
+    worktree it cannot place raises instead. Used by read_gate_ledger and the preview."""
+    root = Path(repo_root).resolve()
+    if not (root / ".git").is_file():
+        return None
+    main = Path(vault_paths.main_checkout(root)).resolve()
+    if main == root:
+        raise RuntimeError(f"cannot place the main checkout of linked worktree {root}")
+    return main
+
+
+def read_gate_ledger(repo_root: Path) -> tuple[list[dict], int, str]:
+    """The rows the push gate judges: this checkout's ledger, plus, from a linked worktree,
+    the main checkout's (S2d, 2026-11-25).
+
+    WHY. The gate run from a branch's worktree read only that worktree's copy. A review run
+    from ANOTHER worktree at the same tree reached its own copy and main's mirror, never
+    this one, so the push was refused and both reviews were repeated (S5, tree 734f1e8f).
+    main's ledger is the copy codex_verify mirrors every review into and finding_write keeps
+    in step, dispositions included, so reading it is enough; nothing is copied. When a
+    main row is this worktree's own run's mirror (codex_verify.is_mirror_of), the
+    worktree's own row wins.
+
+    FAILS CLOSED: if main's ledger cannot be located, is missing or cannot be read, one
+    unreadable line is counted, which blocks, and the third value says why."""
+    rows, corrupt = read_ledger_with_health(repo_root)
+    try:
+        main = main_checkout_of(repo_root)
+    except (RuntimeError, OSError, subprocess.SubprocessError) as e:
+        return rows, corrupt + 1, f"the main checkout's ledger could not be located ({e})"
+    if main is None:
+        return rows, corrupt, ""
+    if not ledger_path(main).is_file():
+        return rows, corrupt + 1, f"the main checkout's ledger is missing ({ledger_path(main)})"
+    try:
+        main_rows, main_corrupt = read_ledger_with_health(main)
+    except (OSError, UnicodeDecodeError) as e:
+        return rows, corrupt + 1, f"the main checkout's ledger cannot be read ({e})"
+    # A main row is dropped only when it is this worktree's own run's mirror, judged by
+    # codex_verify.is_mirror_of: the identity plus the mirror's worktree and run number
+    # (Codex 11-27 1656.F1 and s2d 5.F1: a key without them let a distinct main run in the
+    # same second be dropped with its open P0). Imported here, as finding_write does,
+    # because codex_verify imports this module.
+    import codex_verify as cv
+    runs = cv.worktree_runs(repo_root)
+    # A waiver clears only its own push (land_branch.collect_backfill states the same rule):
+    # main's waiver rows never reach a worktree push (Fable 11-26 F1).
+    merged = rows + [r for r in main_rows
+                     if not cv.is_mirror_of(r, repo_root, runs) and not r.get("waived")]
+    note = f"the main checkout's ledger has {main_corrupt} unreadable line(s)" if main_corrupt else ""
+    return merged, corrupt + main_corrupt, note
+
+
 def read_ledger(repo_root: Path) -> list[dict]:
     """Rows, or a raise-free empty list. Callers MUST distinguish empty from satisfied."""
     return read_ledger_with_health(repo_root)[0]
@@ -682,14 +743,15 @@ def check(repo_root: Path, changes: list[tuple[str, int, int]],
     # Every path that CAUSED qualification must be covered. Coverage accumulates across
     # rows, so two focused reviews still clear a push that spans both.
     required = set(v.triggers or changed)
-    rows, corrupt = read_ledger_with_health(repo_root)
+    rows, corrupt, note = read_gate_ledger(repo_root)
 
     if corrupt:
         v.blocked = True
         v.changed = sorted(changed)
         v.message = (
             f"This push {v.reason}.\n"
-            f"The ledger has {corrupt} unreadable line(s), so its coverage is unknown "
+            + (f"{note}.\n" if note else "")
+            + f"The ledger has {corrupt} unreadable line(s), so its coverage is unknown "
             f"and it cannot be trusted to clear anything.\n\n"
             f"  Inspect:   tools/{LEDGER_NAME}\n"
             f"  Or waive:  CODEX_VERIFY_WAIVE='<why>' git push\n")
@@ -845,10 +907,10 @@ def check_chain(repo_root: Path, base: str, tip: str | None) -> Verdict | None:
         v.message = f"This push is a merge chain, but its diff could not be read: {e}"
         return v
     v.changed = changed
-    rows, corrupt = read_ledger_with_health(repo_root)
+    rows, corrupt, note = read_gate_ledger(repo_root)
     if corrupt:
         v.blocked = True
-        v.message = (f"This push {v.reason}.\nThe ledger has {corrupt} unreadable "
+        v.message = (f"This push {v.reason}.\n{(note + '.\n') if note else ''}The ledger has {corrupt} unreadable "
                      f"line(s), so its coverage is unknown and it cannot be trusted to "
                      f"clear anything.\n\n  Inspect:   tools/{LEDGER_NAME}\n"
                      f"  Or waive:  CODEX_VERIFY_WAIVE='<why>' git push\n")
@@ -940,8 +1002,33 @@ def open_p0_against(repo_root: Path, required: set) -> list[dict]:
     push does (2026-10-15).
     """
     import finding_write
-    return [f for f in finding_write.collect(repo_root, severity="P0")
-            if required & set(f["paths"]) and blocks_push(f)]
+    found = finding_write.collect(repo_root, severity="P0")
+    # From a linked worktree, main's mirror too (S2d, read_gate_ledger): a P0 open only in
+    # main still blocks; a run this worktree holds is judged from its own copy. If main
+    # cannot be placed, check() already blocks through read_gate_ledger's corrupt count.
+    try:
+        main = main_checkout_of(repo_root)
+    except (RuntimeError, OSError, subprocess.SubprocessError):
+        main = None
+    if main is not None and ledger_path(main).is_file():
+        # A main P0 is dropped only when its row is this worktree's own run's mirror
+        # (codex_verify.is_mirror_of: identity, worktree and run number). Codex 11-26 F1: keyed
+        # on report and recorded alone, a worktree Codex row hid main's Grok P0 that shared
+        # both; Codex 11-27 1656.F1 and s2d 5.F1: a distinct run in the same second, with
+        # other or identical findings, hid its P0 the same way. collect()
+        # numbers findings by ledger line, so main's rows are read with the same numbering;
+        # a line that does not parse keys as no run, and its P0s stay counted.
+        main_rows = {}
+        for i, line in enumerate(finding_write.read_lines(ledger_path(main)), start=1):
+            try:
+                main_rows[i] = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+        import codex_verify as cv     # the one mirror match; codex_verify imports this module
+        runs = cv.worktree_runs(repo_root)
+        found += [f for f in finding_write.collect(main, severity="P0")
+                  if not cv.is_mirror_of(main_rows.get(f["run"], {}), repo_root, runs)]
+    return [f for f in found if required & set(f["paths"]) and blocks_push(f)]
 
 
 def blocks_push(f: dict) -> bool:
@@ -961,6 +1048,7 @@ def _p0_block_text(blocking: list[dict]) -> str:
             f"--severity P0\n"
             f"  Resolve:   PYTHONIOENCODING=utf-8 python3 tools/finding_write.py set "
             f"<addr> --disposition fixed|rejected|parked --why '<reason>'\n"
+            f"             a park also needs --source-fix <branch> or --nick-deferred '<Nick's words>'\n"
             f"  A parked P0 still blocks until Nick accepts it:\n"
             f"             ! PYTHONIOENCODING=utf-8 python3 tools/finding_write.py accept "
             f"<addr> --why '<reason>'\n"

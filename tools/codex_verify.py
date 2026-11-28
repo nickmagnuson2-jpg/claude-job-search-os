@@ -56,6 +56,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from tools import cross_model_gate as gate  # noqa: E402
+import vault_paths  # noqa: E402  (tools/ is on sys.path via cross_model_gate)
 
 # Probes run HERE and pasted in as facts, so the model never needs to ask. Each one is a
 # question a sandboxed model has already answered wrongly, or would.
@@ -828,15 +829,9 @@ def _is_linked_worktree(root: Path) -> bool:
 def _real_ledger_roots() -> set[Path]:
     """This checkout and, when it is a linked worktree, its main checkout: the two real
     ledgers a test must never write. Read from the .git file, so no git call is needed."""
-    roots = {REPO_ROOT.resolve()}
-    git = REPO_ROOT / ".git"
-    if git.is_file():
-        text = git.read_text(encoding="utf-8")
-        if "gitdir:" in text:
-            gitdir = Path(text.split("gitdir:", 1)[1].strip()).resolve()
-            if gitdir.parent.name == "worktrees":     # <main>/.git/worktrees/<name>
-                roots.add(gitdir.parents[2])
-    return roots
+    # vault_paths.main_checkout is the one locator (11-26 S4); it returns REPO_ROOT itself
+    # when this is not a linked worktree, which the set absorbs.
+    return {REPO_ROOT.resolve(), Path(vault_paths.main_checkout(REPO_ROOT)).resolve()}
 
 
 # The fields of a finding that no disposition changes. A review row's identity is its
@@ -854,6 +849,48 @@ def findings_signature(row: dict) -> tuple:
 def row_identity(row: dict) -> tuple:
     """(report, model, recorded, findings signature): what makes two ledger rows one run."""
     return (row.get("report"), row.get("model"), row.get("recorded"), findings_signature(row))
+
+
+def worktree_runs(repo_root: Path) -> dict:
+    """{run number: row_identity} for this checkout's ledger, numbered as finding_write
+    numbers runs and as mirror_to_main records worktree_run. A line that does not parse
+    keeps its number and maps to no run."""
+    from tools import finding_write as _fw
+    runs = {}
+    for i, line in enumerate(_fw.read_lines(gate.ledger_path(Path(repo_root))), start=1):
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict):
+            runs[i] = row_identity(row)
+    return runs
+
+
+def is_mirror_of(row: dict, repo_root: Path, runs: dict) -> bool:
+    """Is this main-ledger row the mirror of one of this worktree's own runs?
+
+    The reading side of mirror_to_main's match. row_identity alone cannot tell apart two
+    runs with identical content (r2 F1; Codex 11-27 s2d 5.F1, where a distinct main run
+    was taken for a mirror and its open P0 dropped). A mirror names its worktree and,
+    since Part B amendment 2, its run number there. Anything not shown to be ours is
+    another run: the push gate then counts it, so every doubt falls toward a refusal.
+    `runs` is worktree_runs(repo_root)."""
+    wt = row.get("worktree")
+    if not isinstance(wt, str) or not wt:
+        return False
+    try:
+        if Path(wt).resolve() != Path(repo_root).resolve():
+            return False
+    except (OSError, ValueError, RuntimeError):
+        return False
+    ident = row_identity(row)
+    run = row.get("worktree_run")
+    if run is None:                   # mirrored before worktree_run existed
+        return ident in runs.values()
+    if not isinstance(run, int) or isinstance(run, bool):
+        return False                  # a malformed number names no run of ours
+    return runs.get(run) == ident
 
 
 def mirror_to_main(repo_root: Path, report: Path, row: dict,

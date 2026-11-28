@@ -140,13 +140,15 @@ def test_record_in_the_main_checkout_still_writes_main(main_and_worktree):
     assert len(_rows(main / AUDIT)) == 1
 
 
-def test_the_library_read_the_push_guard_imports_stays_on_its_root(main_and_worktree):
-    """land_branch.preview_gate runs the hook in a linked worktree whose ledger is main's
-    plus backfill rows; the guard must read that copy, not the real main."""
+def test_the_push_guard_read_from_a_worktree_sees_a_record_held_only_by_main(main_and_worktree):
+    """S2d (2026-11-25), replacing the stays-on-its-root contract: the guard run in a
+    linked worktree reads that worktree's copy AND main's (git's common dir), so a record
+    made from main covers a worktree push with nothing copied. land_branch.preview_gate's
+    throwaway worktree gets main's rows the same way plus its own backfill rows."""
     main, wt = main_and_worktree
     tree = _git(wt, "rev-parse", "HEAD^{tree}")
     (main / AUDIT).write_text(json.dumps(_clean_row(tree)) + "\n", encoding="utf-8")
-    assert rec.has_clean_record(wt, tree) is False
+    assert rec.has_clean_record(wt, tree) is True
     assert rec.has_clean_record(main, tree) is True
 
 
@@ -280,100 +282,41 @@ def test_a_separate_git_dir_holder_is_not_taken_for_the_main_checkout(tmp_path):
     assert not (holder / AUDIT).exists() and not (wt / AUDIT).exists()
 
 
-# ------------------------------------------- record from MAIN reaches branch worktrees (S4b)
-# L1, overnight 2026-11-24: the record was made from the main checkout, main's copy got the
-# row, and land_branch's dry run from the worktree refused, because the pre-push hook reads
-# the worktree's copy (prepush_pii_guard: rec.has_clean_record(root, tree), root = the
-# worktree's toplevel). has_clean_record(wt, tree) below is that same call.
+# ------------------------------------------- read side replaces the reach (S2d, 2026-11-25)
+# L1 (2026-11-24) was fixed on the write side by 045ca9bc: a record made from main was also
+# appended to every branch worktree at that tree. The guard now reads main's copy itself,
+# so the copy is gone; these pin the read side and that nothing is copied any more.
 
-def test_l1_record_from_main_reaches_the_branch_worktree_at_that_tree(main_and_worktree):
+def test_record_from_main_writes_main_only_and_the_worktree_push_sees_it(main_and_worktree):
     main, wt = main_and_worktree
-    tip = _git(wt, "rev-parse", "HEAD")
     tree = _git(wt, "rev-parse", "HEAD^{tree}")
-    r = _cli(main, "record", "--tip", tip, "--files", "2")
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert rec.has_clean_record(wt, tree) and rec.has_clean_record(main, tree)
-    assert _rows(wt / AUDIT) == _rows(main / AUDIT) and len(_rows(main / AUDIT)) == 1
-    assert json.loads(r.stdout)["worktrees"] == [str(wt)]
+    r = _cli(main, "record", "--tip", _git(wt, "rev-parse", "HEAD"), "--files", "3")
+    assert r.returncode == 0, r.stderr
+    assert "worktrees" not in json.loads(r.stdout)
+    assert not (wt / AUDIT).exists()                      # nothing copied into the worktree
+    assert rec.has_clean_record(wt, tree) is True          # the guard's call, from the worktree
 
 
-def test_record_from_main_skips_a_detached_worktree_at_the_same_tree(main_and_worktree, tmp_path):
-    """Org b7 condition 1: mutation and suite_record leave detached temp worktrees at
-    matching trees; rows written there outlive them."""
+def test_a_record_for_another_tree_does_not_cover(main_and_worktree):
     main, wt = main_and_worktree
-    det = tmp_path / "detached"
-    _git(main, "worktree", "add", "-q", "--detach", str(det), "HEAD")
-    tree = _git(main, "rev-parse", "HEAD^{tree}")
-    r = _cli(main, "record", "--tip", "HEAD")
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert not (det / AUDIT).exists()
-    assert json.loads(r.stdout)["worktrees"] == [str(wt)]
-    assert rec.has_clean_record(wt, tree)
+    (main / AUDIT).write_text(json.dumps(_clean_row("0" * 40)) + "\n", encoding="utf-8")
+    assert rec.has_clean_record(wt, _git(wt, "rev-parse", "HEAD^{tree}")) is False
 
 
-def test_record_from_main_leaves_a_branch_worktree_at_another_tree(main_and_worktree):
+def test_an_unreadable_main_ledger_fails_closed_from_a_worktree(main_and_worktree):
     main, wt = main_and_worktree
-    (wt / "tools" / "x.py").write_text("x = 2\n", encoding="utf-8")
-    _git(wt, "commit", "-q", "-am", "two")
-    r = _cli(main, "record", "--tip", "HEAD")
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert not (wt / AUDIT).exists()
-    assert json.loads(r.stdout)["worktrees"] == []
-    assert len(_rows(main / AUDIT)) == 1
+    (main / AUDIT).parent.mkdir(parents=True, exist_ok=True)
+    (main / AUDIT).write_text("not json\n", encoding="utf-8")
+    with pytest.raises(rec.LedgerError):
+        rec.has_clean_record(wt, _git(wt, "rev-parse", "HEAD^{tree}"))
 
 
-def test_record_from_main_skips_a_worktree_whose_directory_is_gone(main_and_worktree, tmp_path):
-    import shutil
-    main, wt = main_and_worktree
-    gone = tmp_path / "gone"
-    _git(main, "worktree", "add", "-q", "-b", "gone-branch", str(gone))
-    shutil.rmtree(gone)
-    r = _cli(main, "record", "--tip", "HEAD")
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert json.loads(r.stdout)["worktrees"] == [str(wt)]
-    assert not gone.exists()
-
-
-def test_record_from_main_reaches_every_branch_worktree_at_the_tree(main_and_worktree, tmp_path):
-    main, wt = main_and_worktree
-    wt2 = tmp_path / "wt2"
-    _git(main, "worktree", "add", "-q", "-b", "feature2", str(wt2))
-    tree = _git(main, "rev-parse", "HEAD^{tree}")
-    r = _cli(main, "record", "--tip", "HEAD")
-    assert sorted(json.loads(r.stdout)["worktrees"]) == sorted([str(wt), str(wt2.resolve())])
-    assert rec.has_clean_record(wt2, tree) and rec.has_clean_record(wt, tree)
-
-
-def test_record_from_a_worktree_does_not_list_other_worktrees(main_and_worktree, tmp_path):
-    """The worktree path is unchanged: main + its own copy, no fan-out to siblings."""
-    main, wt = main_and_worktree
-    wt2 = tmp_path / "wt2"
-    _git(main, "worktree", "add", "-q", "-b", "feature2", str(wt2))
-    r = _cli(wt, "record", "--tip", "HEAD")
-    assert r.returncode == 0 and "worktrees" not in json.loads(r.stdout)
-    assert not (wt2 / AUDIT).exists()
-
-
-def test_record_from_main_reports_unlisted_worktrees_and_keeps_mains_row(main_and_worktree,
-                                                                         monkeypatch, capsys):
+def test_an_unplaceable_main_fails_closed_from_a_worktree(main_and_worktree, monkeypatch):
+    import codex_verify as cv        # has_clean_record places main as the writer does (11-26 S4)
     main, wt = main_and_worktree
 
-    def boom(_main, _tree):
-        raise RuntimeError("git worktree list failed: nope")
-    monkeypatch.setattr(rec, "branch_worktrees_at", boom)
-    rc = rec.main(["--repo-root", str(main), "record", "--tip", "HEAD"])
-    out = json.loads(capsys.readouterr().out)
-    assert rc == 2 and out["code"] == "worktrees_unlisted"
-    assert "nope" in out["message"] and "re-record from the branch's worktree" in out["message"]
-    assert len(_rows(main / AUDIT)) == 1 and not (wt / AUDIT).exists()
-
-
-def test_branch_worktrees_at_raises_when_git_cannot_list(tmp_path):
-    with pytest.raises(RuntimeError, match="git worktree list failed"):
-        rec.branch_worktrees_at(tmp_path, "0" * 40)
-
-
-def test_branch_worktrees_at_excludes_main_even_on_a_branch_at_the_tree(main_and_worktree):
-    main, wt = main_and_worktree
-    tree = _git(main, "rev-parse", "HEAD^{tree}")
-    assert rec.branch_worktrees_at(main, tree) == [wt]
+    def boom(root):
+        raise RuntimeError("cannot find the main checkout")
+    monkeypatch.setattr(cv, "_main_checkout", boom)
+    with pytest.raises(rec.LedgerError):
+        rec.has_clean_record(wt, _git(wt, "rev-parse", "HEAD^{tree}"))

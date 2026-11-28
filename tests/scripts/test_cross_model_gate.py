@@ -1735,7 +1735,8 @@ def test_a_matched_tree_row_is_not_also_judged_by_time(tmp_path):
 _OLD = "f58251d6"
 _GATE_FILES = ("tools/cross_model_gate.py", "tools/inbox_lock.py", "tools/finding_write.py")
 # What the gate imports since --base (2026-11-18). The old gate predates them.
-_NEW_GATE_DEPS = ("tools/merge_chain.py", "tools/allowlist_merge.py", "tools/allowlist_write.py")
+_NEW_GATE_DEPS = ("tools/merge_chain.py", "tools/allowlist_merge.py", "tools/allowlist_write.py",
+                  "tools/vault_paths.py")
 
 
 def _old_source(path):

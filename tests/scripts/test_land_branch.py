@@ -1537,16 +1537,31 @@ def test_write_backfill_with_no_audit_rows_creates_no_audit_ledger(mp):
     assert not (mp["root"] / "tools" / ".audit-pii-ledger.jsonl").exists()
 
 
-def test_preview_gate_sees_main_gate_data_and_cleans_up(mp, monkeypatch, tmp_path):
+def test_preview_gate_reads_main_ledgers_without_copying_them_and_cleans_up(mp, monkeypatch, tmp_path):
+    """S2d (2026-11-25): the preview worktree is a linked worktree of the same repo, so its
+    gate reads main's ledgers through git's common dir (cross_model_gate.read_gate_ledger,
+    audit_pii_record.has_clean_record); copying them in was a second path to the same rows.
+    Only the backfill rows main lacks are written into the preview's own copy."""
+    import cross_model_gate as gate
     ready_branch(mp, "one", {"one.py": "x = 1\n"})
     main_row = {"report": "main.md", "model": "codex", "tree": "f" * 40, "findings": []}
     (mp["root"] / "tools" / ".cross-model-ledger.jsonl").write_text(json.dumps(main_row) + "\n")
+    seen = {}
+    real_add = lb.git
+
+    def spy(args, cwd):
+        out = real_add(args, cwd)
+        if args[:2] == ["worktree", "add"]:
+            seen["main"] = gate.main_checkout_of(Path(args[-2]))
+        return out
+    monkeypatch.setattr(lb, "git", spy)
     scratch = tmp_path / "tmpdirs"
     scratch.mkdir()
     monkeypatch.setattr(tempfile, "tempdir", str(scratch))
     rep = run_mp(mp, ["one"])
     assert rep["ok"], rep
-    assert '"report": "main.md"' in Path(os.environ["LB_PUSH_LOG"]).read_text()
+    assert '"report": "main.md"' not in Path(os.environ["LB_PUSH_LOG"]).read_text()
+    assert seen["main"] == Path(mp["root"]).resolve()
     assert list(scratch.iterdir()) == []
     assert "merge-push-preview" not in sh(mp["root"], "worktree", "list")
 
