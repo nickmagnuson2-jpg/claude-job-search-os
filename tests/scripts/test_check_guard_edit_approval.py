@@ -1027,6 +1027,18 @@ _PY_ORDER_BLOCKS = {
         f"python3 - <<'PY'\nimport os\nprint('{_G}')\nfor _ in range(2):\n    t = 'settings.json'\n    open(t, 'w')\n    os.chdir('{_CLAUDE_DIR}')\nPY",
     "function_write_keeps_the_union":
         f"python3 - <<'PY'\nimport os\nprint('{_G}')\ndef w():\n    t = 'settings.json'\n    open(t, 'w')\nos.chdir('{_CLAUDE_DIR}')\nw()\nPY",
+    # Grok s2c 3.F1 (2026-11-25): a generator runs when it is consumed, not where it is
+    # written, so a write inside one keeps the union like a function. List, set and dict
+    # comprehensions run at once; they are treated the same on purpose (over-block only,
+    # b7's ruling: "treat comprehension/generator target scopes like functions").
+    "generator_write_keeps_the_union":
+        f"python3 - <<'PY'\nimport os\nprint('{_G}')\ng = (open('settings.json', 'w') for _ in [0])\nos.chdir('{_CLAUDE_DIR}')\nnext(g)\nPY",
+    "list_comprehension_write_keeps_the_union":
+        f"python3 - <<'PY'\nimport os\nprint('{_G}')\nx = [open('settings.json', 'w') for _ in [0]]\nos.chdir('{_CLAUDE_DIR}')\nPY",
+    "set_comprehension_write_keeps_the_union":
+        f"python3 - <<'PY'\nimport os\nprint('{_G}')\nx = {{open('settings.json', 'w') for _ in [0]}}\nos.chdir('{_CLAUDE_DIR}')\nPY",
+    "dict_comprehension_write_keeps_the_union":
+        f"python3 - <<'PY'\nimport os\nprint('{_G}')\nx = {{0: open('settings.json', 'w') for _ in [0]}}\nos.chdir('{_CLAUDE_DIR}')\nPY",
 }
 
 
