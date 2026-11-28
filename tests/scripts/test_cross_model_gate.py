@@ -1540,7 +1540,8 @@ def test_cli_RECORDS_a_waiver_that_bypasses_an_open_P0_on_a_small_push(tmp_path)
 
 def test_the_fable_standin_expires_after_2026_11_30():
     from datetime import date
-    assert g.fable_standin_active(date(2026, 11, 30)) is True
+    for day in (28, 29, 30):     # every day of the window, so `==` cannot pass (Grok r1 F3)
+        assert g.fable_standin_active(date(2026, 11, day)) is True
     assert g.fable_standin_active(date(2026, 12, 1)) is False
 
 

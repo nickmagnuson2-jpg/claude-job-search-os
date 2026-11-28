@@ -374,7 +374,8 @@ def _holds_tracked_files(main: Path, root: Path) -> bool:
     return bool(names) and all((main / n).exists() for n in names)
 
 
-def sandbox_policy(repo_root, extra_writable=()) -> str:
+def sandbox_policy(repo_root, extra_writable=(), deny_output: bool = False,
+                   read_allow=()) -> str:
     """A seatbelt profile denying everything private and all repo writes.
 
     Later rules override earlier ones, so the output/analysis carve-outs must follow
@@ -406,6 +407,15 @@ def sandbox_policy(repo_root, extra_writable=()) -> str:
     # is somewhere to write, never a reason to open the private trees.
     for extra in extra_writable:
         lines.append(f'(allow file-write* (subpath "{Path(extra).resolve()}"))')
+    # PII-GATED MODELS READ NO output/ AT ALL (2026-11-28). output/ is readable by design
+    # for reviewers that review deliverables, and measured: a review rooted in the main
+    # checkout could read every company dossier in output/<slug>/. A model under pii_gate
+    # reports on stdout, so it needs no output/ access; only a --prior report it is handed
+    # is re-opened, as that one file.
+    if deny_output:
+        lines.append(f'(deny file-read* (subpath "{root}/output"))')
+        for p in read_allow:
+            lines.append(f'(allow file-read* (literal "{Path(p).resolve()}"))')
     # SEALED, LAST. Seatbelt applies the last matching rule, so these deny-reads come
     # after every allow above and cannot be re-opened by a carve-out added later in
     # this function. The configured private trees come first.
@@ -505,6 +515,9 @@ def jailed_argv(repo_root, policy_path, model=DEFAULT_MODEL_NAME,
 # A diff larger than this buries the signal it exists to surface. Truncation is LOUD:
 # a silently shortened diff produces a review of something other than the work.
 MAX_DIFF_LINES = 800
+# The one header build_prompt writes above the diff. gate_prompt finds the diff block by
+# this exact text, never by any ```diff fence (a caller's question can carry one).
+DIFF_HEADER = "THE CHANGE UNDER REVIEW (git diff, scoped to the named paths):\n```diff\n"
 
 CLAIMS_HEADER = """\
 CLAIMS TO CHECK. For each, say whether it is WRONG, UNPROVEN, or right for the wrong
@@ -672,8 +685,7 @@ def build_prompt(repo_root: Path, target: str, question: str, report: Path,
         parts.append(f"{KNOWN_ERRORS_HEADER}\n{known_errors}")
     diff = gather_diff(repo_root, paths, MAX_DIFF_LINES)
     if diff:
-        parts.append(f"THE CHANGE UNDER REVIEW (git diff, scoped to the named paths):\n"
-                     f"```diff\n{diff}\n```")
+        parts.append(f"{DIFF_HEADER}{diff}\n```")
     if prior:
         parts.append(
             f"Read {prior} FIRST -- that is your own prior review of this work. Check "
@@ -689,20 +701,61 @@ def build_prompt(repo_root: Path, target: str, question: str, report: Path,
     return "\n\n".join(parts)
 
 
-_DIFF_BLOCK_RE = re.compile(r"```diff\n(.*?)\n```", re.S)
+def _split_diff_block(prompt: str) -> tuple[str, str, str] | None:
+    """(before, diff body, after) for the ONE diff block build_prompt wrote, found by its
+    exact header. None when the header is absent or appears more than once (a caller's
+    text can carry a lookalike fence, Grok and Fable r1): then the whole prompt counts
+    as new text and nothing in it is excused."""
+    if prompt.count(DIFF_HEADER) != 1:
+        return None
+    before, rest = prompt.split(DIFF_HEADER, 1)
+    end = rest.find("\n```")
+    if end < 0:
+        return None
+    return before, rest[:end], rest[end:]
 
 
-def prompt_pii_hits(prompt: str, tokens: list[str]) -> list[str]:
-    """Denylist tokens in the text a review would send. Inside the diff block only ADDED
-    lines count: removed and context lines are text already on the branch base, and a
-    branch that deletes a name must stay reviewable. Matching is check_public_pii's."""
-    from check_public_pii import find_pii
+def _base_line(line: str) -> bool:
+    """A removed or unchanged diff line: text from the branch base, not new text. File
+    headers (+++/---), new-file and rename lines and hunk headers are NOT base lines, so
+    a new file's name is scanned (Fable r1)."""
+    return (line.startswith(" ") or
+            (line.startswith("-") and not line.startswith("---")))
 
-    def added_only(m: re.Match) -> str:
-        return "\n".join(line[1:] for line in m.group(1).splitlines()
-                         if line.startswith("+") and not line.startswith("+++"))
 
-    return find_pii(_DIFF_BLOCK_RE.sub(added_only, prompt), tokens)
+def gate_prompt(prompt: str, tokens: list[str], words: list[str]) -> tuple[str, list[str]]:
+    """(the prompt to send, the hits that must block). New text (target, claims,
+    questions, every non-base diff line) BLOCKS on a denylist token or a target word.
+    Base lines (removed, unchanged) are REDACTED in the prompt that is sent, never
+    excused: Nick, 2026-11-28, no personal PII passed to Grok (Grok r1 F1). Matching is
+    check_public_pii's own."""
+    from check_public_pii import find_pii, find_target_words
+
+    def hits(text: str) -> list[str]:
+        return find_pii(text, tokens) + find_target_words(text, words)
+
+    def redact(text: str) -> str:
+        for tok in [*tokens, *words]:
+            text = re.sub(r"(?<![\w])" + re.escape(tok) + r"(?![\w])", "[redacted]", text)
+        return text
+
+    parts = _split_diff_block(prompt)
+    if parts is None:
+        return prompt, hits(prompt)
+    before, body, after = parts
+    lines = body.split("\n")
+    new_text = "\n".join(ln for ln in lines if not _base_line(ln))
+    found = hits(before + "\n" + after + "\n" + new_text)
+    body = "\n".join(redact(ln) if _base_line(ln) else ln for ln in lines)
+    return before + DIFF_HEADER + body + after, found
+
+
+def review_target_words(repo_root: Path) -> list[str]:
+    """Pipeline company names that are ordinary words, from the MAIN checkout; the write
+    hook BLOCKs on them (check_public_pii's target-words tier), so the send does too."""
+    from check_public_pii import load_target_words
+    return [w for w in load_target_words(vault_paths.main_checkout(Path(repo_root).resolve()))
+            if w.strip()]
 
 
 def review_pii_tokens(repo_root: Path) -> list[str]:
@@ -1050,12 +1103,13 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
             tokens = review_pii_tokens(repo_root)
         except RuntimeError as e:
             raise SystemExit(f"codex_verify: {e}")
-        hits = prompt_pii_hits(prompt, tokens)
+        prompt, hits = gate_prompt(prompt, tokens, review_target_words(repo_root))
         if hits:
             raise SystemExit(
                 f"codex_verify: BLOCKED, nothing sent: the {model} prompt carries {len(hits)} "
-                f"PII denylist token(s) (target, claims, questions or added diff lines). "
-                f"Remove them, or review with a model that has no pii_gate.")
+                f"PII denylist token(s) or pipeline company word(s) in new text (target, "
+                f"claims, questions or new diff lines). Remove them, or review with a model "
+                f"that has no pii_gate.")
 
     report.parent.mkdir(parents=True, exist_ok=True)
     # Taken BEFORE the run so a report left behind by an EARLIER run cannot be mistaken
@@ -1066,7 +1120,9 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
     # to give full read access to the private trees, so the boundary is seatbelt's.
     # Built before the temp file exists, so a refusal leaves nothing behind.
     try:
-        policy = sandbox_policy(repo_root, extra_writable=[report.parent])
+        gated = ({"deny_output": True, "read_allow": [Path(prior)] if prior else []}
+                 if spec.pii_gate else {})
+        policy = sandbox_policy(repo_root, extra_writable=[report.parent], **gated)
     except RuntimeError as e:
         raise SystemExit(f"codex_verify: {e}")
     policy_file = Path(tempfile.mkstemp(suffix=".sb", prefix="codex-jail-")[1])
