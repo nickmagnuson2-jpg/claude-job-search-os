@@ -296,3 +296,43 @@ def test_main_checkout_with_an_open_p0_counts_it_once(repos):
     _row(main, report="output/analysis/112526-grok-x.md", model="grok", findings=_open_p0())
     blocking = g.open_p0_against(main, {PATH})
     assert len(blocking) == 1
+
+
+# codex_verify.worktree_runs and is_mirror_of, unit level (L9 mutation 11-27: 7 changed-line
+# survivors at c65507f6, record output/analysis/112726-l9-mutation-codex_verify-c65507f6.json).
+
+def test_worktree_runs_keeps_the_numbering_past_lines_that_are_not_rows(tmp_path):
+    """finding_write numbers every non-blank line; a line that does not parse, or parses
+    to something other than an object, keeps its number and maps to no run."""
+    from tools import codex_verify as cv
+    a = {"report": "a.md", "model": "codex", "recorded": "t1", "findings": []}
+    b = {"report": "b.md", "model": "fable", "recorded": "t2", "findings": []}
+    p = g.ledger_path(tmp_path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("{not json\n" + json.dumps(a) + "\n[1, 2]\n" + json.dumps(b) + "\n",
+                 encoding="utf-8")
+    assert cv.worktree_runs(tmp_path) == {2: cv.row_identity(a), 4: cv.row_identity(b)}
+
+
+def test_is_mirror_of_answers_false_for_every_row_that_is_not_ours(tmp_path):
+    """Each refusal is False itself, not merely falsy: the function is a predicate."""
+    from tools import codex_verify as cv
+    row = {"report": "a.md", "model": "codex", "recorded": "t1", "findings": []}
+    runs = {1: cv.row_identity(row)}
+    ours = {**row, "worktree": str(tmp_path), "worktree_run": 1}
+    assert cv.is_mirror_of(ours, tmp_path, runs) is True
+    assert cv.is_mirror_of(row, tmp_path, runs) is False                        # no worktree
+    assert cv.is_mirror_of({**ours, "worktree": str(tmp_path / "other")},
+                           tmp_path, runs) is False                             # another one
+    assert cv.is_mirror_of({**ours, "worktree": "/a\x00b"}, tmp_path, runs) is False
+    assert cv.is_mirror_of({**ours, "worktree_run": "1"}, tmp_path, runs) is False
+
+
+def test_a_boolean_run_number_names_no_run(tmp_path):
+    """True hashes as 1, so without the type check a mirror naming worktree_run true
+    would be taken for run 1 and its open P0 dropped."""
+    from tools import codex_verify as cv
+    row = {"report": "a.md", "model": "codex", "recorded": "t1", "findings": []}
+    runs = {1: cv.row_identity(row)}
+    assert cv.is_mirror_of({**row, "worktree": str(tmp_path), "worktree_run": True},
+                           tmp_path, runs) is False
