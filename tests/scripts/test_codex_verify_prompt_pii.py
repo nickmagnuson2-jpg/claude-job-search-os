@@ -146,3 +146,65 @@ def test_run_print_only_does_not_need_the_scan(tmp_path, monkeypatch):
     monkeypatch.setattr(cv, "review_pii_tokens", no_scan)
     out = cv.run(tmp_path, "t", [], "", tmp_path / "r.md", None, True, model="grok")
     assert out["status"] == "printed"
+
+
+# --- round 2 (Grok r2, Fable r2) ---
+
+def test_a_removed_line_starting_with_two_dashes_and_a_hunk_header_are_redacted(monkeypatch, tmp_path):
+    diff = ("--- a/x.sql\n+++ b/x.sql\n@@ -1,2 +1,2 @@ def owner(): # Blimfield\n"
+            "--- note Blimfield\n+-- note moved")
+    sent, hits = cv.gate_prompt(_built(monkeypatch, tmp_path, diff=diff), TOKENS, WORDS)
+    assert hits == [] and "Blimfield" not in sent
+
+
+def test_overlapping_tokens_are_redacted_longest_first(monkeypatch, tmp_path):
+    toks = ["Zorpex", "Zorpex Quandary"]
+    diff = "--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n x = 'Zorpex Quandary'\n-a = 1\n+a = 2"
+    sent, _ = cv.gate_prompt(_built(monkeypatch, tmp_path, diff=diff), toks, [])
+    assert "Quandary" not in sent and "Zorpex" not in sent
+
+
+def test_target_words_fail_closed_when_the_list_is_missing(tmp_path):
+    root = tmp_path / "somerepo"
+    (root / "tools").mkdir(parents=True)
+    with pytest.raises(RuntimeError):
+        cv.review_target_words(root)
+
+
+def test_a_gated_model_refuses_to_review_output_paths(tmp_path, monkeypatch):
+    monkeypatch.setattr(cv, "build_prompt", lambda *a, **k: "WHAT TO VERIFY: x")
+    with pytest.raises(SystemExit) as e:
+        cv.run(tmp_path, "t", ["output/acme/cover-letter.md"], "", tmp_path / "r.md", None, False,
+               model="grok")
+    assert "does not review output/" in str(e.value)
+
+
+def test_a_gated_prior_outside_the_review_tree_is_refused(tmp_path, monkeypatch):
+    monkeypatch.setattr(cv, "build_prompt", lambda *a, **k: "WHAT TO VERIFY: x")
+    with pytest.raises(SystemExit) as e:
+        cv.run(tmp_path, "t", [], "", tmp_path / "r.md", "data/networking.md", False, model="grok")
+    assert "--prior must sit under" in str(e.value)
+
+
+def test_a_gated_prior_is_resolved_against_the_repo_and_its_folders_traversable(tmp_path, monkeypatch):
+    seen = {}
+    real_policy = cv.sandbox_policy
+
+    def capture(root, extra_writable=(), **kw):
+        seen.update(kw)
+        raise SystemExit("stop here")
+
+    monkeypatch.setattr(cv, "build_prompt", lambda *a, **k: "WHAT TO VERIFY: x")
+    monkeypatch.setattr(cv, "review_pii_tokens", lambda root: TOKENS)
+    monkeypatch.setattr(cv, "review_target_words", lambda root: WORDS)
+    monkeypatch.setattr(cv, "sandbox_policy", capture)
+    with pytest.raises(SystemExit):
+        cv.run(tmp_path, "t", [], "", tmp_path / "r.md", "output/analysis/p.md", False, model="grok")
+    assert seen["read_allow"] == [(tmp_path / "output" / "analysis" / "p.md").resolve()]
+    pol = real_policy(tmp_path, deny_output=True, read_allow=seen["read_allow"])
+    assert f'(allow file-read-metadata (literal "{tmp_path.resolve()}/output/analysis"))' in pol
+
+
+def test_reader_review_defaults_leave_out_gated_models():
+    import tools.reader_review as rr
+    assert "grok" not in rr.DEFAULT_MODELS and {"codex", "fable"} <= set(rr.DEFAULT_MODELS)

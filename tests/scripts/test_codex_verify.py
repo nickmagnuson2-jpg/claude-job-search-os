@@ -760,6 +760,7 @@ def _fake_repo(tmp_path):
     # A grok run scans its prompt against the main checkout's denylist and refuses when
     # there is none (codex_verify pii_gate, fails closed); a fictional token keeps it real.
     (tmp_path / "tools" / ".pii-denylist.txt").write_text("Zorpex Quandary\n", encoding="utf-8")
+    (tmp_path / "tools" / ".pii-denylist-targetwords.txt").write_text("Lantern\n", encoding="utf-8")
     (tmp_path / "output" / "analysis").mkdir(parents=True)
     (tmp_path / "output" / "analysis" / "prior.md").write_text("prior\n", encoding="utf-8")
     (tmp_path / "output" / "acme").mkdir()

@@ -414,6 +414,11 @@ def sandbox_policy(repo_root, extra_writable=(), deny_output: bool = False,
     # is re-opened, as that one file.
     if deny_output:
         lines.append(f'(deny file-read* (subpath "{root}/output"))')
+        if read_allow:
+            # The folders down to a re-opened report are traversable (metadata only, never
+            # their contents), or the model's reader cannot reach the file (Grok r2).
+            for d in (f"{root}/output", f"{root}/{REVIEW_TREE}"):
+                lines.append(f'(allow file-read-metadata (literal "{d}"))')
         for p in read_allow:
             lines.append(f'(allow file-read* (literal "{Path(p).resolve()}"))')
     # SEALED, LAST. Seatbelt applies the last matching rule, so these deny-reads come
@@ -719,8 +724,9 @@ def _base_line(line: str) -> bool:
     """A removed or unchanged diff line: text from the branch base, not new text. File
     headers (+++/---), new-file and rename lines and hunk headers are NOT base lines, so
     a new file's name is scanned (Fable r1)."""
-    return (line.startswith(" ") or
-            (line.startswith("-") and not line.startswith("---")))
+    # Every '-' line (removed content and the old-file header alike) and every hunk header
+    # (it carries base function context) is base text, redacted, not blocked (Fable r2).
+    return line.startswith((" ", "-", "@@"))
 
 
 def gate_prompt(prompt: str, tokens: list[str], words: list[str]) -> tuple[str, list[str]]:
@@ -735,7 +741,9 @@ def gate_prompt(prompt: str, tokens: list[str], words: list[str]) -> tuple[str, 
         return find_pii(text, tokens) + find_target_words(text, words)
 
     def redact(text: str) -> str:
-        for tok in [*tokens, *words]:
+        # Longest first, so a token that overlaps a longer one cannot leave part of the
+        # longer one behind (Fable r2).
+        for tok in sorted({*tokens, *words}, key=len, reverse=True):
             text = re.sub(r"(?<![\w])" + re.escape(tok) + r"(?![\w])", "[redacted]", text)
         return text
 
@@ -754,8 +762,13 @@ def review_target_words(repo_root: Path) -> list[str]:
     """Pipeline company names that are ordinary words, from the MAIN checkout; the write
     hook BLOCKs on them (check_public_pii's target-words tier), so the send does too."""
     from check_public_pii import load_target_words
-    return [w for w in load_target_words(vault_paths.main_checkout(Path(repo_root).resolve()))
-            if w.strip()]
+    main = vault_paths.main_checkout(Path(repo_root).resolve())
+    words = [w for w in load_target_words(main) if w.strip()]
+    if not words:
+        # Fails closed like the denylist: a missing list would drop this tier silently (Fable r2).
+        raise RuntimeError(f"no pipeline target-words list under {main}/tools; run "
+                           "tools/gen_pii_denylist.py. Refusing to send a prompt unscanned.")
+    return words
 
 
 def review_pii_tokens(repo_root: Path) -> list[str]:
@@ -1098,7 +1111,21 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
     if print_only:
         print(prompt)
         return {"status": "printed", "report": str(report)}
+    gated_prior = None
     if spec.pii_gate:
+        # A PII-gated model never reviews output/: that tree holds the deliverables and
+        # dossiers that carry the PII the gate exists for. Refused LOUDLY, because a jailed
+        # model that cannot open its target still returns a report (Fable r2 F1).
+        root_r = Path(repo_root).resolve()
+        out_paths = [p for p in paths if (root_r / p).resolve().is_relative_to(root_r / "output")]
+        if out_paths:
+            raise SystemExit(f"codex_verify: {model} does not review output/ (PII); "
+                             f"use codex or fable for {out_paths[:3]}")
+        if prior:
+            gated_prior = (root_r / prior).resolve()
+            if not gated_prior.is_relative_to(root_r / REVIEW_TREE):
+                raise SystemExit(f"codex_verify: a {model} --prior must sit under "
+                                 f"{REVIEW_TREE}/; got {prior}")
         try:
             tokens = review_pii_tokens(repo_root)
         except RuntimeError as e:
@@ -1120,7 +1147,7 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
     # to give full read access to the private trees, so the boundary is seatbelt's.
     # Built before the temp file exists, so a refusal leaves nothing behind.
     try:
-        gated = ({"deny_output": True, "read_allow": [Path(prior)] if prior else []}
+        gated = ({"deny_output": True, "read_allow": [gated_prior] if gated_prior else []}
                  if spec.pii_gate else {})
         policy = sandbox_policy(repo_root, extra_writable=[report.parent], **gated)
     except RuntimeError as e:
