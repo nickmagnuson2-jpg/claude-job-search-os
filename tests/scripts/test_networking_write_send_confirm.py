@@ -634,6 +634,25 @@ def test_a_lock_that_cannot_be_taken_is_an_error_code_not_a_crash(tmp_path, monk
     assert text(tmp_path) == before
 
 
+@pytest.mark.parametrize("args", [
+    ("add", "Sam Carter", "--company", "Northwind"),
+    ("update", "Jane Doe", "--role", "Director"),
+    ("remove", "Jane Doe"),
+])
+def test_add_update_and_remove_wait_for_the_networking_lock(tmp_path, monkeypatch, args):
+    """Codex 11-27 1655.F1 (P0): add, update and remove read networking.md and replace it
+    whole without the lock log and mark-sent take, so a concurrent writer's save between
+    the read and the replace was erased while both reported success. Each now runs under
+    networking_lock: while another writer holds it, the command refuses and writes nothing."""
+    inbox_lock = _lock_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("NETWORKING_LOCK_TIMEOUT", "0.2")
+    before = text(tmp_path)
+    with inbox_lock.file_lock(tmp_path / "data/networking.md"):
+        r, c = nw(tmp_path, *args)
+    assert c != 0 and r.get("code") == "locked", r
+    assert text(tmp_path) == before
+
+
 def test_a_dry_run_does_not_wait_for_the_lock(tmp_path, monkeypatch):
     """A dry run reads nothing it must protect, so it takes no lock: it answers at once even
     while another writer holds networking.md."""

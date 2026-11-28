@@ -37,13 +37,17 @@ subcommand; argparse rejects them after it with "unrecognized arguments"):
   PYTHONIOENCODING=utf-8 python3 tools/person_write.py --repo-root . add-entry priya-anand \
       --section commitments --text "Will relay feedback via Jordan's process"
 """
+import contextlib
+import os
 import sys
 import re
+from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # siblings import as `tools.X` too
 from slug import slugify as _slugify  # noqa: E402
 from md_table import JsonArgumentParser, out_error, out_ok, read_file, write_atomic  # noqa: E402
+import inbox_lock  # noqa: E402
 
 PEOPLE_DIR = "data/people"
 
@@ -158,6 +162,36 @@ def resolve_person(people_dir: Path, ref: str) -> tuple:
 # Commands
 # ---------------------------------------------------------------------------
 
+def commit(path: Path, content: str, dry_run: bool) -> None:
+    """The one save point for create and add-entry. A dry run returns here, after every
+    refusal its command makes, so a preview can never say yes to a write the real command
+    refuses (1478.F3: add-entry previewed success for a dossier missing its section)."""
+    if dry_run:
+        return
+    write_atomic(path, content)
+
+
+@contextmanager
+def dossier_lock(path: Path, dry_run: bool):
+    """Hold the advisory lock on one dossier from its read to its save (Codex 11-27
+    1655.F2: create and add-entry read, changed and replaced the file with no lock, so two
+    concurrent writers could each save over the other and lose an entry while both
+    reported success). The same shape as networking_write.networking_lock: a lock still
+    held after PERSON_LOCK_TIMEOUT seconds (default 30) is refused with code `locked` and
+    nothing is written. A dry run writes nothing and takes no lock."""
+    if dry_run:
+        yield
+        return
+    timeout = float(os.environ.get("PERSON_LOCK_TIMEOUT", "30"))
+    with contextlib.ExitStack() as stack:
+        try:
+            stack.enter_context(inbox_lock.file_lock(path, timeout=timeout))
+        except inbox_lock.LockTimeout:
+            out_error(f"{path} is locked by another writer (waited {timeout:g} s); "
+                      f"nothing was written, rerun the command", "locked")
+        yield
+
+
 def cmd_create(args, people_dir: Path, dry_run: bool) -> None:
     slug = args.slug if args.slug else slugify(args.name)
     if not slug:
@@ -165,29 +199,29 @@ def cmd_create(args, people_dir: Path, dry_run: bool) -> None:
     path = people_dir / f"{slug}.md"
     today = date.today().strftime("%Y-%m-%d")
 
-    if path.exists():
-        out_ok("exists", f"Dossier already exists: {path} (not clobbered)",
-               slug=slug, path=str(path))
-        return
+    with dossier_lock(path, dry_run):
+        if path.exists():
+            out_ok("exists", f"Dossier already exists: {path} (not clobbered)",
+                   slug=slug, path=str(path))
+            return
 
-    content = (
-        TEMPLATE
-        .replace("{NAME}", args.name)
-        .replace("{DATE}", today)
-        .replace("{COMPANY}", args.company or "—")
-        .replace("{ROLE}", args.role or "—")
-        .replace("{RELATIONSHIP}", args.relationship or "—")
-        .replace("{SLUG}", slug)
-        .replace("{PROFILE}", args.profile or "—")
-    )
+        content = (
+            TEMPLATE
+            .replace("{NAME}", args.name)
+            .replace("{DATE}", today)
+            .replace("{COMPANY}", args.company or "—")
+            .replace("{ROLE}", args.role or "—")
+            .replace("{RELATIONSHIP}", args.relationship or "—")
+            .replace("{SLUG}", slug)
+            .replace("{PROFILE}", args.profile or "—")
+        )
 
-    if dry_run:
-        out_ok("create", f"Would create: {path}",
-               dry_run=True, slug=slug, path=str(path))
-        return
-
-    write_atomic(path, content)
-    out_ok("create", f"Created dossier: {path}", slug=slug, path=str(path))
+        commit(path, content, dry_run)
+        if dry_run:
+            out_ok("create", f"Would create: {path}",
+                   dry_run=True, slug=slug, path=str(path))
+            return
+        out_ok("create", f"Created dossier: {path}", slug=slug, path=str(path))
 
 
 def cmd_add_entry(args, people_dir: Path, dry_run: bool) -> None:
@@ -209,50 +243,49 @@ def cmd_add_entry(args, people_dir: Path, dry_run: bool) -> None:
     today = args.date if args.date else date.today().strftime("%Y-%m-%d")
     bullet = f"- {today} — {args.text}"
 
-    if dry_run:
-        out_ok("add-entry", f"Would append to {args.section}: {bullet}",
-               dry_run=True, path=str(path), section=args.section)
-        return
+    with dossier_lock(path, dry_run):
+        content = read_file(path)
+        lines = content.splitlines()
 
-    content = read_file(path)
-    lines = content.splitlines()
+        # Find the section heading.
+        sec_idx = -1
+        for i, line in enumerate(lines):
+            if re.match(heading_re, line):
+                sec_idx = i
+                break
+        if sec_idx == -1:
+            out_error(f"Section heading for {args.section!r} not found in {path}",
+                      "missing_section")
 
-    # Find the section heading.
-    sec_idx = -1
-    for i, line in enumerate(lines):
-        if re.match(heading_re, line):
-            sec_idx = i
-            break
-    if sec_idx == -1:
-        out_error(f"Section heading for {args.section!r} not found in {path}",
-                  "missing_section")
+        # Insert newest-first, anchored on the section's HTML comment marker so the
+        # bullet lands directly beneath it (above older bullets) and the blank line
+        # separating the section from the next heading is preserved.
+        sec_end = len(lines)
+        for j in range(sec_idx + 1, len(lines)):
+            if lines[j].startswith("## "):
+                sec_end = j
+                break
 
-    # Insert newest-first, anchored on the section's HTML comment marker so the
-    # bullet lands directly beneath it (above older bullets) and the blank line
-    # separating the section from the next heading is preserved.
-    sec_end = len(lines)
-    for j in range(sec_idx + 1, len(lines)):
-        if lines[j].startswith("## "):
-            sec_end = j
-            break
-
-    insert_at = sec_idx + 1
-    for j in range(sec_idx + 1, sec_end):
-        if lines[j].lstrip().startswith("<!--"):
-            insert_at = j + 1
-            break
-    else:
-        # No comment marker — insert right after the heading.
         insert_at = sec_idx + 1
+        for j in range(sec_idx + 1, sec_end):
+            if lines[j].lstrip().startswith("<!--"):
+                insert_at = j + 1
+                break
+        else:
+            # No comment marker — insert right after the heading.
+            insert_at = sec_idx + 1
 
-    lines.insert(insert_at, bullet)
-    new_content = "\n".join(lines)
-    if content.endswith("\n"):
-        new_content += "\n"
-    write_atomic(path, new_content)
-
-    out_ok("add-entry", f"Appended to {args.section}: {bullet}",
-           path=str(path), section=args.section, entry=bullet)
+        lines.insert(insert_at, bullet)
+        new_content = "\n".join(lines)
+        if content.endswith("\n"):
+            new_content += "\n"
+        commit(path, new_content, dry_run)
+        if dry_run:
+            out_ok("add-entry", f"Would append to {args.section}: {bullet}",
+                   dry_run=True, path=str(path), section=args.section)
+            return
+        out_ok("add-entry", f"Appended to {args.section}: {bullet}",
+               path=str(path), section=args.section, entry=bullet)
 
 
 def cmd_list(args, people_dir: Path, dry_run: bool) -> None:

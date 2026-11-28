@@ -851,3 +851,88 @@ def test_dry_run_log_agrees_with_check(tmp_path):
         chk, ccode = run_nw_write("--repo-root", str(tmp_path), *argv, "--check")
         assert (dcode == 0) == (ccode == 0), (name, dry, chk)
         assert dry["status"] == chk["status"]
+
+
+# ---------------------------------------------------------------------------
+# add / update / remove --dry-run run the same refusals as the real command
+# (1478.F1, F2, F4: each dry run returned "Would ..." before the refusal the real
+# command makes, so a preview said yes to a write the command refuses)
+# ---------------------------------------------------------------------------
+
+_REFUSED_BY_BOTH = [
+    # 1478.F4: add on an empty networking.md
+    ("", ["add", "New Person"], "file_not_found"),
+    # 1478.F1: update of a contact that is not on the roster
+    (NETWORKING_FOR_UPDATE, ["update", "Nobody Atall", "--role", "VP"], "not_found"),
+    # 1478.F2: remove of a contact that is not on the roster
+    (NETWORKING_FOR_UPDATE, ["remove", "Nobody Atall"], "not_found"),
+]
+
+
+@pytest.mark.parametrize("content,argv,code", _REFUSED_BY_BOTH,
+                         ids=["add-empty-file", "update-unknown", "remove-unknown"])
+@pytest.mark.parametrize("dry", [True, False], ids=["dry-run", "real"])
+def test_dry_run_refuses_what_the_command_refuses(tmp_path, content, argv, code, dry):
+    write_fixture(tmp_path, "data/networking.md", content)
+    before = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
+    pre = ["--repo-root", str(tmp_path)] + (["--dry-run"] if dry else [])
+    result, rc = run_nw_write(*pre, *argv)
+    assert rc == 1 and result["status"] == "error" and result["code"] == code, result
+    assert (tmp_path / "data/networking.md").read_text(encoding="utf-8") == before
+
+
+def test_add_dry_run_on_a_missing_file_is_refused(tmp_path):
+    """1478.F4, the missing-file half: no networking.md at all."""
+    result, rc = run_nw_write("--repo-root", str(tmp_path), "--dry-run", "add", "New Person")
+    assert rc == 1 and result["code"] == "file_not_found", result
+    assert not (tmp_path / "data/networking.md").exists()
+
+
+@pytest.mark.parametrize("argv", [
+    ["update", "Bob Jones", "--role", "VP Ops"],
+    ["remove", "Bob Jones"],
+    ["add", "Carol Lee", "--company", "DryRunCo"],
+], ids=["update", "remove", "add"])
+def test_dry_run_of_an_accepted_write_previews_and_writes_nothing(tmp_path, argv):
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_FOR_UPDATE)
+    before = (tmp_path / "data/networking.md").read_text(encoding="utf-8")
+    result, rc = run_nw_write("--repo-root", str(tmp_path), "--dry-run", *argv)
+    assert rc == 0 and result["dry_run"] is True and result["action"] == argv[0], result
+    assert result["would_mutate"][0]["file"].endswith("networking.md")
+    assert (tmp_path / "data/networking.md").read_text(encoding="utf-8") == before
+
+
+@pytest.mark.parametrize("argv", [
+    ["add", "Carol Lee", "--company", "Lantern Works"],
+    ["update", "Bob Jones", "--company", "Lantern Works"],
+], ids=["add", "update"])
+def test_dry_run_skips_the_companies_yaml_sync(tmp_path, argv):
+    """The dry run returns before save_lines' company_dim.sync_after_write as well as the
+    write. The real run is the control: it adds the new company, so the dry-run assertion
+    cannot pass because the sync never sees this repo."""
+    write_fixture(tmp_path, "data/networking.md", NETWORKING_FOR_UPDATE)
+    dim = tmp_path / "data" / "companies.yaml"
+    dim.write_text("schema: 1\ncompanies:\n- canonical: Acme\n  type: target\n",
+                   encoding="utf-8")
+    before = dim.read_bytes()
+    _, rc = run_nw_write("--repo-root", str(tmp_path), "--dry-run", *argv)
+    assert rc == 0 and dim.read_bytes() == before
+    _, rc = run_nw_write("--repo-root", str(tmp_path), *argv)
+    assert rc == 0 and "Lantern Works" in dim.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("content,argv", [
+    (NETWORKING_FOR_UPDATE, ["add", "Carol Lee"]),
+    ("", ["add", "Carol Lee"]),
+    (NETWORKING_FOR_UPDATE, ["update", "Bob Jones", "--role", "VP Ops"]),
+    (NETWORKING_FOR_UPDATE, ["update", "Nobody Atall", "--role", "VP Ops"]),
+    (NETWORKING_FOR_UPDATE, ["remove", "Bob Jones"]),
+    (NETWORKING_FOR_UPDATE, ["remove", "Nobody Atall"]),
+], ids=["add-ok", "add-empty", "update-ok", "update-unknown", "remove-ok", "remove-unknown"])
+def test_dry_run_and_real_give_the_same_verdict(tmp_path, content, argv):
+    """Parity per command: the dry run's exit code and error code match the real command's
+    on the same input (the dry run first, so the real run sees the same file)."""
+    write_fixture(tmp_path, "data/networking.md", content)
+    dry, drc = run_nw_write("--repo-root", str(tmp_path), "--dry-run", *argv)
+    real, rrc = run_nw_write("--repo-root", str(tmp_path), *argv)
+    assert (drc, dry.get("code")) == (rrc, real.get("code")), (dry, real)

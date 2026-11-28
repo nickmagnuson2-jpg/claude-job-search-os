@@ -314,3 +314,115 @@ def test_the_module_imports_without_running_main():
         r = sp.run([sys.executable, "-c", code], capture_output=True, text=True,
                    cwd=str(TOOLS_DIR.parent), env={**os.environ, "PYTHONIOENCODING": "utf-8"})
         assert r.returncode == 0 and r.stdout == "", (code, r.stdout, r.stderr)
+
+
+def test_add_entry_dry_run_refuses_a_dossier_missing_the_sections_heading(tmp_path):
+    """1478.F3: the dry run returned "Would append" before the missing_section refusal
+    the real add-entry makes (test above), so a preview said yes to a refused write."""
+    run_pw("create", "Sam Carter", repo_root=tmp_path)
+    p = people_dir(tmp_path) / "sam-carter.md"
+    p.write_text(p.read_text(encoding="utf-8").replace("## What I Owe", "## Owed (renamed)"),
+                 encoding="utf-8")
+    before = p.read_text(encoding="utf-8")
+    res, rc = run_pw("add-entry", "sam-carter", "--section", "owed", "--text", "x",
+                     repo_root=tmp_path, dry_run=True)
+    assert rc == 1 and res["code"] == "missing_section", res
+    assert p.read_text(encoding="utf-8") == before
+
+
+def test_add_entry_dry_run_previews_the_bullet_and_writes_nothing(tmp_path):
+    run_pw("create", "Sam Carter", repo_root=tmp_path)
+    p = people_dir(tmp_path) / "sam-carter.md"
+    before = p.read_text(encoding="utf-8")
+    res, rc = run_pw("add-entry", "sam-carter", "--section", "owed", "--text", "lunch",
+                     "--date", "2026-11-26", repo_root=tmp_path, dry_run=True)
+    assert rc == 0 and res["dry_run"] is True and res["section"] == "owed", res
+    assert res["summary"] == "Would append to owed: - 2026-11-26 — lunch"
+    assert p.read_text(encoding="utf-8") == before
+
+
+@pytest.mark.parametrize("rename", [False, True], ids=["accepted", "missing-section"])
+def test_add_entry_dry_run_and_real_give_the_same_verdict(tmp_path, rename):
+    """Parity: the dry run's exit code and error code match the real add-entry's."""
+    run_pw("create", "Sam Carter", repo_root=tmp_path)
+    p = people_dir(tmp_path) / "sam-carter.md"
+    if rename:
+        p.write_text(p.read_text(encoding="utf-8").replace("## What I Owe", "## Owed"),
+                     encoding="utf-8")
+    argv = ("add-entry", "sam-carter", "--section", "owed", "--text", "x")
+    dry, drc = run_pw(*argv, repo_root=tmp_path, dry_run=True)
+    real, rrc = run_pw(*argv, repo_root=tmp_path)
+    assert (drc, dry.get("code")) == (rrc, real.get("code")), (dry, real)
+
+
+# Mutation survivors, 2026-11-27 (output/analysis/
+# 112726-s6-writers-mutation-person_write-78165001-changed-lines.json): the dry-run branch
+# after commit() could be forced true and no test noticed, because nothing read the REAL
+# run's JSON. A real write reported as "Would ..." tells the caller nothing was written.
+
+def test_a_real_create_reports_the_write_not_a_preview(tmp_path):
+    """person_write.py:194 (cmd_create's `if dry_run:` after commit)."""
+    res, rc = run_pw("create", "Sam Carter", repo_root=tmp_path)
+    p = people_dir(tmp_path) / "sam-carter.md"
+    assert rc == 0 and p.exists()
+    assert "dry_run" not in res, res
+    assert res["summary"] == f"Created dossier: {p}", res
+
+
+def test_a_real_add_entry_reports_the_appended_bullet_not_a_preview(tmp_path):
+    """person_write.py:256 (cmd_add_entry's `if dry_run:` after commit)."""
+    run_pw("create", "Sam Carter", repo_root=tmp_path)
+    res, rc = run_pw("add-entry", "sam-carter", "--section", "owed", "--text", "lunch",
+                     "--date", "2026-11-26", repo_root=tmp_path)
+    assert rc == 0 and "dry_run" not in res, res
+    assert res["summary"] == "Appended to owed: - 2026-11-26 — lunch", res
+    assert res["entry"] == "- 2026-11-26 — lunch", res
+
+
+# ---------------------------------------------------------------------------
+# the dossier lock (Codex 11-27 1655.F2)
+# ---------------------------------------------------------------------------
+
+def _hold_dossier_lock(tmp_path, monkeypatch):
+    monkeypatch.setenv("JOBSEARCH_LOCK_DIR", str(tmp_path / "locks"))
+    monkeypatch.setenv("PERSON_LOCK_TIMEOUT", "0.2")
+    sys.path.insert(0, str(TOOLS_DIR))
+    import inbox_lock
+    return inbox_lock
+
+
+def test_add_entry_waits_for_the_dossier_lock(tmp_path, monkeypatch):
+    """1655.F2 (P0): add-entry read the dossier, inserted a bullet and replaced the file with
+    no lock, so two concurrent add-entry calls could each save over the other and lose an
+    entry while both reported success. It now holds inbox_lock.file_lock on the dossier from
+    the read to the save; while another writer holds it, it refuses and writes nothing."""
+    inbox_lock = _hold_dossier_lock(tmp_path, monkeypatch)
+    run_pw("create", "Sam Carter", repo_root=tmp_path)
+    path = people_dir(tmp_path) / "sam-carter.md"
+    before = path.read_text(encoding="utf-8")
+    with inbox_lock.file_lock(path):
+        res, rc = run_pw("add-entry", "sam-carter", "--section", "owed",
+                         "--text", "Send the deck", repo_root=tmp_path)
+    assert rc != 0 and res.get("code") == "locked", res
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_create_waits_for_the_dossier_lock(tmp_path, monkeypatch):
+    """create checks that the dossier does not exist and then writes it; under the lock a
+    second create sees the first one's file and does not clobber it."""
+    inbox_lock = _hold_dossier_lock(tmp_path, monkeypatch)
+    path = people_dir(tmp_path) / "sam-carter.md"
+    with inbox_lock.file_lock(path):
+        res, rc = run_pw("create", "Sam Carter", repo_root=tmp_path)
+    assert rc != 0 and res.get("code") == "locked", res
+    assert not path.exists()
+
+
+def test_a_dry_run_add_entry_takes_no_lock(tmp_path, monkeypatch):
+    inbox_lock = _hold_dossier_lock(tmp_path, monkeypatch)
+    run_pw("create", "Sam Carter", repo_root=tmp_path)
+    path = people_dir(tmp_path) / "sam-carter.md"
+    with inbox_lock.file_lock(path):
+        res, rc = run_pw("add-entry", "sam-carter", "--section", "owed",
+                         "--text", "Send the deck", repo_root=tmp_path, dry_run=True)
+    assert rc == 0 and res.get("dry_run") is True, res
