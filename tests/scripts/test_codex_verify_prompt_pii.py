@@ -208,3 +208,10 @@ def test_a_gated_prior_is_resolved_against_the_repo_and_its_folders_traversable(
 def test_reader_review_defaults_leave_out_gated_models():
     import tools.reader_review as rr
     assert "grok" not in rr.DEFAULT_MODELS and {"codex", "fable"} <= set(rr.DEFAULT_MODELS)
+
+
+def test_without_a_prior_the_gated_jail_opens_nothing_in_output(tmp_path):
+    # mutation r3 survivor: the `if read_allow` guard on the traversal allowance
+    pol = cv.sandbox_policy(tmp_path, deny_output=True)
+    assert "file-read-metadata" not in pol
+    assert f'(deny file-read* (subpath "{tmp_path.resolve()}/output"))' in pol
