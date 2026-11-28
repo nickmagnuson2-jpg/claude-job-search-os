@@ -78,6 +78,12 @@ def test_a_copy_of_the_real_header_in_the_question_makes_everything_new_text(mon
     assert cv.gate_prompt(p, TOKENS, WORDS)[1] == ["Blimfield"]
 
 
+def test_a_header_with_no_closing_fence_makes_everything_new_text():
+    # mutation r2 survivor: _split_diff_block's `if end < 0` guard
+    p = "WHAT TO VERIFY: x\n\n" + cv.DIFF_HEADER + " owner = 'Blimfield'\n more"
+    assert cv.gate_prompt(p, TOKENS, WORDS)[1] == ["Blimfield"]
+
+
 def test_a_pipeline_company_word_used_as_a_name_blocks(monkeypatch, tmp_path):
     p = _built(monkeypatch, tmp_path, target="review the outreach to Lantern before Monday")
     assert cv.gate_prompt(p, TOKENS, WORDS)[1] == ["Lantern"]
