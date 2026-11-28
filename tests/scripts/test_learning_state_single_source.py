@@ -239,14 +239,12 @@ def test_detector_finds_todays_known_sites():
     cutover commit together with the sites."""
     found = tree_findings()
     expected = {
-        "tools/scan_promotion_candidates.py": {"frontmatter_split", "gate_grammar", "promoted_predicate"},
+        "tools/scan_promotion_candidates.py": {"frontmatter_split", "promoted_predicate"},
         "tools/promotion_schema.py": {"frontmatter_split", "gate_grammar", "promoted_vocab",
                                       "exit_paths", "promoted_predicate"},
         "tools/detector_run.py": {"frontmatter_split"},
         "tools/apply_memory_verdicts.py": {"frontmatter_split", "key_scrape"},
         "tools/backfill_memory_schema.py": {"frontmatter_split", "key_scrape"},
-        "tools/memory_prepass.py": {"frontmatter_split", "gate_grammar"},
-        "tools/merge_mining_verdicts.py": {"frontmatter_split"},
         "tools/workstream_probe.py": {"frontmatter_split", "key_scrape"},
         # key_scrape removed 2026-11-25 (S1): read_memory iterates learning_state.iter_records.
         "tools/learning_ledger.py": {"promoted_predicate"},
@@ -275,7 +273,7 @@ def test_the_owners_exist():
 @pytest.mark.xfail(strict=True, reason=(
     "2026-11-22: 11 state-parsing sites remain until the one-commit reader cutover "
     "(the 8 named frontmatter parsers, learning_ledger.read_memory's fm(), the gate "
-    "grammars in scan_promotion_candidates / promotion_schema / memory_prepass, and "
+    "grammars in scan_promotion_candidates / promotion_schema, and "
     "friction_log's RESOLVED prefix). The cutover removes this mark."))
 def test_no_state_parsing_outside_the_two_modules():
     offenders = {p: f for p, f in tree_findings().items() if p not in ALLOWLIST}

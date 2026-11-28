@@ -443,34 +443,9 @@ def family_candidates(families: list, fm_by_stem: dict, threshold: int) -> list:
 # reopen_gate naming the fire that should trigger promotion ("3rd fire", "5th fire"), and
 # by those gates 99 were due, 64 were not yet, and 23 had a gate with no number in it.
 # A backlog that reads 186 when 99 are due teaches its reader to ignore it.
-_GATE_TRIPPED_RE = re.compile(r"\b(TRIPPED|OWED|REOPENED)\b")
-_GATE_NUMBER_RE = re.compile(
-    r"\b(\d+)(?:st|nd|rd|th)\b\s+(?:dated\s+)?(?:fire|occurrence|time|repeat|instance)",
-    re.IGNORECASE)
 GATE_STATES = ("due", "not_due", "no_number", "defect")
 MIN_COVERAGE_DEFAULT = 95.0
 LOW_COVERAGE_EXIT = 3
-
-
-def gate_state(reopen_gate: str, occurrences: int) -> str:
-    """LEGACY prose reader, NOT used by this scanner since 2026-11-25 (ruled_state is). Kept only
-    because tools/learning_cutover.py prints it as the pre-cutover "before" column.
-
-    due | not_due | no_number, for a rule that has fired at least twice.
-
-    due        the gate says in capitals that it TRIPPED, is OWED or was REOPENED; or it
-               names an ordinal fire ("3rd fire") and the rule has fired that many times.
-    not_due    it names an ordinal fire the rule has not reached.
-    no_number  neither. CLAUDE.md requires a gate to name a number, so this is a defect
-               in the rule file and is listed as one, not guessed either way.
-    """
-    gate = str(reopen_gate or "")
-    if _GATE_TRIPPED_RE.search(gate):
-        return "due"
-    m = _GATE_NUMBER_RE.search(gate)
-    if not m:
-        return "no_number"
-    return "due" if occurrences >= int(m.group(1)) else "not_due"
 
 
 def candidates_of(memory_dir: Path) -> list[dict]:

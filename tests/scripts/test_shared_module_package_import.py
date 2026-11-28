@@ -182,15 +182,14 @@ def test_known_unimportable_list_is_not_stale(name):
 
 
 
-# The 17 tools S2b fixed (2026-11-25), NAMED so that mutation_check maps this file to each
-# one: it selects a test file only when the file names the tool, and the glob test above
-# names none of them. Each had no sys.path setup before its sibling import (conflict_diff
-# parsed argv at import). Runtime-redundant with the glob test; kept for the mapping.
+# The tools S2b fixed (2026-11-25; 17 then, 16 after conflict_diff was retired 2026-11-26),
+# NAMED so that mutation_check maps this file to each one: it selects a test file only when
+# the file names the tool, and the glob test above names none of them. Each had no sys.path
+# setup before its sibling import. Runtime-redundant with the glob test; kept for the mapping.
 FIXED_1125 = (
     "booking_tracker",
     "calendar_fetch",
     "calendar_write",
-    "conflict_diff",
     "deck_to_pdf",
     "extract_decisions",
     "fit_chart_viewbox",

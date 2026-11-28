@@ -454,35 +454,6 @@ def test_an_annotated_no_still_reaches_the_candidate_list(tmp_path):
     )
 
 
-# ---------------------------------------------------- due by the rule's own gate (2026-10-13)
-# "Fired twice and not promoted" listed 186 rules when 99 were due by their own gates.
-
-@pytest.mark.parametrize("gate,occ,expected", [
-    ("3rd fire. Target: a hook", 3, "due"),
-    ("3rd fire. Target: a hook", 4, "due"),
-    ("3rd fire. Target: a hook", 2, "not_due"),
-    ("5th fire, OR any single session with 2+ fires", 4, "not_due"),
-    ("2nd time a company is found", 2, "due"),
-    ("3rd occurrence of the same shape", 2, "not_due"),
-    ("REOPEN on the 2nd dated fire", 2, "due"),
-    ("10th fire", 9, "not_due"),
-    ("10th fire", 10, "due"),
-    # the rule file says so itself, whatever the count
-    ("TRIPPED 2026-09-14 by fire 2 on a narrower substrate", 2, "due"),
-    ("GATE TRIPPED 2026-09-06; guard OWED, not built", 2, "due"),
-    ("REOPENED 2026-09-17 (2nd dated fire)", 2, "due"),
-    ("the gate tripped once in lowercase prose, 5th fire", 2, "not_due"),
-    # no number: a defect in the gate, not a guess
-    ("count verified 2026-08-13. No structural gate set", 6, "no_number"),
-    ("the next dated fire", 2, "no_number"),
-    ("fire 3 of this shape", 5, "no_number"),
-    ("", 2, "no_number"),
-    (None, 2, "no_number"),
-])
-def test_gate_state(gate, occ, expected):
-    assert sp.gate_state(gate, occ) == expected
-
-
 RULE = """---
 name: feedback_{name}
 description: a rule
