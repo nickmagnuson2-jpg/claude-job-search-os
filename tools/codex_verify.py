@@ -215,6 +215,12 @@ class Model:
     # rendered-page review exists to catch. Default is "none": a model added tomorrow is
     # assumed blind until someone checks its help output.
     image_via: str = "none"
+    # PROMPT PII GATE (Nick, 2026-11-28: "make sure that no personal PII is passed to
+    # Grok"). The jail stops the model READING private files; this stops us SENDING
+    # private text: run() scans the assembled prompt against the PII denylist before
+    # dispatch and refuses on any hit. Narrow by Nick's rule (start narrow, widen only on
+    # new fires): set for grok only.
+    pii_gate: bool = False
 
 
 MODELS: dict[str, Model] = {
@@ -230,7 +236,7 @@ MODELS: dict[str, Model] = {
               "--sandbox", "disabled", "--model", "cursor-grok-4.6-xhigh"],
         # cursor-agent --help lists no image or attachment option (checked 2026-09-18),
     # so grok reviews text only and a run that needs the rendered page must not use it.
-    prompt_via="argv", report_via="stdout", family="xai", image_via="none"),
+    prompt_via="argv", report_via="stdout", family="xai", image_via="none", pii_gate=True),
     # ADDITIVE, NEVER SUFFICIENT. Same family as the author, so cross_model_gate's
     # AUTHOR_FAMILY rule requires at least one non-Anthropic model alongside it before a
     # path counts as covered. Wired 2026-09-16 on evidence rather than principle: a Fable
@@ -683,6 +689,38 @@ def build_prompt(repo_root: Path, target: str, question: str, report: Path,
     return "\n\n".join(parts)
 
 
+_DIFF_BLOCK_RE = re.compile(r"```diff\n(.*?)\n```", re.S)
+
+
+def prompt_pii_hits(prompt: str, tokens: list[str]) -> list[str]:
+    """Denylist tokens in the text a review would send. Inside the diff block only ADDED
+    lines count: removed and context lines are text already on the branch base, and a
+    branch that deletes a name must stay reviewable. Matching is check_public_pii's."""
+    from check_public_pii import find_pii
+
+    def added_only(m: re.Match) -> str:
+        return "\n".join(line[1:] for line in m.group(1).splitlines()
+                         if line.startswith("+") and not line.startswith("+++"))
+
+    return find_pii(_DIFF_BLOCK_RE.sub(added_only, prompt), tokens)
+
+
+def review_pii_tokens(repo_root: Path) -> list[str]:
+    """The denylist of the MAIN checkout (a worktree has no gitignored copy) plus the sealed
+    sibling's directory name, derived the way check_sealed_read derives it, never spelled.
+    FAILS CLOSED: no denylist means no scan, and a scan with nothing to match is a false
+    zero, so the dispatch is refused instead."""
+    from check_public_pii import load_denylist
+    from check_sealed_read import SEALED_HOME_SUFFIX
+
+    main = vault_paths.main_checkout(Path(repo_root).resolve())
+    tokens = [t for t in load_denylist(main) if t.strip()]
+    if not tokens:
+        raise RuntimeError(f"no PII denylist at {main}/tools/.pii-denylist.txt; run "
+                           "tools/gen_pii_denylist.py. Refusing to send a prompt unscanned.")
+    return tokens + [main.name + SEALED_HOME_SUFFIX]
+
+
 FINDINGS_MARKER = "## FINDINGS (machine-readable)"
 
 
@@ -1007,6 +1045,17 @@ def run(repo_root: Path, target: str, paths: list[str], question: str,
     if print_only:
         print(prompt)
         return {"status": "printed", "report": str(report)}
+    if spec.pii_gate:
+        try:
+            tokens = review_pii_tokens(repo_root)
+        except RuntimeError as e:
+            raise SystemExit(f"codex_verify: {e}")
+        hits = prompt_pii_hits(prompt, tokens)
+        if hits:
+            raise SystemExit(
+                f"codex_verify: BLOCKED, nothing sent: the {model} prompt carries {len(hits)} "
+                f"PII denylist token(s) (target, claims, questions or added diff lines). "
+                f"Remove them, or review with a model that has no pii_gate.")
 
     report.parent.mkdir(parents=True, exist_ok=True)
     # Taken BEFORE the run so a report left behind by an EARLIER run cannot be mistaken

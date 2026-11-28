@@ -268,7 +268,11 @@ LABEL_ALIASES = {"gpt5": "openai"}
 #   2026-10-30: monthly limit, resets 2026-11-12 (Nick chose not to buy more).
 #   2026-11-26: weekly limit hit 00:31, resets about 11-28; Nick chose "Fable for brief
 #               AND branches" (orchestration.md RULING, 11-26). launch_swarm reads it too.
-FABLE_STANDIN_UNTIL = date(2026, 11, 28)
+#   2026-11-28: this time Codex (openai) is out, weekly limit until 2026-11-30 19:36, so
+#               the pair is Grok (xai) plus Fable, still one family outside the author's.
+#               Nick: "the Fable stand-in should be until 11:30" (orchestration.md
+#               RULING, 11-28; Grok prompts are PII-scanned first, codex_verify pii_gate).
+FABLE_STANDIN_UNTIL = date(2026, 11, 30)
 
 
 def fable_standin_active(today: date | None = None) -> bool:
