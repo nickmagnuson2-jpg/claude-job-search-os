@@ -1538,10 +1538,11 @@ def test_cli_RECORDS_a_waiver_that_bypasses_an_open_P0_on_a_small_push(tmp_path)
 
 # --- Grok-outage exception (Nick, 2026-10-30; again 2026-11-26): Fable stands in for one slot ---
 
-def test_the_fable_standin_expires_after_2026_11_28():
+def test_the_fable_standin_expires_after_2026_11_30():
     from datetime import date
-    assert g.fable_standin_active(date(2026, 11, 28)) is True
-    assert g.fable_standin_active(date(2026, 11, 29)) is False
+    for day in (28, 29, 30):     # every day of the window, so `==` cannot pass (Grok r1 F3)
+        assert g.fable_standin_active(date(2026, 11, day)) is True
+    assert g.fable_standin_active(date(2026, 12, 1)) is False
 
 
 def test_during_the_exception_codex_plus_fable_clears_and_says_so(tmp_path, monkeypatch):

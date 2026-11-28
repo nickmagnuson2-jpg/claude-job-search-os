@@ -69,7 +69,11 @@ from tools import codex_verify  # noqa: E402
 from tools import build_check  # noqa: E402
 from tools.md_table import find_section, write_atomic  # noqa: E402
 
-DEFAULT_MODELS = ("codex", "fable", "grok")
+# A reader review reads a document written for a named reader, which is exactly the text a
+# PII-gated model must not receive (Nick, 2026-11-28), so pii_gate models are not defaults;
+# codex_verify refuses them for output/ paths anyway.
+DEFAULT_MODELS = tuple(m for m in ("codex", "fable", "grok")
+                       if not codex_verify.MODELS[m].pii_gate)
 TEXT_ONLY_MODELS = {"grok"}
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 SLICE_PX = 3000

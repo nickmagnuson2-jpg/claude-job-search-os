@@ -199,8 +199,10 @@ def test_dry_run_prints_prompt_and_plan_without_dispatch(monkeypatch, tmp_path, 
     assert rc == 0
     assert "THE READER: a Director of Operations" in out and "Q3 CONFIDENTIALITY: SKIPPED" in out
     assert "research" in out
-    for m in ("codex", "fable", "grok"):
+    for m in ("codex", "fable"):
         assert f"{m} images: 0 report: output/analysis/" in out and f"-{m}-demo-reader-review.md" in out
+    # grok carries the PII gate and is not a reader-review default (2026-11-28)
+    assert "grok images:" not in out
 
 
 def test_models_protect_and_known_errors_flow_to_dispatch(monkeypatch, tmp_path, capsys):
