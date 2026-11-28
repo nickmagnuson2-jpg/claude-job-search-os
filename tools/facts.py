@@ -319,9 +319,11 @@ def entity(key: str) -> str:
 GUARDRAIL_WINDOW = 4   # words before the stale form that a negation must sit in
 # The window stops at the last sentence end before the form: 'never "X." Acme = <stale>'
 # is a ban on X, not on the stale form (Fable 1654 F5, the Monday prep's cheat line).
-# A semicolon joins clauses of one sentence, and an abbreviation's period ends none
-# ("Do not use this title; X", "Do not describe Dr. Smith as X" still ban X; Codex 1669 F1).
-SENTENCE_END = re.compile(r"(\S*)([.!?])[\"'\u201d\u2019*_)\]]*\s")
+# An abbreviation's period ends no sentence ("Never call Dr. Smith X" still bans X; Codex
+# 1669 F1). A semicolon DOES end the clause: text cannot tell whether a negation before it
+# governs the next clause ("Do not use Gizmo; X" asserts X; Codex r2 P0), so the window
+# stops there and the error goes toward reporting a line, never toward excusing a stale form.
+SENTENCE_END = re.compile(r"(\S*)([.!?;])[\"'\u201d\u2019*_)\]]*\s")
 ABBREVIATIONS = {"dr", "mr", "mrs", "ms", "st", "jr", "sr", "vs", "etc", "e.g", "i.e",
                  "no", "inc", "co", "ltd", "prof", "cf", "approx"}
 

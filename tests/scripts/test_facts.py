@@ -1029,8 +1029,7 @@ def test_sweep_with_records_fails_closed_on_an_unreadable_profile(tmp_path):
 
 
 @pytest.mark.parametrize("line", [
-    "Do not use this title; Aide to the CWO.",          # a semicolon does not end the sentence
-    "Never call Dr. Smith Aide to the CWO.",            # nor does an abbreviation's period
+    "Never call Dr. Smith Aide to the CWO.",            # an abbreviation's period ends no sentence
     # (Codex's own "Do not describe Dr. Smith as X" puts "not" 5 words back, outside the
     # 4-word window on main as well: the parked 1612 F1 / 1654 F5 positional class.)
     "Never say e.g. Aide to the CWO.",
@@ -1039,3 +1038,15 @@ def test_a_same_sentence_ban_across_a_semicolon_or_abbreviation_still_excuses(li
     # Codex 1669 F1 (P0): the sentence-end rule must not cut a same-sentence negation.
     hits = facts.judge_text(line, _acme_pair(), **KW)
     assert [h["held"] for h in hits] == ["guardrail"]
+
+
+@pytest.mark.parametrize("line", [
+    "Do not use Gizmo; Aide to the CWO.",           # the ban governs the first clause only
+    "Do not use this title; Aide to the CWO.",      # known limit: reported, never excused
+])
+def test_a_ban_before_a_semicolon_does_not_excuse_the_next_clause(line):
+    # Codex r2 P0 (round 2 of kb-sweep-1128): text cannot tell which clause a negation
+    # governs across a semicolon, so the clause ends there and the error goes toward
+    # reporting a line, never toward excusing a stale form.
+    hits = {h["key"]: h["held"] for h in facts.judge_text(line, _acme_pair(), **KW)}
+    assert hits["role_title.acme"] is None
